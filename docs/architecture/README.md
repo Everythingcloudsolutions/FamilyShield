@@ -1,6 +1,165 @@
 # FamilyShield — Architecture
 
 > All diagrams render natively in GitHub. For editable source files see `docs/diagrams/`.
+> Editable draw.io files: `docs/diagrams/*.drawio` — open at diagrams.net or VS Code draw.io extension.
+> Editable Excalidraw files: `docs/diagrams/*.excalidraw` — open at excalidraw.com or VS Code Excalidraw extension.
+
+---
+
+## Assumptions
+
+These are the conditions this architecture depends on being true. If any assumption changes, revisit the related design decision.
+
+| # | Assumption | Impact if wrong |
+|---|---|---|
+| A1 | OCI Always Free tier remains available at 4 OCPU / 24GB ARM per account | Would need to migrate to paid VM or alternative cloud — estimated $20–40 CAD/month |
+| A2 | Cloudflare Free tier is sufficient (unlimited bandwidth, 1 Tunnel, Zero Trust for ≤50 users) | May need Cloudflare Teams plan at ~$7 CAD/user/month |
+| A3 | Supabase Free tier (500MB storage, 500MB bandwidth/month) covers initial load | Upgrade to Pro at $25 USD/month when event volume exceeds free tier |
+| A4 | Groq Free tier (500K tokens/day) covers AI risk scoring for a typical family | Anthropic fallback activates automatically; estimated $0.02–$2 CAD/month depending on volume |
+| A5 | Child devices can have the FamilyShield CA certificate installed | iOS and Android MDM-locked corporate devices cannot be inspected by mitmproxy |
+| A6 | Child devices support WireGuard VPN client (Tailscale app) | Game consoles and some smart TVs cannot run Tailscale; DNS-only enforcement applies |
+| A7 | Family has reliable internet (>10 Mbps download, <50ms latency to Toronto) | Poor connectivity degrades VPN and real-time monitoring; consider local DNS failsafe |
+| A8 | TikTok remains resistant to SSL inspection (cert pinning) | TikTok stays as DNS-block only — by design |
+| A9 | The family has at most 20 child devices across all children | Redis event queue is sized for low throughput; high-volume households may need queue tuning |
+| A10 | Parents have smartphones capable of running the ntfy app (iOS 14+ or Android 8+) | Alert delivery falls back to email only |
+| A11 | GitHub Actions OIDC/API key auth to OCI remains supported | Would need to update CI/CD auth method |
+| A12 | OCI ca-toronto-1 region satisfies Canadian data residency requirements (PIPEDA) | Architecture is intentionally Canada-only; no data leaves Canadian OCI region except external APIs |
+
+---
+
+## Key Design Decisions (Architecture Decision Records)
+
+Each ADR captures *what* was decided, *why*, and *what was rejected*.
+
+---
+
+### ADR-001: Cloud Provider — Oracle Cloud OCI (Always Free)
+
+**Status:** Accepted  
+**Date:** 2026-01  
+**Context:** The platform needs a VM to run 10 Docker services 24/7 at near-zero cost for a family use case.
+
+| Option | Cost/month (CAD) | Why rejected |
+|---|---|---|
+| AWS EC2 t3.small | ~$25 | No Always Free VM tier for this workload |
+| Azure B2s | ~$35 | No Always Free ARM tier |
+| **OCI VM.Standard.A1.Flex** | **$0** | **4 OCPU / 24GB Always Free — winner** |
+| DigitalOcean Droplet | ~$18 | Cost, no Canadian region |
+| Hetzner CAX21 | ~$10 | German data centre, not Canadian residency |
+
+**Decision:** OCI ca-toronto-1. Always Free ARM VM with 4 OCPU / 24GB RAM. Canadian data residency satisfies PIPEDA.
+
+---
+
+### ADR-002: Inbound Access — Cloudflare Tunnel (No Open Ports)
+
+**Status:** Accepted  
+**Context:** The OCI VM must be reachable by the parent portal and admin UIs without exposing inbound ports to the internet.
+
+**Rejected:** Opening ports 80/443 on the OCI VM would require proper TLS termination, DDoS mitigation, and expose the IP to scanning.
+
+**Decision:** Cloudflare Tunnel with Zero Trust access policy. The VM initiates an outbound tunnel to Cloudflare — no inbound ports opened. All admin UIs require Zero Trust authentication (email allowlist). This makes the public IP irrelevant; attackers cannot connect directly to the VM.
+
+---
+
+### ADR-003: VPN — Headscale (Self-hosted Tailscale Control Plane)
+
+**Status:** Accepted  
+**Context:** Child devices need a VPN to route traffic through the OCI VM for monitoring. Tailscale is the best UX, but the free tier is limited to 3 devices.
+
+**Rejected:** Commercial Tailscale (3-device limit), WireGuard raw (too complex to manage per-device), OpenVPN (heavy, less mobile-friendly).
+
+**Decision:** Headscale — open source self-hosted Tailscale control plane. No device limit. Runs in Docker on the OCI VM. Child devices install the standard Tailscale app and connect to the Headscale server instead of Tailscale's cloud.
+
+---
+
+### ADR-004: SSL Inspection — mitmproxy
+
+**Status:** Accepted  
+**Context:** To extract content IDs (video_id, game_id) from HTTPS traffic, the platform needs to perform SSL/TLS inspection.
+
+**Rejected:** Commercial DPI appliances (expensive, not open source), Squid proxy (complex, poor Python extensibility), Zeek (read-only IDS, cannot modify traffic).
+
+**Decision:** mitmproxy with transparent proxy mode. A custom Python addon (`familyshield_addon.py`) extracts content identifiers from HTTP request URLs without capturing message bodies or frames. Privacy-preserving: only metadata extracted, not content.
+
+---
+
+### ADR-005: Event Queue — Redis
+
+**Status:** Accepted  
+**Context:** mitmproxy processes requests at HTTP speed; the API enrichment worker calls external APIs (YouTube, Roblox) which are slower. They must be decoupled.
+
+**Rejected:** Direct HTTP POST from mitmproxy to API (tight coupling, drops events if API is slow), Kafka (massively over-engineered for family-scale traffic), PostgreSQL queue (polling overhead).
+
+**Decision:** Redis LPUSH/BLPOP as a simple in-memory queue. Events are small JSON objects (~200 bytes). Redis runs in Docker on the same VM. If the VM restarts, unprocessed events in the queue are lost — acceptable for a monitoring system (no financial transactions involved).
+
+---
+
+### ADR-006: Database — Supabase (Managed PostgreSQL)
+
+**Status:** Accepted  
+**Context:** The platform needs a database for events, rules, and profiles, with real-time push to the parent portal (no polling).
+
+**Rejected:** Self-hosted PostgreSQL (operational burden), Firebase (US-only, not open source), PlanetScale (MySQL, no real-time), MongoDB Atlas (document DB overkill for relational data).
+
+**Decision:** Supabase. Managed PostgreSQL with row-level security, real-time WebSocket subscriptions (for live dashboard updates), and a JavaScript client library. Free tier (500MB) covers initial deployment. Canadian data residency configurable.
+
+---
+
+### ADR-007: Rule Engine — Node-RED
+
+**Status:** Accepted  
+**Context:** The platform needs to evaluate enriched events against per-child rules and trigger actions (block domain, send alert). Rules must be editable without code changes.
+
+**Rejected:** Custom rule engine in code (not editable without developer), Zapier/Make.com (cloud-only, costs money), Drools (Java, heavyweight), writing all logic in Node.js (no visual interface).
+
+**Decision:** Node-RED. Visual flow-based programming with an excellent web UI. Rules are flows that receive enriched events via HTTP, evaluate conditions (child age, risk level, platform), and call AdGuard API to block or ntfy to alert. Non-technical parents could eventually configure simple flows.
+
+---
+
+### ADR-008: AI Risk Scoring — Groq Primary / Anthropic Fallback
+
+**Status:** Accepted  
+**Context:** The platform needs to classify content risk (violence, adult content, gaming addiction triggers) from metadata (title, category, platform). This must be cheap to run 24/7 for a family.
+
+**Rejected:** OpenAI GPT-4o (costs money, US company), self-hosted Llama (requires GPU, not on OCI Always Free), Google Gemini (US company, terms unclear for this use case).
+
+**Decision:** Groq with llama-3.3-70b-versatile as primary (500K free tokens/day). Anthropic claude-haiku-4-5 as fallback when Groq is unavailable or daily limit hit. The LLM router (`apps/api/src/llm/router.ts`) handles failover transparently and tracks monthly spend.
+
+---
+
+### ADR-009: Frontend — Next.js 14 on Cloudflare Pages
+
+**Status:** Accepted  
+**Context:** The parent portal needs a modern, fast web application. It must be hosted at zero cost.
+
+**Rejected:** React + Vite (no SSR for SEO/auth), plain HTML (maintenance burden), Vercel (US company), Netlify (US company), self-hosted Nginx (more VM resources consumed).
+
+**Decision:** Next.js 14 (App Router) on Cloudflare Pages. Free tier, unlimited bandwidth, edge network, Canadian CDN nodes. Supabase real-time client handles live dashboard updates via WebSocket.
+
+---
+
+### ADR-010: IaC Tool — OpenTofu
+
+**Status:** Accepted  
+**Context:** All infrastructure must be reproducible via code. Terraform is the industry standard but has licensing concerns.
+
+**Rejected:** Terraform (BSL license restricts commercial use), Pulumi (different language model), CDK (AWS-specific), Ansible (not state-based).
+
+**Decision:** OpenTofu — the open source fork of Terraform under Mozilla Public License 2.0. 100% compatible with Terraform providers (OCI, Cloudflare, Supabase all have OpenTofu providers). `tofu` CLI replaces `terraform` CLI.
+
+---
+
+### ADR-011: Intelligent Operations — Claude Agent SDK
+
+**Status:** Accepted  
+**Context:** Managing IaC drift, monitoring cloud environments, and reviewing API behaviour requires operational intelligence beyond simple scripts.
+
+**Rejected:** Custom scripts (brittle, no reasoning), plain LLM prompts (no tool use), commercial AIOps tools (expensive, overkill for one-family platform).
+
+**Decision:** Four Claude Agent SDK agents (`agent-iac`, `agent-cloud`, `agent-api`, `agent-mitm`) — each with a specific set of tools and a system prompt tuned to its domain. Agents can reason about context, chain tool calls, and produce human-readable reports.
+
+---
 
 ---
 
