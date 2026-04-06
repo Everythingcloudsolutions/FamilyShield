@@ -62,10 +62,10 @@ provider "cloudflare" {
 module "compartments" {
   source = "./modules/oci-compartments"
 
-  tenancy_ocid        = var.oci_tenancy_ocid
-  environment         = var.environment
+  tenancy_ocid            = var.oci_tenancy_ocid
+  environment             = var.environment
   compartment_description = "FamilyShield ${var.environment} environment"
-  tags = local.common_tags
+  tags                    = local.common_tags
 }
 
 ###############################################################################
@@ -102,14 +102,14 @@ module "storage" {
 module "compute" {
   source = "./modules/oci-compute"
 
-  compartment_id    = module.compartments.compartment_id
-  subnet_id         = module.network.public_subnet_id
-  environment       = var.environment
-  ssh_public_key    = var.ssh_public_key
-  instance_shape    = "VM.Standard.A1.Flex"
-  ocpus             = 4
-  memory_in_gbs     = 24
-  image_id          = var.oci_ubuntu_arm_image_id
+  compartment_id = module.compartments.compartment_id
+  subnet_id      = module.network.public_subnet_id
+  environment    = var.environment
+  ssh_public_key = var.ssh_public_key
+  instance_shape = "VM.Standard.A1.Flex"
+  ocpus          = 4
+  memory_in_gbs  = 24
+  image_id       = var.oci_ubuntu_arm_image_id
   cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
     environment = var.environment
     docker_compose_b64 = base64encode(templatefile(
@@ -155,13 +155,13 @@ locals {
   }
 
   docker_compose_vars = {
-    environment          = var.environment
-    adguard_password     = var.adguard_admin_password
-    tunnel_token         = module.cloudflare.tunnel_token
-    headscale_domain     = "vpn.familyshield-${var.environment}.everythingcloud.ca"
-    supabase_url         = var.supabase_url
-    supabase_anon_key    = var.supabase_anon_key
-    groq_api_key         = var.groq_api_key
-    anthropic_api_key    = var.anthropic_api_key
+    environment       = var.environment
+    adguard_password  = var.adguard_admin_password
+    tunnel_token      = module.cloudflare.tunnel_token
+    headscale_domain  = "vpn.familyshield-${var.environment}.everythingcloud.ca"
+    supabase_url      = var.supabase_url
+    supabase_anon_key = var.supabase_anon_key
+    groq_api_key      = var.groq_api_key
+    anthropic_api_key = var.anthropic_api_key
   }
 }
