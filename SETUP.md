@@ -358,7 +358,10 @@ chmod +x scripts/bootstrap-oci.sh
 bash scripts/bootstrap-oci.sh
 ```
 
-The script will pause once and ask you to confirm Cloud Guard is enabled (you did this in step 2.7). Press **Enter** to continue.
+The script will pause twice:
+
+1. **"Enter your email address for the GitHub Actions service account:"** — Type the email you want to associate with the service user (e.g., your own email or `github-actions@example.com`)
+2. **"Enable Cloud Guard now? (y/n, default: n)"** — Type `n` unless you already enabled Cloud Guard in part 2.7
 
 At the end, the script prints a block like this:
 
@@ -453,15 +456,24 @@ This script sets up branch protection on main, creates the dev/staging/prod depl
 bash scripts/setup-github.sh
 ```
 
-After it finishes, do one manual step to protect production:
+After it finishes, try to set up production protection:
 
 1. Go to: **github.com/Everythingcloudsolutions/FamilyShield/settings/environments**
 2. Click **prod**
-3. Under **Required reviewers**, tick the checkbox
-4. Type your GitHub username and select yourself
-5. Click **Save protection rules**
+3. Look for **Deployment protection rules** or **Required reviewers** section
 
-This means no code can ever reach production without your explicit approval in the GitHub UI.
+**If you're on GitHub free tier** (no Pro):
+
+- The "Required reviewers" feature is not available — it requires GitHub Pro
+- **Workaround:** You can still manually approve prod deployments via GitHub Actions
+  - When a workflow reaches the prod step, it will pause and ask for approval
+  - Go to **Actions** tab → click the pending workflow → click **Approve and deploy**
+- This provides the same protection without needing Pro tier
+
+**If you're on GitHub Pro or higher:**
+
+- The section will be visible; click it and add yourself as a required reviewer
+- Code will be blocked from production until you approve via the UI
 
 ---
 

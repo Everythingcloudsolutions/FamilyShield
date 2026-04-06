@@ -63,6 +63,9 @@ echo "----------------------------------------"
 
 GH_USER_NAME="familyshield-github-actions"
 
+# OCI requires an email for all IAM users
+read -p "Enter your email address for the GitHub Actions service account: " GH_USER_EMAIL
+
 echo "Creating IAM user: $GH_USER_NAME"
 
 # Try to get existing user first
@@ -72,12 +75,13 @@ GH_USER_OCID=$(oci iam user list --all --query "data[?name=='$GH_USER_NAME'] | [
 if [ -z "$GH_USER_OCID" ] || [ "$GH_USER_OCID" = "None" ]; then
   GH_USER_OCID=$(oci iam user create \
     --name "$GH_USER_NAME" \
+    --email "$GH_USER_EMAIL" \
     --description "FamilyShield GitHub Actions service user - do not use interactively" \
     --query "data.id" \
     --raw-output)
   echo "   Created new user"
 else
-  echo "   User already exists"
+  echo "   User already exists (email not updated)"
 fi
 
 if [ -z "$GH_USER_OCID" ] || [ "$GH_USER_OCID" = "None" ]; then

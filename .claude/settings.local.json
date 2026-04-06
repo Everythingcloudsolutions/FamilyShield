@@ -3,6 +3,9 @@
     "allow": [
       "Skill(claude-api)",
       "Skill(claude-api:*)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\mohit.kumar.goyal\\.claude\\projects\\c--Users-mohit-kumar-goyal-OneDrive---Accenture-Github-FamilyShield\\memory"
     ]
   }
 }
