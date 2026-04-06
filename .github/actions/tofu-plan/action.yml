@@ -1,0 +1,128 @@
+# .github/actions/tofu-plan/action.yml
+# Reusable composite action: runs tofu plan and posts output as PR comment
+name: "OpenTofu Plan"
+description: "Run tofu plan and post result as PR comment"
+
+inputs:
+  environment:
+    description: "Target environment: dev | staging | prod"
+    required: true
+  working_directory:
+    description: "IaC working directory"
+    required: false
+    default: "iac"
+  var_file:
+    description: "Path to tfvars file"
+    required: false
+    default: ""
+  github_token:
+    description: "GitHub token for posting PR comments"
+    required: true
+
+outputs:
+  plan_exitcode:
+    description: "Exit code: 0=no changes, 1=error, 2=changes pending"
+    value: ${{ steps.plan.outputs.exitcode }}
+  plan_summary:
+    description: "Short summary of planned changes"
+    value: ${{ steps.plan.outputs.summary }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup OpenTofu
+      uses: opentofu/setup-opentofu@v1
+      with:
+        tofu_version: "1.6.x"
+
+    - name: Tofu Init
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        tofu init -reconfigure
+        echo "✅ tofu init complete"
+
+    - name: Tofu Validate
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        tofu validate
+        echo "✅ tofu validate passed"
+
+    - name: Tofu Plan
+      id: plan
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        VAR_FILE_ARG=""
+        if [ -n "${{ inputs.var_file }}" ]; then
+          VAR_FILE_ARG="-var-file=${{ inputs.var_file }}"
+        fi
+
+        set +e
+        tofu plan \
+          -var="environment=${{ inputs.environment }}" \
+          $VAR_FILE_ARG \
+          -out=tfplan \
+          -detailed-exitcode \
+          -no-color \
+          2>&1 | tee plan_output.txt
+        EXITCODE=$?
+        set -e
+
+        echo "exitcode=$EXITCODE" >> $GITHUB_OUTPUT
+
+        # Extract summary line
+        SUMMARY=$(grep -E "^Plan:|^No changes" plan_output.txt | head -1 || echo "Plan complete")
+        echo "summary=$SUMMARY" >> $GITHUB_OUTPUT
+
+        echo "Plan exit code: $EXITCODE"
+        echo "$SUMMARY"
+
+    - name: Post plan as PR comment
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github_token }}
+        script: |
+          const fs = require('fs');
+          const planOutput = fs.readFileSync('${{ inputs.working_directory }}/plan_output.txt', 'utf8');
+          const exitcode = '${{ steps.plan.outputs.exitcode }}';
+
+          const icon = exitcode === '0' ? '✅' : exitcode === '2' ? '⚠️' : '❌';
+          const status = exitcode === '0' ? 'No changes' : exitcode === '2' ? 'Changes pending' : 'Error';
+
+          const body = `## ${icon} OpenTofu Plan — \`${{ inputs.environment }}\` — ${status}
+
+          <details>
+          <summary>Full plan output</summary>
+
+          \`\`\`hcl
+          ${planOutput.slice(0, 60000)}
+          \`\`\`
+          </details>
+
+          *Triggered by commit \`${context.sha.slice(0,7)}\` · ${{ github.actor }}*`;
+
+          // Delete previous plan comments to keep PR clean
+          const comments = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number
+          });
+          for (const comment of comments.data) {
+            if (comment.body.includes('OpenTofu Plan') && comment.body.includes('${{ inputs.environment }}')) {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: comment.id
+              });
+            }
+          }
+
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body
+          });

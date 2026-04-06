@@ -1,0 +1,95 @@
+{
+  "name": "FamilyShield Dev (OCI ARM)",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+
+  // Run on OCI ARM VM via Remote SSH — not locally
+  // Connect via: VS Code > Remote Explorer > SSH Targets > familyshield-dev
+  "remoteUser": "ubuntu",
+
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" },
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.11" },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/terraform:1": {
+      "version": "latest",
+      "tflint": "latest"
+    }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        // IaC
+        "hashicorp.terraform",
+        "gamunu.opentofu",
+        "ms-vscode.azure-account",
+
+        // Node / TypeScript
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-vscode.vscode-typescript-next",
+        "bradlc.vscode-tailwindcss",
+
+        // Python (mitmproxy addon)
+        "ms-python.python",
+        "ms-python.black-formatter",
+        "ms-python.pylint",
+
+        // Docker & containers
+        "ms-azuretools.vscode-docker",
+        "ms-vscode-remote.remote-containers",
+
+        // Git & GitHub
+        "github.vscode-pull-request-github",
+        "github.copilot",
+        "eamodio.gitlens",
+
+        // Diagrams
+        "hediet.vscode-drawio",
+        "pomdtr.excalidraw-editor",
+
+        // Docs
+        "yzhang.markdown-all-in-one",
+        "davidanson.vscode-markdownlint",
+        "bierner.markdown-mermaid",
+
+        // Quality
+        "streetsidesoftware.code-spell-checker",
+        "sonarsource.sonarlint-vscode",
+
+        // YAML / JSON
+        "redhat.vscode-yaml",
+        "zainchen.json"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "[python]": { "editor.defaultFormatter": "ms-python.black-formatter" },
+        "[terraform]": { "editor.defaultFormatter": "hashicorp.terraform" },
+        "terraform.languageServer.enable": true,
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.watcherExclude": {
+          "**/node_modules/**": true,
+          "**/.terraform/**": true
+        }
+      }
+    }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "forwardPorts": [
+    3000,   // Next.js portal dev server
+    8080,   // mitmproxy web UI
+    3080,   // AdGuard Home
+    3000,   // API server
+    5432    // Postgres (local dev)
+  ],
+
+  "portsAttributes": {
+    "3000": { "label": "Portal", "onAutoForward": "notify" },
+    "8080": { "label": "mitmproxy UI", "onAutoForward": "silent" },
+    "3080": { "label": "AdGuard", "onAutoForward": "silent" }
+  }
+}

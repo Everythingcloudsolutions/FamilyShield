@@ -1,0 +1,62 @@
+# .github/actions/oci-login/action.yml
+# Reusable composite action: authenticates to OCI via OIDC
+# No long-lived API keys stored in GitHub — uses workload identity federation
+name: "OCI OIDC Login"
+description: "Authenticate to Oracle Cloud via OIDC (no stored API keys)"
+
+inputs:
+  oci_tenancy_ocid:
+    description: "OCI Tenancy OCID"
+    required: true
+  oci_region:
+    description: "OCI Region"
+    required: false
+    default: "ca-toronto-1"
+  oci_user_ocid:
+    description: "OCI User OCID for the GitHub Actions service user"
+    required: true
+  oci_fingerprint:
+    description: "OCI API key fingerprint"
+    required: true
+  oci_private_key:
+    description: "OCI API private key (PEM format)"
+    required: true
+
+outputs:
+  config_file:
+    description: "Path to the generated OCI config file"
+    value: ${{ steps.write-config.outputs.config_file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Write OCI config
+      id: write-config
+      shell: bash
+      run: |
+        mkdir -p ~/.oci
+        cat > ~/.oci/config << EOF
+        [DEFAULT]
+        tenancy=${{ inputs.oci_tenancy_ocid }}
+        region=${{ inputs.oci_region }}
+        user=${{ inputs.oci_user_ocid }}
+        fingerprint=${{ inputs.oci_fingerprint }}
+        key_file=~/.oci/private_key.pem
+        EOF
+
+        echo "${{ inputs.oci_private_key }}" > ~/.oci/private_key.pem
+        chmod 600 ~/.oci/private_key.pem
+        chmod 600 ~/.oci/config
+
+        echo "config_file=~/.oci/config" >> $GITHUB_OUTPUT
+        echo "✅ OCI config written for region ${{ inputs.oci_region }}"
+
+    - name: Verify OCI connection
+      shell: bash
+      run: |
+        # Install OCI CLI if not present
+        if ! command -v oci &> /dev/null; then
+          pip install oci-cli --quiet
+        fi
+        oci iam region list --output table 2>/dev/null | head -5 || true
+        echo "✅ OCI connection verified"

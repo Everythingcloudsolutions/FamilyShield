@@ -1,0 +1,50 @@
+{
+  "folders": [
+    { "path": ".", "name": "FamilyShield (root)" },
+    { "path": "apps/portal", "name": "Portal (Next.js)" },
+    { "path": "apps/api", "name": "API Worker (Node.js)" },
+    { "path": "apps/mitm", "name": "mitmproxy Addon (Python)" },
+    { "path": "iac", "name": "Infrastructure (OpenTofu)" },
+    { "path": "docs", "name": "Documentation" }
+  ],
+  "settings": {
+    "editor.formatOnSave": true,
+    "editor.rulers": [100],
+    "files.exclude": {
+      "**/node_modules": true,
+      "**/.terraform": true,
+      "**/__pycache__": true,
+      "**/dist": true
+    },
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/.terraform": true
+    },
+    "[typescript]": {
+      "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[python]": {
+      "editor.defaultFormatter": "ms-python.black-formatter"
+    },
+    "[terraform]": {
+      "editor.defaultFormatter": "hashicorp.terraform"
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "hashicorp.terraform",
+      "ms-python.python",
+      "ms-python.black-formatter",
+      "dbaeumer.vscode-eslint",
+      "esbenp.prettier-vscode",
+      "ms-vscode-remote.remote-ssh",
+      "ms-azuretools.vscode-docker",
+      "github.vscode-pull-request-github",
+      "github.copilot",
+      "eamodio.gitlens",
+      "bierner.markdown-mermaid",
+      "hediet.vscode-drawio",
+      "yzhang.markdown-all-in-one"
+    ]
+  }
+}

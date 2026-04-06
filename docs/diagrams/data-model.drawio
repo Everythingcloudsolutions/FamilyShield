@@ -1,0 +1,282 @@
+<mxfile host="app.diagrams.net" modified="2026-04-05T00:00:00.000Z" agent="FamilyShield" version="21.6.5" type="device">
+  <diagram id="data-model" name="Supabase Data Model">
+    <mxGraphModel dx="1422" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="FamilyShield — Supabase Data Model (PostgreSQL)" style="text;fontSize=18;fontStyle=1;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="600" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== TABLE: profiles ==================== -->
+        <mxCell id="t_profiles_header" value="profiles" style="swimlane;fontStyle=1;fontSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;startSize=25;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="260" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="t_profiles_1" value="🔑 id (UUID, PK)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_profiles_header">
+          <mxGeometry x="10" y="30" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_profiles_2" value="name (TEXT) — e.g. 'strict-6-10'" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_profiles_header">
+          <mxGeometry x="10" y="55" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_profiles_3" value="age_range_min (INT)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_profiles_header">
+          <mxGeometry x="10" y="80" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_profiles_4" value="age_range_max (INT)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_profiles_header">
+          <mxGeometry x="10" y="105" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_profiles_5" value="dns_strictness (ENUM: strict/moderate/guided)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_profiles_header">
+          <mxGeometry x="10" y="130" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_profiles_6" value="screen_time_limit_mins (INT)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_profiles_header">
+          <mxGeometry x="10" y="155" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_profiles_7" value="created_at (TIMESTAMPTZ)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_profiles_header">
+          <mxGeometry x="10" y="180" width="240" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== TABLE: children ==================== -->
+        <mxCell id="t_children_header" value="children" style="swimlane;fontStyle=1;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;startSize=25;" vertex="1" parent="1">
+          <mxGeometry x="360" y="70" width="260" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="t_children_1" value="🔑 id (UUID, PK)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_children_header">
+          <mxGeometry x="10" y="30" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_children_2" value="name (TEXT)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_children_header">
+          <mxGeometry x="10" y="55" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_children_3" value="age (INT)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_children_header">
+          <mxGeometry x="10" y="80" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_children_4" value="🔗 profile_id (UUID, FK → profiles.id)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_children_header">
+          <mxGeometry x="10" y="105" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_children_5" value="parent_id (UUID, FK → auth.users)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_children_header">
+          <mxGeometry x="10" y="130" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_children_6" value="avatar_url (TEXT)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_children_header">
+          <mxGeometry x="10" y="155" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_children_7" value="created_at (TIMESTAMPTZ)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_children_header">
+          <mxGeometry x="10" y="180" width="240" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== TABLE: devices ==================== -->
+        <mxCell id="t_devices_header" value="devices" style="swimlane;fontStyle=1;fontSize=12;fillColor=#fff2cc;strokeColor=#d6b656;startSize=25;" vertex="1" parent="1">
+          <mxGeometry x="680" y="70" width="260" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="t_devices_1" value="🔑 id (UUID, PK)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_devices_header">
+          <mxGeometry x="10" y="30" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_devices_2" value="🔗 child_id (UUID, FK → children.id)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_devices_header">
+          <mxGeometry x="10" y="55" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_devices_3" value="name (TEXT) — e.g. 'Emma iPhone 15'" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_devices_header">
+          <mxGeometry x="10" y="80" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_devices_4" value="type (ENUM: ios/android/windows/mac/console)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_devices_header">
+          <mxGeometry x="10" y="105" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_devices_5" value="tailscale_id (TEXT) — Headscale node ID" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_devices_header">
+          <mxGeometry x="10" y="130" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_devices_6" value="monitoring_level (ENUM: full/dns_only)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_devices_header">
+          <mxGeometry x="10" y="155" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_devices_7" value="enrolled_at (TIMESTAMPTZ)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_devices_header">
+          <mxGeometry x="10" y="180" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_devices_8" value="last_seen_at (TIMESTAMPTZ)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_devices_header">
+          <mxGeometry x="10" y="205" width="240" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== TABLE: events ==================== -->
+        <mxCell id="t_events_header" value="events" style="swimlane;fontStyle=1;fontSize=12;fillColor=#e1d5e7;strokeColor=#9673a6;startSize=25;" vertex="1" parent="1">
+          <mxGeometry x="360" y="360" width="280" height="320" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_1" value="🔑 id (UUID, PK)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="30" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_2" value="🔗 device_id (UUID, FK → devices.id)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="55" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_3" value="🔗 child_id (UUID, FK → children.id)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="80" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_4" value="platform (ENUM: youtube/roblox/twitch/discord/web)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="105" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_5" value="content_id (TEXT) — video_id / game_id / etc." style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="130" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_6" value="content_title (TEXT)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="155" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_7" value="risk_level (ENUM: safe/low/medium/high/critical)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="180" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_8" value="risk_categories (TEXT[]) — e.g. ['violence']" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="205" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_9" value="ai_model (TEXT) — which model scored this" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="230" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_10" value="metadata (JSONB) — raw API response" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="255" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_events_11" value="created_at (TIMESTAMPTZ)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_events_header">
+          <mxGeometry x="10" y="280" width="260" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== TABLE: rules ==================== -->
+        <mxCell id="t_rules_header" value="rules" style="swimlane;fontStyle=1;fontSize=12;fillColor=#f8cecc;strokeColor=#b85450;startSize=25;" vertex="1" parent="1">
+          <mxGeometry x="40" y="360" width="270" height="260" as="geometry" />
+        </mxCell>
+        <mxCell id="t_rules_1" value="🔑 id (UUID, PK)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_rules_header">
+          <mxGeometry x="10" y="30" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_rules_2" value="🔗 child_id (UUID, FK → children.id, nullable)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_rules_header">
+          <mxGeometry x="10" y="55" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_rules_3" value="rule_type (ENUM: domain/platform/time)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_rules_header">
+          <mxGeometry x="10" y="80" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_rules_4" value="action (ENUM: block/allow/alert)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_rules_header">
+          <mxGeometry x="10" y="105" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_rules_5" value="target (TEXT) — domain / platform name" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_rules_header">
+          <mxGeometry x="10" y="130" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_rules_6" value="schedule (JSONB) — time-based rules" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_rules_header">
+          <mxGeometry x="10" y="155" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_rules_7" value="created_by (UUID, FK → auth.users)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_rules_header">
+          <mxGeometry x="10" y="180" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_rules_8" value="active (BOOLEAN)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_rules_header">
+          <mxGeometry x="10" y="205" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_rules_9" value="created_at (TIMESTAMPTZ)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_rules_header">
+          <mxGeometry x="10" y="230" width="250" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== TABLE: alerts ==================== -->
+        <mxCell id="t_alerts_header" value="alerts" style="swimlane;fontStyle=1;fontSize=12;fillColor=#ffe6cc;strokeColor=#d6b656;startSize=25;" vertex="1" parent="1">
+          <mxGeometry x="700" y="360" width="270" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="t_alerts_1" value="🔑 id (UUID, PK)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_alerts_header">
+          <mxGeometry x="10" y="30" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_alerts_2" value="🔗 event_id (UUID, FK → events.id)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_alerts_header">
+          <mxGeometry x="10" y="55" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_alerts_3" value="🔗 child_id (UUID, FK → children.id)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_alerts_header">
+          <mxGeometry x="10" y="80" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_alerts_4" value="risk_level (ENUM: medium/high/critical)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_alerts_header">
+          <mxGeometry x="10" y="105" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_alerts_5" value="channel (ENUM: push/email/sms)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_alerts_header">
+          <mxGeometry x="10" y="130" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_alerts_6" value="sent_at (TIMESTAMPTZ)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_alerts_header">
+          <mxGeometry x="10" y="155" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_alerts_7" value="acknowledged_at (TIMESTAMPTZ, nullable)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_alerts_header">
+          <mxGeometry x="10" y="180" width="250" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== TABLE: access_requests ==================== -->
+        <mxCell id="t_access_header" value="access_requests" style="swimlane;fontStyle=1;fontSize=12;fillColor=#d5e8d4;strokeColor=#82b366;startSize=25;" vertex="1" parent="1">
+          <mxGeometry x="360" y="730" width="280" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="t_access_1" value="🔑 id (UUID, PK)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_access_header">
+          <mxGeometry x="10" y="30" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_access_2" value="🔗 child_id (UUID, FK → children.id)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_access_header">
+          <mxGeometry x="10" y="55" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_access_3" value="domain (TEXT) — requested domain" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_access_header">
+          <mxGeometry x="10" y="80" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_access_4" value="reason (TEXT) — child's explanation" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_access_header">
+          <mxGeometry x="10" y="105" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_access_5" value="status (ENUM: pending/approved/denied)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_access_header">
+          <mxGeometry x="10" y="130" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_access_6" value="reviewed_by (UUID, FK → auth.users)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_access_header">
+          <mxGeometry x="10" y="155" width="260" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_access_7" value="created_at / reviewed_at (TIMESTAMPTZ)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_access_header">
+          <mxGeometry x="10" y="180" width="260" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== TABLE: audit_log ==================== -->
+        <mxCell id="t_audit_header" value="audit_log" style="swimlane;fontStyle=1;fontSize=12;fillColor=#f5f5f5;strokeColor=#666666;startSize=25;" vertex="1" parent="1">
+          <mxGeometry x="700" y="630" width="270" height="200" as="geometry" />
+        </mxCell>
+        <mxCell id="t_audit_1" value="🔑 id (UUID, PK)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_audit_header">
+          <mxGeometry x="10" y="30" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_audit_2" value="user_id (UUID, FK → auth.users)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_audit_header">
+          <mxGeometry x="10" y="55" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_audit_3" value="action (TEXT) — e.g. 'rule.created'" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_audit_header">
+          <mxGeometry x="10" y="80" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_audit_4" value="resource_type / resource_id (TEXT/UUID)" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_audit_header">
+          <mxGeometry x="10" y="105" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_audit_5" value="changes (JSONB) — before/after diff" style="text;strokeColor=none;fillColor=none;align=left;fontSize=10;" vertex="1" parent="t_audit_header">
+          <mxGeometry x="10" y="130" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_audit_6" value="ip_address (INET)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_audit_header">
+          <mxGeometry x="10" y="155" width="250" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="t_audit_7" value="created_at (TIMESTAMPTZ)" style="text;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="t_audit_header">
+          <mxGeometry x="10" y="175" width="250" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== RELATIONSHIPS ==================== -->
+
+        <!-- profiles 1 → * children -->
+        <mxCell id="r1" value="1" style="edgeStyle=entityRelationEdgeStyle;fontSize=10;strokeColor=#6c8ebf;strokeWidth=2;startArrow=ERone;endArrow=ERmanyToOne;" edge="1" source="t_profiles_header" target="t_children_header" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- children 1 → * devices -->
+        <mxCell id="r2" value="has" style="edgeStyle=entityRelationEdgeStyle;fontSize=10;strokeColor=#d6b656;strokeWidth=2;startArrow=ERone;endArrow=ERmanyToOne;" edge="1" source="t_children_header" target="t_devices_header" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- devices 1 → * events -->
+        <mxCell id="r3" value="generates" style="edgeStyle=entityRelationEdgeStyle;fontSize=10;strokeColor=#9673a6;strokeWidth=2;startArrow=ERone;endArrow=ERmanyToOne;" edge="1" source="t_devices_header" target="t_events_header" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- children 1 → * events -->
+        <mxCell id="r4" value="" style="edgeStyle=orthogonalEdgeStyle;fontSize=10;strokeColor=#9673a6;strokeWidth=1;dashed=1;" edge="1" source="t_children_header" target="t_events_header" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- events 1 → 0..1 alerts -->
+        <mxCell id="r5" value="triggers" style="edgeStyle=entityRelationEdgeStyle;fontSize=10;strokeColor=#d6b656;strokeWidth=2;startArrow=ERone;endArrow=ERzeroToOne;" edge="1" source="t_events_header" target="t_alerts_header" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- children 1 → * rules -->
+        <mxCell id="r6" value="has" style="edgeStyle=entityRelationEdgeStyle;fontSize=10;strokeColor=#b85450;strokeWidth=2;startArrow=ERone;endArrow=ERmanyToOne;" edge="1" source="t_children_header" target="t_rules_header" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- children 1 → * access_requests -->
+        <mxCell id="r7" value="submits" style="edgeStyle=entityRelationEdgeStyle;fontSize=10;strokeColor=#82b366;strokeWidth=2;startArrow=ERone;endArrow=ERmanyToOne;" edge="1" source="t_children_header" target="t_access_header" parent="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

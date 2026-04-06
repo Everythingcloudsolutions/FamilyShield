@@ -1,0 +1,57 @@
+# .github/actions/tofu-apply/action.yml
+name: "OpenTofu Apply"
+description: "Run tofu apply against a target environment"
+
+inputs:
+  environment:
+    description: "Target environment: dev | staging | prod"
+    required: true
+  working_directory:
+    description: "IaC working directory"
+    required: false
+    default: "iac"
+  var_file:
+    description: "Path to tfvars file"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup OpenTofu
+      uses: opentofu/setup-opentofu@v1
+      with:
+        tofu_version: "1.6.x"
+
+    - name: Tofu Init
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        tofu init \
+          -backend-config="key=${{ inputs.environment }}/terraform.tfstate" \
+          -reconfigure
+        echo "✅ tofu init complete"
+
+    - name: Tofu Apply
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        VAR_FILE_ARG=""
+        if [ -n "${{ inputs.var_file }}" ]; then
+          VAR_FILE_ARG="-var-file=${{ inputs.var_file }}"
+        fi
+
+        tofu apply \
+          -var="environment=${{ inputs.environment }}" \
+          $VAR_FILE_ARG \
+          -auto-approve \
+          -no-color
+
+        echo "✅ tofu apply complete for ${{ inputs.environment }}"
+
+    - name: Capture outputs
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        echo "## 🚀 Deploy outputs — ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        tofu output -no-color 2>/dev/null | grep -v "sensitive" >> $GITHUB_STEP_SUMMARY || true
