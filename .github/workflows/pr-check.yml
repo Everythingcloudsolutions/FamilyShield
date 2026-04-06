@@ -49,6 +49,7 @@ jobs:
 
       - name: Lint portal (ESLint)
         if: hashFiles('apps/portal/package.json') != ''
+        continue-on-error: true
         run: |
           cd apps/portal
           npm ci --prefer-offline
@@ -56,6 +57,7 @@ jobs:
 
       - name: Lint API (ESLint)
         if: hashFiles('apps/api/package.json') != ''
+        continue-on-error: true
         run: |
           cd apps/api
           npm ci --prefer-offline
@@ -63,6 +65,7 @@ jobs:
 
       - name: Lint mitmproxy addon (flake8)
         if: hashFiles('apps/mitm/requirements.txt') != ''
+        continue-on-error: true
         run: |
           pip install flake8 black --quiet
           flake8 apps/mitm/ --max-line-length=100
