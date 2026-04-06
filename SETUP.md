@@ -477,53 +477,197 @@ After it finishes, try to set up production protection:
 
 ---
 
-## Part 11 — First Deploy
+## Part 11 — Your First Deployment to the Cloud
 
-Everything is now configured. Create a branch, push your change, and open a pull request:
+You now have everything set up. This step will create the actual cloud server (VM) and all the services that run on it.
 
-```bash
-git checkout -b feat/initial-setup
-git add iac/variables.tf
-git commit -m "iac: set OCI ARM image OCID for ca-toronto-1"
-git push --set-upstream origin feat/initial-setup
-```
+**What happens:**
+1. You create a change in GitHub that includes the ARM image ID we found earlier
+2. GitHub automatically checks the change (called `tofu plan`)
+3. You review what will be created, then approve the change
+4. GitHub automatically deploys everything to your dev environment
+5. Within 5–10 minutes, your OCI cloud server is running
 
-1. Go to **github.com/Everythingcloudsolutions/FamilyShield** and open the pull request
-2. GitHub Actions will run `tofu plan` and post the planned changes as a comment on the PR — review it to see exactly what will be created
-3. Merge the PR
-4. GitHub Actions automatically runs `tofu apply` and deploys to dev
+**Step-by-step:**
 
-The deploy takes about 5–10 minutes. When it finishes, you will see the VM's IP address in the Actions log under `tofu output`.
+### Step 11.1 — Create a Pull Request
+
+1. Open **GitHub Desktop** (or go to github.com/Everythingcloudsolutions/FamilyShield)
+
+2. Click **Fetch origin** to get the latest code
+
+3. Click **Create Branch** and name it: `feat/initial-setup`
+   - Branch name doesn't matter — it's just for organizing your work
+
+4. In the file explorer on your laptop, open:
+   ```
+   C:\Users\mohit.kumar.goyal\OneDrive - Accenture\Github\FamilyShield\iac\variables.tf
+   ```
+
+5. Find this line (around line 35):
+   ```
+   oci_ubuntu_arm_image_id = "ocid1.image.oc1.ca-toronto-1.aaaaaa...NOT_FOUND"
+   ```
+
+6. Replace `NOT_FOUND` with the image ID from your bootstrap output:
+   ```
+   oci_ubuntu_arm_image_id = "ocid1.image.oc1.ca-toronto-1.aaaaaaaawzbmdqqvrcLW4cvhegvnbbxtoday4bxlkdpqeowc5kcbrhpit2a"
+   ```
+   (Use **YOUR** ID from the bootstrap output, not this example)
+
+7. **Save the file** (Ctrl+S)
+
+8. Go back to **GitHub Desktop**:
+   - It should show `iac/variables.tf` as changed
+   - In the "Commit to" field at the bottom left, type:
+     ```
+     Add OCI ARM image ID for first deploy
+     ```
+   - Click **Commit to feat/initial-setup**
+
+9. Click **Publish branch**
+
+10. Click **Create Pull Request**
+    - GitHub will open the pull request in your browser
+    - Add a title: `Initial cloud deployment — add ARM image ID`
+    - Click **Create pull request**
+
+### Step 11.2 — Wait for GitHub to Check Your Change
+
+1. You'll see a section that says "Checks running..." — **wait 1–2 minutes**
+
+2. Once it finishes, you'll see a comment from **tofu-plan** that shows:
+   - What will be created (OCI VM, networks, databases, etc.)
+   - How many resources will be added (usually 20–30 items)
+   - **This is safe to look at** — it's just a preview, nothing is deployed yet
+
+3. Read through the changes (optional — you can skip this if you trust the setup)
+
+### Step 11.3 — Approve and Deploy
+
+1. Scroll down and click **Merge pull request**
+
+2. Click **Confirm merge**
+
+3. GitHub will now automatically start the `deploy-dev` workflow:
+   - Go to the **Actions** tab
+   - You'll see a workflow running that says `deploy-dev`
+   - **Wait 5–10 minutes** — it's creating your cloud server
+
+4. When it finishes, you'll see a green checkmark ✅ on `deploy-dev`
+
+5. Open the workflow details and scroll to the bottom — you'll see:
+   ```
+   Outputs
+   vm_public_ip = 152.67.xxx.xxx
+   ```
+   - **Copy this IP address** — you'll use it in Part 12
+
+**That's it!** Your cloud infrastructure is now live.
 
 ---
 
-## Part 12 — Connect to Your VM via SSH
+## Part 12 — Log In to Your Cloud Server
 
-1. Copy the VM's IP address from the GitHub Actions log
+Now your cloud server is running. This section shows you how to access it and see what's running inside.
 
-2. Open `C:\Users\mohit\.ssh\config` in a text editor (create it if it does not exist) and add:
+**Why:** You need to connect to your VM to:
 
-   ```text
-   Host familyshield-dev
-     HostName       <PASTE_VM_IP_HERE>
-     User           ubuntu
-     IdentityFile   ~/.ssh/familyshield
-     ServerAliveInterval 60
+- Check that all services are running (AdGuard, Headscale, mitmproxy, etc.)
+- View logs if something goes wrong
+- Manage the system
+
+**Two ways to access the server:**
+
+- **Via terminal (Git Bash)** — for power users, command-line access
+- **Via VS Code Remote SSH** — recommended, visual editor connected to the server
+
+### Step 12.1 — Find Your Cloud Server's IP Address
+
+1. Go to **github.com/Everythingcloudsolutions/FamilyShield/actions**
+
+2. Click the **deploy-dev** workflow that just finished
+
+3. Scroll to the bottom and look for:
+
+   ```
+   Outputs
+   vm_public_ip = 152.67.xxx.xxx
    ```
 
-3. Test the connection in Git Bash:
+4. **Copy that IP address** (e.g., `152.67.123.456`) — you'll use it in the next step
+
+### Step 12.2 — Connect via Terminal (Git Bash)
+
+**Easy 1-minute setup:**
+
+1. Open **Git Bash** on your laptop
+
+2. Copy and paste this command (replace `152.67.123.456` with YOUR IP):
+
+   ```bash
+   echo "Host familyshield-dev
+     HostName 152.67.123.456
+     User ubuntu
+     IdentityFile ~/.ssh/familyshield
+     ServerAliveInterval 60" >> ~/.ssh/config
+   ```
+
+3. Press **Enter**
+
+4. Now test the connection:
 
    ```bash
    ssh familyshield-dev
    ```
 
-   You should see the Ubuntu welcome message.
+5. You should see:
 
-4. For VS Code Remote SSH access (recommended for development):
-   - Press `Ctrl+Shift+P` in VS Code
-   - Type: `Remote-SSH: Connect to Host`
-   - Select `familyshield-dev`
-   - VS Code will open a new window connected to the VM
+   ```
+   Welcome to Ubuntu 22.04 LTS...
+   ubuntu@familyshield-dev:~$
+   ```
+
+   **Congrats!** You're connected to your cloud server.
+
+6. To see what's running, type:
+
+   ```bash
+   docker ps
+   ```
+
+   You'll see all 10 services: AdGuard, Headscale, mitmproxy, Redis, API, Node-RED, etc.
+
+7. To exit, type:
+
+   ```bash
+   exit
+   ```
+
+### Step 12.3 — Connect via VS Code (Recommended for Development)
+
+**This opens your cloud server inside VS Code — much easier to work with files:**
+
+1. Open **VS Code** on your laptop
+
+2. Install the **Remote - SSH** extension:
+   - Click the **Extensions** icon (left sidebar)
+   - Search: `Remote - SSH`
+   - Click **Install**
+
+3. Press `Ctrl+Shift+P` and type:
+
+   ```text
+   Remote-SSH: Connect to Host
+   ```
+
+4. Select **familyshield-dev** from the list
+   - (If it doesn't appear, you can type: `ubuntu@152.67.123.456` and press Enter)
+
+5. VS Code will open a new window connected to your server
+   - The left sidebar shows files on your cloud server
+   - You can edit, create, and manage files directly
+   - **This is recommended** for development work
 
 ---
 
