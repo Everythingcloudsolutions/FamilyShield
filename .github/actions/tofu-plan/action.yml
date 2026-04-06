@@ -41,6 +41,7 @@ runs:
       run: |
         tofu init \
           -backend-config="key=${{ inputs.environment }}/terraform.tfstate" \
+          -backend-config="endpoint=https://${TF_VAR_oci_namespace}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
           -reconfigure
         echo "✅ tofu init complete"
 

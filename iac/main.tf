@@ -27,11 +27,11 @@ terraform {
   # Remote state — OCI Object Storage (S3-compatible, Always Free)
   # Bootstrap this bucket FIRST before running tofu apply on this root
   # See: scripts/bootstrap-state-bucket.sh
+  # Note: endpoint is passed via -backend-config flag in GitHub Actions
   backend "s3" {
     bucket                      = "familyshield-tfstate"
     key                         = "root/terraform.tfstate"
     region                      = "ca-toronto-1"
-    endpoint                    = "https://${var.oci_namespace}.compat.objectstorage.ca-toronto-1.oraclecloud.com"
     skip_region_validation      = true
     skip_credentials_validation = true
     skip_metadata_api_check     = true
