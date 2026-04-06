@@ -39,11 +39,12 @@ docker-compose.prod.yml
 *.pem
 *.key
 ~/.oci/
+~/.secrets/
 
 # OS
 .DS_Store
 Thumbs.db
-.zip
+*.zip
 
 # VS Code
 .vscode/settings.json

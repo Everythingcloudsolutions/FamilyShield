@@ -39,19 +39,22 @@ echo "✅ OCI CLI configured"
 echo "   Tenancy OCID: $TENANCY_OCID"
 echo ""
 
-# ── Step 2: Enable required OCI services ─────────────────────────────────────
-echo "STEP 2 — Enable OCI Security Services"
-echo "--------------------------------------"
-echo "Enabling Cloud Guard, Vulnerability Scanning..."
-
-# Note: Cloud Guard must be enabled manually in Console first time
-# Console → Security → Cloud Guard → Enable
-echo "⚠️  Manual step required:"
-echo "   Go to: https://cloud.oracle.com/security/cloud-guard"
-echo "   Click: Enable Cloud Guard"
-echo "   Reporting region: Canada Southeast (ca-toronto-1)"
+# ── Step 2: Cloud Guard (optional) ──────────────────────────────────────────
+echo "STEP 2 — Cloud Guard Setup (Optional)"
+echo "-------------------------------------"
+echo "Cloud Guard provides continuous security monitoring."
+echo "If enabled, prerequisites may apply (check Console first)."
 echo ""
-read -p "Press Enter once Cloud Guard is enabled..."
+read -p "Enable Cloud Guard now? (y/n, default: n) " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+  echo "Go to: https://cloud.oracle.com/security/cloud-guard"
+  echo "Click: Enable Cloud Guard"
+  echo "Reporting region: Canada Southeast (ca-toronto-1)"
+  read -p "Press Enter once Cloud Guard is enabled..."
+else
+  echo "⚠️  Skipping Cloud Guard. You can enable it manually later in OCI Console."
+fi
 
 # ── Step 3: Create GitHub Actions service user ────────────────────────────────
 echo ""
@@ -61,12 +64,26 @@ echo "----------------------------------------"
 GH_USER_NAME="familyshield-github-actions"
 
 echo "Creating IAM user: $GH_USER_NAME"
-GH_USER_OCID=$(oci iam user create \
-  --name "$GH_USER_NAME" \
-  --description "FamilyShield GitHub Actions service user - do not use interactively" \
-  --query "data.id" \
-  --raw-output 2>/dev/null || \
-  oci iam user list --name "$GH_USER_NAME" --query "data[0].id" --raw-output)
+
+# Try to get existing user first
+GH_USER_OCID=$(oci iam user list --all --query "data[?name=='$GH_USER_NAME'] | [0].id" --raw-output 2>/dev/null || echo "")
+
+# If not found, create it
+if [ -z "$GH_USER_OCID" ] || [ "$GH_USER_OCID" = "None" ]; then
+  GH_USER_OCID=$(oci iam user create \
+    --name "$GH_USER_NAME" \
+    --description "FamilyShield GitHub Actions service user - do not use interactively" \
+    --query "data.id" \
+    --raw-output)
+  echo "   Created new user"
+else
+  echo "   User already exists"
+fi
+
+if [ -z "$GH_USER_OCID" ] || [ "$GH_USER_OCID" = "None" ]; then
+  echo "❌ Failed to create or retrieve GitHub Actions user"
+  exit 1
+fi
 
 echo "✅ GitHub Actions user OCID: $GH_USER_OCID"
 
@@ -183,10 +200,12 @@ echo "  CLOUDFLARE_ZONE_ID     = (from Cloudflare dashboard → everythingcloud.
 echo "  CLOUDFLARE_ACCOUNT_ID  = (from Cloudflare dashboard)"
 echo ""
 echo "  ADGUARD_ADMIN_PASSWORD = (choose a strong password)"
-echo "  SUPABASE_URL           = (from Supabase project settings)"
-echo "  SUPABASE_ANON_KEY      = (from Supabase project settings)"
+echo "  SUPABASE_URL           = (from Supabase → Settings → API)"
+echo "  SUPABASE_ANON_KEY      = (from Supabase → Settings → API → Service Role Key)"
 echo "  GROQ_API_KEY           = (from console.groq.com)"
 echo "  ANTHROPIC_API_KEY      = (from console.anthropic.com)"
+echo ""
+echo "⚠️  Supabase note: Use the Service Role Key (not deprecated anon public key)"
 echo ""
 echo "Update iac/variables.tf:"
 echo "  oci_ubuntu_arm_image_id = \"$ARM_IMAGE\""

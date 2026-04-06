@@ -286,7 +286,9 @@ Supabase is the PostgreSQL database that stores all activity logs, alerts, child
 2. Click **API**
 3. Copy and save to your text file:
    - **Project URL** — looks like `https://abcdefghijklm.supabase.co`
-   - **anon public** key — the long JWT string under "Project API keys" → `anon public`
+   - **Service Role Key** — the long JWT string under "Project API keys" → `service_role` (NOT `anon public`, which is deprecated)
+
+**Why Service Role Key?** The anon public key is no longer recommended by Supabase. The Service Role Key is more secure for server-side operations like your enrichment worker and API.
 
 ---
 
@@ -409,10 +411,12 @@ Secrets are stored encrypted in GitHub and injected into workflows at deploy tim
 | `CLOUDFLARE_ZONE_ID` | Part 3.2 |
 | `CLOUDFLARE_ACCOUNT_ID` | Part 3.2 |
 | `SUPABASE_URL` | Part 4.3 |
-| `SUPABASE_ANON_KEY` | Part 4.3 |
+| `SUPABASE_ANON_KEY` | Part 4.3 — use the **Service Role Key**, not the deprecated anon public key |
 | `GROQ_API_KEY` | Part 5.1 |
 | `ANTHROPIC_API_KEY` | Part 5.2 |
 | `ADGUARD_ADMIN_PASSWORD` | Choose a strong password now (e.g. use a password manager). You will use this to log in to the AdGuard admin panel later. |
+
+> **Supabase credential note:** The `SUPABASE_ANON_KEY` secret should contain the **Service Role Key** from Part 4.3, which is more secure than the deprecated anon public key. The secret name stays `SUPABASE_ANON_KEY` for backward compatibility with the codebase, but the value is the Service Role Key.
 
 ---
 
