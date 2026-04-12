@@ -94,7 +94,7 @@ jobs:
         with:
           environment:       dev
           working_directory: iac
-          var_file:          iac/environments/dev/terraform.tfvars
+          var_file:          environments/dev/terraform.tfvars
           github_token:      ${{ secrets.GITHUB_TOKEN }}
         env:
           TF_VAR_oci_tenancy_ocid:       ${{ secrets.OCI_TENANCY_OCID }}

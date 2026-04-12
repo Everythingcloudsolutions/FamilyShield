@@ -108,3 +108,9 @@ variable "anthropic_api_key" {
   type        = string
   sensitive   = true
 }
+
+variable "admin_emails" {
+  description = "Email addresses for Cloudflare Zero Trust admin access"
+  type        = list(string)
+  default     = []
+}
