@@ -4,6 +4,14 @@
 # Domain: familyshield.everythingcloud.ca
 ###############################################################################
 
+terraform {
+  required_providers {
+    cloudflare = {
+      source = "cloudflare/cloudflare"
+    }
+  }
+}
+
 # Cloudflare Tunnel (outbound-only — no open inbound ports needed)
 resource "cloudflare_tunnel" "main" {
   account_id = var.cloudflare_account_id
