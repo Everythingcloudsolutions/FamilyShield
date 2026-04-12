@@ -133,6 +133,7 @@ module "cloudflare" {
   tunnel_secret         = random_password.tunnel_secret.result
   environment           = var.environment
   vm_public_ip          = module.compute.public_ip
+  admin_emails          = var.admin_emails
 }
 
 ###############################################################################

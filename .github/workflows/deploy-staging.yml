@@ -47,7 +47,7 @@ jobs:
         with:
           environment:       staging
           working_directory: iac
-          var_file:          iac/environments/staging/terraform.tfvars
+          var_file:          environments/staging/terraform.tfvars
         env:
           TF_VAR_oci_tenancy_ocid:       ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_oci_namespace:          ${{ secrets.OCI_NAMESPACE }}
