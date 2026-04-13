@@ -56,15 +56,20 @@ runs:
         # Proactively import existing Object Storage buckets if they exist in OCI but not in state
         echo ""
         echo "📋 Checking for existing Object Storage buckets to import..."
-        for BUCKET_NAME in "familyshield-tfstate-${{ inputs.environment }}" "familyshield-backups-${{ inputs.environment }}" "familyshield-app-${{ inputs.environment }}"; do
-          BUCKET_TYPE=$(echo "$BUCKET_NAME" | sed "s/familyshield-//;s/-${{ inputs.environment }}//")
-          if ! tofu state list 2>/dev/null | grep -q "module.storage.oci_objectstorage_bucket.$BUCKET_TYPE"; then
+        # Explicit mapping of resource names to bucket prefixes (resource_name:bucket_prefix)
+        declare -a BUCKETS=("tfstate:familyshield-tfstate" "backups:familyshield-backups" "app_data:familyshield-app")
+        for BUCKET_MAP in "${BUCKETS[@]}"; do
+          RESOURCE_NAME="${BUCKET_MAP%:*}"
+          BUCKET_PREFIX="${BUCKET_MAP#*:}"
+          BUCKET_NAME="${BUCKET_PREFIX}-${{ inputs.environment }}"
+
+          if ! tofu state list 2>/dev/null | grep -q "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME"; then
             # Check if bucket exists in OCI
             BUCKET_EXISTS=$(oci os bucket get --namespace-name "$TF_VAR_oci_namespace" --bucket-name "$BUCKET_NAME" --query "name" --raw-output 2>/dev/null || echo "")
             if [ -n "$BUCKET_EXISTS" ] && [ "$BUCKET_EXISTS" != "None" ]; then
               echo "✅ Found existing bucket in OCI: $BUCKET_NAME"
-              echo "   Importing into state as module.storage.oci_objectstorage_bucket.$BUCKET_TYPE..."
-              tofu import "module.storage.oci_objectstorage_bucket.$BUCKET_TYPE" "$BUCKET_NAME" 2>/dev/null && echo "   ✅ Bucket imported" || echo "   ⚠️  Import may have failed, will retry on apply"
+              echo "   Importing into state as module.storage.oci_objectstorage_bucket.$RESOURCE_NAME..."
+              tofu import "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" 2>/dev/null && echo "   ✅ Bucket imported" || echo "   ⚠️  Import may have failed, will retry on apply"
             fi
           else
             echo "✅ Bucket $BUCKET_NAME already in state"
@@ -107,12 +112,15 @@ runs:
           # Try to import existing buckets if they exist
           echo ""
           echo "Checking for existing Object Storage buckets..."
-          for BUCKET_NAME in "familyshield-tfstate-${{ inputs.environment }}" "familyshield-backups-${{ inputs.environment }}" "familyshield-app-${{ inputs.environment }}"; do
-            BUCKET_TYPE=$(echo "$BUCKET_NAME" | sed "s/familyshield-//;s/-${{ inputs.environment }}//")
+          declare -a BUCKETS_RETRY=("tfstate:familyshield-tfstate" "backups:familyshield-backups" "app_data:familyshield-app")
+          for BUCKET_MAP in "${BUCKETS_RETRY[@]}"; do
+            RESOURCE_NAME="${BUCKET_MAP%:*}"
+            BUCKET_PREFIX="${BUCKET_MAP#*:}"
+            BUCKET_NAME="${BUCKET_PREFIX}-${{ inputs.environment }}"
             BUCKET_EXISTS=$(oci os bucket get --namespace-name "$TF_VAR_oci_namespace" --bucket-name "$BUCKET_NAME" --query "name" --raw-output 2>/dev/null || echo "")
             if [ -n "$BUCKET_EXISTS" ] && [ "$BUCKET_EXISTS" != "None" ]; then
               echo "✅ Found existing bucket: $BUCKET_NAME"
-              tofu import "module.storage.oci_objectstorage_bucket.$BUCKET_TYPE" "$BUCKET_NAME" 2>&1 || true
+              tofu import "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" 2>&1 || true
             fi
           done
 
