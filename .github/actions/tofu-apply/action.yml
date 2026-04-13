@@ -50,12 +50,28 @@ runs:
         # Remove tunnel and tunnel_config from state to prevent "Configuration for tunnel not found" errors
         # These resources will be recreated fresh by tofu apply
         echo "Removing problematic Cloudflare resources from state..."
+        echo ""
 
-        # Try to forcefully remove tunnel and tunnel_config
-        tofu state rm -force 'module.cloudflare.cloudflare_tunnel.main' 2>&1 || true
-        tofu state rm -force 'module.cloudflare.cloudflare_tunnel_config.main' 2>&1 || true
+        # Check if tunnel exists in state
+        echo "Listing state resources:"
+        if tofu state list 2>/dev/null | grep -q "cloudflare_tunnel"; then
+          echo "Found cloudflare_tunnel in state, removing..."
+          tofu state rm -force 'module.cloudflare.cloudflare_tunnel.main'
+          echo "✅ Tunnel removed"
+        else
+          echo "No cloudflare_tunnel in state"
+        fi
 
-        echo "✅ State cleanup complete - tunnel resources removed"
+        if tofu state list 2>/dev/null | grep -q "cloudflare_tunnel_config"; then
+          echo "Found cloudflare_tunnel_config in state, removing..."
+          tofu state rm -force 'module.cloudflare.cloudflare_tunnel_config.main'
+          echo "✅ Tunnel config removed"
+        else
+          echo "No cloudflare_tunnel_config in state"
+        fi
+
+        echo ""
+        echo "✅ State cleanup complete"
 
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
