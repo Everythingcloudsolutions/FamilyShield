@@ -43,6 +43,18 @@ runs:
           -reconfigure
         echo "✅ tofu init with remote S3 backend complete"
 
+    - name: Cleanup orphaned cloudflare resources from state
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        echo "🗑️  Cleaning up orphaned Cloudflare resources from state..."
+        # Remove cloudflare module resources if they exist in state
+        # (from when Cloudflare was managed by Terraform before API-driven approach)
+        tofu state rm module.cloudflare.cloudflare_tunnel.main 2>/dev/null && echo "✅ Removed cloudflare_tunnel.main" || true
+        tofu state rm module.cloudflare.cloudflare_tunnel_config.main 2>/dev/null && echo "✅ Removed cloudflare_tunnel_config.main" || true
+        tofu state rm module.cloudflare 2>/dev/null && echo "✅ Removed cloudflare module" || true
+        echo "✅ State cleanup complete"
+
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
       working-directory: ${{ inputs.working_directory }}
