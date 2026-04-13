@@ -279,15 +279,35 @@ C4Component
 
 ---
 
-## Deployment Diagram
+## Deployment Diagram — Three-Stage Pipeline
+
+FamilyShield uses a three-stage deployment approach to manage infrastructure, networking, and applications independently:
 
 ```mermaid
 flowchart TB
   subgraph github["GitHub (Private Repo)"]
     code["Source code"]
-    actions["GitHub Actions"]
     secrets["Repository Secrets"]
     ghcr["GHCR — Docker images"]
+  end
+
+  subgraph stage1["STAGE 1 — Infrastructure (IaC)"]
+    deploy_dev["deploy-dev.yml"]
+    deploy_stg["deploy-staging.yml"]
+    deploy_prod["deploy-prod.yml"]
+  end
+
+  subgraph stage2["STAGE 2 — Cloudflare (API)"]
+    cf_dev["deploy-cloudflare.yml"]
+    cf_stg["deploy-cloudflare.yml"]
+    cf_prod["deploy-cloudflare.yml"]
+  end
+
+  subgraph stage3["STAGE 3 — App Deployment"]
+    build["build-and-push<br/>(Docker images)"]
+    app_dev["deploy-app-dev.yml"]
+    app_stg["deploy-app-staging.yml"]
+    app_prod["deploy-app-prod.yml"]
   end
 
   subgraph oci["OCI Toronto — ca-toronto-1"]
@@ -303,37 +323,69 @@ flowchart TB
     end
   end
 
-  subgraph cloudflare["Cloudflare"]
-    dns["DNS — everythingcloud.ca"]
-    tunnel_dev["Tunnel → dev"]
-    tunnel_stg["Tunnel → staging"]
-    tunnel_prd["Tunnel → prod"]
-    zt["Zero Trust"]
+  subgraph cloudflare["Cloudflare API"]
+    dns["DNS records<br/>everythingcloud.ca"]
+    tunnel_dev["Tunnel: familyshield-dev"]
+    tunnel_stg["Tunnel: familyshield-staging"]
+    tunnel_prod["Tunnel: familyshield-prod"]
+    zt["Zero Trust<br/>Access Apps"]
   end
 
   subgraph external["External Services"]
-    supabase["Supabase"]
-    groq["Groq"]
-    anthropic["Anthropic"]
+    supabase["Supabase<br/>(PostgreSQL)"]
+    groq["Groq LLM<br/>(primary)"]
+    anthropic["Anthropic<br/>(fallback)"]
   end
 
-  code --> actions
-  secrets --> actions
-  actions -->|"tofu apply (auto)"| dev_comp
-  actions -->|"tofu apply (auto)"| stg_comp
-  actions -->|"tofu apply (manual approve)"| prd_comp
-  actions --> ghcr
-  ghcr -->|"docker pull"| dev_vm
-  ghcr -->|"docker pull"| stg_vm
-  ghcr -->|"docker pull"| prd_vm
-  dev_vm --> tunnel_dev --> dns
-  stg_vm --> tunnel_stg --> dns
-  prd_vm --> tunnel_prd --> dns
+  code --> deploy_dev
+  code --> deploy_stg
+  code --> deploy_prod
+  secrets --> deploy_dev
+  secrets --> cf_dev
+  secrets --> build
+
+  deploy_dev -->|"tofu apply<br/>(auto)"| dev_comp
+  deploy_stg -->|"tofu apply<br/>(auto after dev)"| stg_comp
+  deploy_prod -->|"tofu apply<br/>(manual approve)"| prd_comp
+
+  dev_comp -->|"success"| cf_dev
+  stg_comp -->|"success"| cf_stg
+  prd_comp -->|"success"| cf_prod
+
+  cf_dev -->|"creates"| tunnel_dev
+  cf_stg -->|"creates"| tunnel_stg
+  cf_prod -->|"creates"| tunnel_prod
+
+  tunnel_dev --> dns
+  tunnel_stg --> dns
+  tunnel_prod --> dns
   dns --> zt
+
+  deploy_dev -->|"parallel"| build
+  build --> ghcr
+
+  ghcr -->|"pull"| app_dev
+  ghcr -->|"pull"| app_stg
+  ghcr -->|"pull"| app_prod
+
+  cf_dev -->|"tunnel ready"| app_dev
+  cf_stg -->|"tunnel ready"| app_stg
+  cf_prod -->|"tunnel ready"| app_prod
+
+  app_dev -->|"deploy"| dev_vm
+  app_stg -->|"deploy"| stg_vm
+  app_prod -->|"deploy"| prd_vm
+
   dev_vm --> supabase
   dev_vm --> groq
   dev_vm --> anthropic
 ```
+
+**Key characteristics:**
+
+- **Stage 1 (IaC):** Creates OCI infrastructure independently — no state conflicts, runs first
+- **Stage 2 (Cloudflare):** Triggered after IaC succeeds — creates tunnel, DNS, access apps via API (not Terraform)
+- **Stage 3 (App):** Parallel Docker build + deployment after Stage 2 completes
 
 ---
 

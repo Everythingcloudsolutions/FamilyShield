@@ -910,9 +910,74 @@ docker exec familyshield-api node -e "
 
 ### Cloudflare Tunnel Issues
 
-#### Tunnel disconnected
+> **Note (2026-04-13):** Cloudflare tunnels are now created by the `deploy-cloudflare.yml` workflow via API, not by a running container. The tunnel is configured on the Cloudflare side, and mitmproxy on the OCI VM connects to it using the tunnel token.
 
-**Symptom:** Portal returns "Error 1033: Argo Tunnel error" or times out completely.
+#### Tunnel shows as disconnected in Cloudflare dashboard
+
+**Symptom:** Cloudflare dashboard shows tunnel status as "DISCONNECTED" or "INACTIVE"; portal returns timeouts.
+
+```bash
+# The tunnel is created by deploy-cloudflare workflow, but mitmproxy must connect to it
+# The connection is made by the mitmproxy service running on the OCI VM
+
+# 1. Check mitmproxy is running on the OCI VM
+ssh familyshield-dev
+docker ps | grep mitmproxy
+# Should show: familyshield-mitmproxy (running)
+
+# 2. Check mitmproxy logs for tunnel token connection errors
+docker logs familyshield-mitmproxy --tail 50 | grep -i "cloudflare\|tunnel\|error"
+# You should see: "Tunnel connection registered" or "Connected to Cloudflare"
+# If you see "invalid token", the tunnel_token in docker-compose is wrong
+
+# 3. Check the tunnel token is set correctly in docker-compose
+docker exec familyshield-mitmproxy env | grep TUNNEL
+# If TUNNEL_TOKEN=TUNNEL_TOKEN_PLACEHOLDER_dev, the token was not set
+#   → This is a known issue — see "Tunnel token not updated" section below
+
+# 4. If mitmproxy is running but tunnel still disconnected:
+docker restart familyshield-mitmproxy
+# Wait 10–15 seconds for it to reconnect
+
+# 5. Check Cloudflare dashboard
+# dash.cloudflare.com → Tunnels → familyshield-dev → should show "HEALTHY" after reconnect
+```
+
+#### Tunnel token not updated after deploy-cloudflare
+
+**Symptom:** Tunnel is created successfully in Cloudflare, but mitmproxy can't connect because the tunnel token is still a placeholder (`TUNNEL_TOKEN_PLACEHOLDER_dev`).
+
+```bash
+# Root cause: deploy-cloudflare workflow creates the tunnel and gets the token,
+# but the token is not automatically passed to the mitmproxy container on the VM
+
+# Current workaround (manual):
+# 1. After deploy-cloudflare succeeds, get the tunnel token
+#    - Go to GitHub Actions → deploy-cloudflare → job output
+#    - Look for: TUNNEL_TOKEN=...
+#    - Copy this value
+
+# 2. SSH to the OCI VM
+ssh familyshield-dev
+
+# 3. Update the docker-compose.yml with the actual token
+# Edit /opt/familyshield/docker-compose.yml
+# Find: TUNNEL_TOKEN=TUNNEL_TOKEN_PLACEHOLDER_dev
+# Replace with: TUNNEL_TOKEN=<actual-token-from-step-1>
+
+# 4. Restart mitmproxy
+docker compose -f /opt/familyshield/docker-compose.yml up -d --no-deps --scale mitmproxy=1 mitmproxy
+# Wait 15 seconds for it to connect
+
+# 5. Verify in Cloudflare dashboard
+# dash.cloudflare.com → Tunnels → familyshield-dev → should show "HEALTHY"
+
+# Future: This will be automated in a future release
+```
+
+#### Tunnel disconnected (tunnel was running, then lost connection)
+
+**Symptom:** Tunnel was connected, but now shows "DISCONNECTED"; mitmproxy container is still running.
 
 ```bash
 # Check cloudflared container status
@@ -1221,6 +1286,68 @@ sudo cat /var/log/cloud-init-output.log | tail -50
 ---
 
 ### GitHub Actions CI/CD Issues
+
+#### deploy-cloudflare workflow fails or doesn't run
+
+**Symptom:** After `deploy-dev` succeeds, the `deploy-cloudflare` workflow doesn't appear in the Actions tab, or it fails with API errors.
+
+```bash
+# First, verify deploy-dev succeeded
+# Actions → deploy-dev (most recent) → scroll to bottom
+# You should see a green checkmark and tunnel_secret output
+
+# If deploy-dev succeeded but deploy-cloudflare never started:
+# 1. Wait 2–3 minutes — the workflow is triggered automatically after IaC
+# 2. Refresh the Actions tab
+# 3. If still missing, manually trigger the workflow:
+#    - Go to Actions → Deploy → Cloudflare
+#    - Click "Run workflow" → select environment → select action (setup)
+#    - Click "Run workflow"
+
+# If deploy-cloudflare fails with API errors:
+# Actions → Deploy → Cloudflare → most recent run → expand step
+
+# Common errors:
+
+# 1. "Authentication error (10000): Authentication is required"
+#    → CLOUDFLARE_API_TOKEN is missing or invalid
+#    → Check GitHub Secrets (Settings → Secrets and variables → Actions)
+#    → Must be a Custom Token with THREE scopes:
+#       - Zone | DNS | Edit
+#       - Account | Cloudflare Tunnel | Edit
+#       - Account | Access: Apps and Policies | Edit
+#    → Template tokens (like "Edit zone DNS") don't have Tunnel + Access scopes
+#    → Regenerate token at dash.cloudflare.com/profile/api-tokens
+#    → Update CLOUDFLARE_API_TOKEN secret
+#    → Re-run the workflow
+
+# 2. "error getting tunnel config: Configuration for tunnel not found"
+#    → Previous tunnel may exist with same name
+#    → Manually delete: dash.cloudflare.com → Tunnels → find & delete
+#    → Re-run deploy-cloudflare workflow
+
+# 3. "expected DNS record to not already be present but already exists"
+#    → DNS records exist from a previous deployment
+#    → Manually delete in Cloudflare: DNS → remove old CNAME records
+#    → Re-run deploy-cloudflare workflow
+#    → Or run cleanup-cloudflare workflow first
+
+# 4. "access.api.error.application_already_exists (11010)"
+#    → Access Applications exist from previous deployment
+#    → Manually delete: Cloudflare → Access → Applications → delete old apps
+#    → Re-run deploy-cloudflare workflow
+#    → Or run cleanup-cloudflare workflow first
+
+# To reset Cloudflare resources:
+# 1. Go to Actions → Cleanup → Cloudflare
+# 2. Click "Run workflow" → select environment (dev)
+# 3. Click "Run workflow" — waits for it to complete
+# 4. Then run deploy-cloudflare again
+
+# Check the script logs for details
+# The deploy-cloudflare workflow logs show each Cloudflare API call
+# Look for curl error messages and response codes
+```
 
 #### OCI authentication failures
 

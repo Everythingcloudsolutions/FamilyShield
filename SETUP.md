@@ -593,21 +593,44 @@ You now have everything set up. This step will create the actual cloud server (V
 
 2. Click **Confirm merge**
 
-3. GitHub will now automatically start the `deploy-dev` workflow:
+3. GitHub will now automatically start a **three-stage deployment**:
+
+   **Stage 1 — Infrastructure (IaC):** `deploy-dev` workflow
    - Go to the **Actions** tab
    - You'll see a workflow running that says `deploy-dev`
-   - **Wait 5–10 minutes** — it's creating your cloud server
+   - **Wait 5–10 minutes** — it's creating your cloud server, networks, and storage
+   - When finished, you'll see a green checkmark ✅
 
-4. When it finishes, you'll see a green checkmark ✅ on `deploy-dev`
+   **Stage 2 — Cloudflare Setup:** `deploy-cloudflare` workflow (automatic)
+   - After `deploy-dev` succeeds, the `deploy-cloudflare` workflow runs automatically
+   - This creates your Cloudflare tunnel, DNS records, and access applications
+   - **Wait 2–3 minutes** — should complete quickly
+   - When finished, you'll see a green checkmark ✅
 
-5. Open the workflow details and scroll to the bottom — you'll see:
+   **Stage 3 — App Deployment:** `build-and-push` and `deploy-app-dev` workflows
+   - Docker images are built and pushed to container registry
+   - App containers are deployed to your cloud VM
+   - **Wait 3–5 minutes** — services start
+   - Smoke tests verify everything is healthy
+
+4. **Total time:** 10–20 minutes for all three stages
+
+5. Open the **deploy-dev** workflow details and scroll to the bottom — you'll see:
    ```
    Outputs
    vm_public_ip = 152.67.xxx.xxx
    ```
    - **Copy this IP address** — you'll use it in Part 12
 
-**That's it!** Your cloud infrastructure is now live.
+> **What if deploy-cloudflare fails?**
+> 
+> The Cloudflare workflow can fail if:
+> - The API token is missing scopes (must have Zone DNS + Tunnel + Access scopes — see Part 3.3)
+> - The Cloudflare account ID or zone ID is wrong
+> 
+> To fix: Verify your credentials in GitHub Secrets, then re-run the `deploy-cloudflare` workflow manually from the Actions tab. No need to re-run the IaC stage.
+
+**That's it!** Your cloud infrastructure is now live, Cloudflare is configured, and your apps are running.
 
 ---
 
@@ -757,15 +780,54 @@ All admin URLs are behind Cloudflare Zero Trust — you log in with your Cloudfl
   - Statement: `Allow any-user to manage all-resources in tenancy where request.user.id = '<OCI_USER_OCID>'`
   - Replace `<OCI_USER_OCID>` with your OCI_USER_OCID GitHub secret value
 
-**Cloudflare Authentication error (10000) during tofu apply**
+**Cloudflare Authentication error (10000) during deploy-cloudflare workflow**
 → The API token is missing required scopes. The "Edit zone DNS" template is NOT sufficient.
-  FamilyShield requires three permissions:
-  - Zone → DNS → Edit (for CNAME records)
-  - Account → Cloudflare Tunnel → Edit (for Argo Tunnel creation)
-  - Account → Access: Apps and Policies → Edit (for Zero Trust access applications)
+  FamilyShield requires **three** permissions:
+  - **Zone → DNS → Edit** (for CNAME records)
+  - **Account → Cloudflare Tunnel → Edit** (for Argo Tunnel creation)
+  - **Account → Access: Apps and Policies → Edit** (for Zero Trust access applications)
+
+  **To fix:**
+  1. Log in to **dash.cloudflare.com/profile/api-tokens**
+  2. Delete the old `familyshield-deploy` token
+  3. Create a new **Custom Token** (NOT a template) with all three permissions
+  4. Copy the new token
+  5. Update the `CLOUDFLARE_API_TOKEN` GitHub secret with the new token
+  6. In GitHub Actions, re-run the `deploy-cloudflare` workflow manually
   
-  Re-create the token as a **Custom Token** with all three permissions (see Part 3.3 for steps).
-  Update the `CLOUDFLARE_API_TOKEN` GitHub secret, then re-run the workflow.
+  See Part 3.3 for detailed token creation steps.
+
+**deploy-cloudflare workflow never starts after deploy-dev succeeds**
+→ The workflow is triggered automatically only if the previous `deploy-dev` workflow completes successfully. Check:
+  1. Go to Actions tab → find the `deploy-dev` workflow that just ran
+  2. Click on it and scroll to bottom — look for green ✅ checkmark
+  3. If it shows ✅, wait 1–2 minutes and refresh the Actions page
+  4. The `deploy-cloudflare` workflow should appear
+  
+  If `deploy-dev` failed or was cancelled, manually trigger `deploy-cloudflare`:
+  1. Go to Actions tab → search for `Deploy → Cloudflare` workflow
+  2. Click **Run workflow** → select environment (dev) and action (setup)
+  3. Click **Run workflow**
+
+**deploy-cloudflare fails with "Tunnel not found" or "DNS record already exists"**
+→ This can happen if:
+  - A previous deployment partially completed
+  - Manual resources exist in Cloudflare
+  
+  **To fix:** Run the cleanup workflow first, then re-run deploy-cloudflare:
+  1. Go to Actions tab → search for `Cleanup → Cloudflare` workflow
+  2. Click **Run workflow** → select environment (dev)
+  3. Click **Run workflow** — wait for it to complete
+  4. Then re-run `deploy-cloudflare` as described above
+
+**Portal or admin URLs not accessible after deployment**
+→ Verify that the Cloudflare tunnel is running:
+  1. Log in to **dash.cloudflare.com**
+  2. Go to Tunnels (in the left sidebar under Access)
+  3. Look for `familyshield-dev` tunnel
+  4. Click it → should show **HEALTHY** status
+  5. If status is **DISCONNECTED**, the mitmproxy tunnel client hasn't connected yet (VM still booting)
+  6. Wait 2–3 minutes and refresh
 
 **Supabase project shows "Project is paused"**
 → Free tier projects pause after 7 days of inactivity. Log in to supabase.com and click **Restore project**. Takes about 1 minute.
