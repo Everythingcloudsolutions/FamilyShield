@@ -41,15 +41,3 @@ variable "cloud_init_script" {
 variable "tags" {
   type = map(string)
 }
-
-output "instance_id" {
-  value = oci_core_instance.familyshield.id
-}
-
-output "public_ip" {
-  value = oci_core_instance.familyshield.public_ip
-}
-
-output "private_ip" {
-  value = oci_core_instance.familyshield.private_ip
-}

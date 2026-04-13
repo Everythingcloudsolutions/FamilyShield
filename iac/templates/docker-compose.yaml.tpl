@@ -151,7 +151,30 @@ services:
       timeout: 10s
       retries: 3
 
-  # ── 6. Node-RED — Rule engine / flow automation ────────────────────────────
+
+  # ── 6. Portal — Next.js parent UI ──────────────────────────────────────────────
+  portal:
+    image: ghcr.io/everythingcloudsolutions/familyshield-portal:${environment}
+    container_name: familyshield-portal
+    restart: unless-stopped
+    networks:
+      familyshield:
+        ipv4_address: 172.20.0.12
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=${environment}
+      - TZ=America/Toronto
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── 7. Node-RED — Rule engine / flow automation ────────────────────────────
   nodered:
     image: nodered/node-red:latest
     container_name: familyshield-nodered
@@ -170,7 +193,7 @@ services:
       - redis
       - api
 
-  # ── 7. InfluxDB — Time-series metrics storage ──────────────────────────────
+  # ── 8. InfluxDB — Time-series metrics storage ──────────────────────────────
   influxdb:
     image: influxdb:2.7-alpine
     container_name: familyshield-influxdb
@@ -196,7 +219,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # ── 8. Grafana — Usage dashboards ─────────────────────────────────────────
+  # ── 9. Grafana — Usage dashboards ─────────────────────────────────────────
   grafana:
     image: grafana/grafana:latest
     container_name: familyshield-grafana
@@ -205,7 +228,7 @@ services:
       familyshield:
         ipv4_address: 172.20.0.9
     ports:
-      - "3001:3000"       # Admin UI (via Cloudflare Tunnel → Zero Trust)
+      - "3002:3000"       # Admin UI (via Cloudflare Tunnel → Zero Trust)
     volumes:
       - grafana_data:/var/lib/grafana
       - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
@@ -218,7 +241,7 @@ services:
       influxdb:
         condition: service_healthy
 
-  # ── 9. ntfy — Push notification server ────────────────────────────────────
+  # ── 10. ntfy — Push notification server ────────────────────────────────────
   ntfy:
     image: binwiederhier/ntfy:latest
     container_name: familyshield-ntfy
@@ -238,7 +261,7 @@ services:
     volumes:
       - ./config/ntfy:/etc/ntfy:ro
 
-  # ── 10. Cloudflare Tunnel daemon ──────────────────────────────────────────
+  # ── 11. Cloudflare Tunnel daemon ──────────────────────────────────────────
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: familyshield-cloudflared
