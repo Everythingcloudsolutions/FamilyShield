@@ -99,8 +99,8 @@ module "compute" {
   environment    = var.environment
   ssh_public_key = var.ssh_public_key
   instance_shape = "VM.Standard.A1.Flex"
-  ocpus          = 4
-  memory_in_gbs  = 24
+  ocpus          = 2
+  memory_in_gbs  = 6
   image_id       = var.oci_ubuntu_arm_image_id
   cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
     environment = var.environment
