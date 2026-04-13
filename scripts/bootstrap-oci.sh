@@ -131,9 +131,33 @@ oci iam dynamic-group create \
 
 echo "✅ Dynamic group created"
 
-# ── Step 6: Bootstrap Terraform State Bucket ─────────────────────────────────
+# ── Step 6: Grant Bootstrap IAM Policy ──────────────────────────────────────
 echo ""
-echo "STEP 6 — Bootstrap Terraform State Bucket"
+echo "STEP 6 — Grant Bootstrap IAM Policy"
+echo "-------------------------------------"
+
+BOOTSTRAP_POLICY_NAME="familyshield-bootstrap-policy"
+
+EXISTING_POLICY=$(oci iam policy list \
+  --compartment-id "$TENANCY_OCID" \
+  --all \
+  --query "data[?name=='$BOOTSTRAP_POLICY_NAME'] | [0].id" \
+  --raw-output 2>/dev/null || echo "")
+
+if [ -z "$EXISTING_POLICY" ] || [ "$EXISTING_POLICY" = "None" ]; then
+  oci iam policy create \
+    --compartment-id "$TENANCY_OCID" \
+    --name "$BOOTSTRAP_POLICY_NAME" \
+    --description "FamilyShield GitHub Actions bootstrap permissions" \
+    --statements "[\"Allow any-user to manage all-resources in tenancy where request.user.id = '$GH_USER_OCID'\"]"
+  echo "✅ Bootstrap IAM policy created: $BOOTSTRAP_POLICY_NAME"
+else
+  echo "✅ Bootstrap policy already exists: $BOOTSTRAP_POLICY_NAME"
+fi
+
+# ── Step 7: Bootstrap Terraform State Bucket ─────────────────────────────────
+echo ""
+echo "STEP 7 — Bootstrap Terraform State Bucket"
 echo "------------------------------------------"
 
 NAMESPACE=$(oci os ns get --query "data" --raw-output)
@@ -148,9 +172,9 @@ oci os bucket create \
 echo "✅ Terraform state bucket: $BUCKET_NAME"
 echo "   Namespace: $NAMESPACE"
 
-# ── Step 7: Find ARM image OCID ──────────────────────────────────────────────
+# ── Step 8: Find ARM image OCID ──────────────────────────────────────────────
 echo ""
-echo "STEP 7 — Find OCI ARM Ubuntu Image OCID"
+echo "STEP 8 — Find OCI ARM Ubuntu Image OCID"
 echo "----------------------------------------"
 
 ARM_IMAGE=$(oci compute image list \
@@ -166,9 +190,9 @@ ARM_IMAGE=$(oci compute image list \
 echo "✅ Ubuntu 22.04 ARM image OCID: $ARM_IMAGE"
 echo "   → Update iac/variables.tf: oci_ubuntu_arm_image_id default"
 
-# ── Step 8: Generate SSH key for VM access ───────────────────────────────────
+# ── Step 9: Generate SSH key for VM access ───────────────────────────────────
 echo ""
-echo "STEP 8 — Generate SSH Key for OCI VM"
+echo "STEP 9 — Generate SSH Key for OCI VM"
 echo "-------------------------------------"
 
 SSH_KEY_PATH="$HOME/.ssh/familyshield"
@@ -181,7 +205,7 @@ fi
 
 PUBLIC_KEY=$(cat "$SSH_KEY_PATH.pub")
 
-# ── Step 9: Summary ──────────────────────────────────────────────────────────
+# ── Step 10: Summary ────────────────────────────────────────────────────────
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo " FamilyShield OCI Bootstrap Complete!"

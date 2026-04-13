@@ -24,19 +24,18 @@ terraform {
     }
   }
 
-  # Remote state — OCI Object Storage (S3-compatible, Always Free)
-  # Bootstrap this bucket FIRST before running tofu apply on this root
-  # See: scripts/bootstrap-state-bucket.sh
-  backend "s3" {
-    bucket                      = "familyshield-tfstate"
-    key                         = "root/terraform.tfstate"
-    region                      = "ca-toronto-1"
-    endpoint                    = "https://${var.oci_namespace}.compat.objectstorage.ca-toronto-1.oraclecloud.com"
-    skip_region_validation      = true
-    skip_credentials_validation = true
-    skip_metadata_api_check     = true
-    force_path_style            = true
-  }
+  # Note: Using local backend for initial setup
+  # TODO: Migrate to OCI Object Storage backend after first deployment
+  # backend "s3" {
+  #   bucket                      = "familyshield-tfstate"
+  #   key                         = "root/terraform.tfstate"
+  #   region                      = "ca-toronto-1"
+  #   endpoint                    = "https://<namespace>.compat.objectstorage.ca-toronto-1.oraclecloud.com"
+  #   skip_region_validation      = true
+  #   skip_credentials_validation = true
+  #   skip_metadata_api_check     = true
+  #   use_path_style              = true
+  # }
 }
 
 ###############################################################################
@@ -62,10 +61,10 @@ provider "cloudflare" {
 module "compartments" {
   source = "./modules/oci-compartments"
 
-  tenancy_ocid        = var.oci_tenancy_ocid
-  environment         = var.environment
+  tenancy_ocid            = var.oci_tenancy_ocid
+  environment             = var.environment
   compartment_description = "FamilyShield ${var.environment} environment"
-  tags = local.common_tags
+  tags                    = local.common_tags
 }
 
 ###############################################################################
@@ -102,14 +101,14 @@ module "storage" {
 module "compute" {
   source = "./modules/oci-compute"
 
-  compartment_id    = module.compartments.compartment_id
-  subnet_id         = module.network.public_subnet_id
-  environment       = var.environment
-  ssh_public_key    = var.ssh_public_key
-  instance_shape    = "VM.Standard.A1.Flex"
-  ocpus             = 4
-  memory_in_gbs     = 24
-  image_id          = var.oci_ubuntu_arm_image_id
+  compartment_id = module.compartments.compartment_id
+  subnet_id      = module.network.public_subnet_id
+  environment    = var.environment
+  ssh_public_key = var.ssh_public_key
+  instance_shape = "VM.Standard.A1.Flex"
+  ocpus          = 4
+  memory_in_gbs  = 24
+  image_id       = var.oci_ubuntu_arm_image_id
   cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
     environment = var.environment
     docker_compose_b64 = base64encode(templatefile(
@@ -134,6 +133,7 @@ module "cloudflare" {
   tunnel_secret         = random_password.tunnel_secret.result
   environment           = var.environment
   vm_public_ip          = module.compute.public_ip
+  admin_emails          = var.admin_emails
 }
 
 ###############################################################################
@@ -155,13 +155,13 @@ locals {
   }
 
   docker_compose_vars = {
-    environment          = var.environment
-    adguard_password     = var.adguard_admin_password
-    tunnel_token         = module.cloudflare.tunnel_token
-    headscale_domain     = "vpn.familyshield-${var.environment}.everythingcloud.ca"
-    supabase_url         = var.supabase_url
-    supabase_anon_key    = var.supabase_anon_key
-    groq_api_key         = var.groq_api_key
-    anthropic_api_key    = var.anthropic_api_key
+    environment       = var.environment
+    adguard_password  = var.adguard_admin_password
+    tunnel_token      = module.cloudflare.tunnel_token
+    headscale_domain  = "vpn.familyshield-${var.environment}.everythingcloud.ca"
+    supabase_url      = var.supabase_url
+    supabase_anon_key = var.supabase_anon_key
+    groq_api_key      = var.groq_api_key
+    anthropic_api_key = var.anthropic_api_key
   }
 }

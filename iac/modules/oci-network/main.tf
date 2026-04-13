@@ -63,7 +63,7 @@ resource "oci_core_security_list" "main" {
   # SSH — restricted to GitHub Actions runner IPs + your IP
   # Update var.allowed_ssh_cidrs with your home IP
   ingress_security_rules {
-    protocol = "6" # TCP
+    protocol = "6"         # TCP
     source   = "0.0.0.0/0" # Tighten this in prod via allowed_ssh_cidrs
     tcp_options {
       min = 22

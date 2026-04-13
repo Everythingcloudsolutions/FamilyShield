@@ -32,7 +32,7 @@ variable "oci_ubuntu_arm_image_id" {
   type        = string
   # Find via: oci compute image list --compartment-id <tenancy-ocid> --operating-system "Canonical Ubuntu" --shape VM.Standard.A1.Flex
   # Current ca-toronto-1 Ubuntu 22.04 ARM image (update periodically):
-  default = "ocid1.image.oc1.ca-toronto-1.aaaaaaaawzbmdqqyvrctw4cvhegvnbbxtoday4bxlkdpqeowc5kcbrhplt2aocid1.image.oc1.ca-toronto-1.aaaaaaaaxxx" # Replace with actual OCID
+  default = "ocid1.image.oc1.ca-toronto-1.aaaaaaaawzbmdqqvrcLW4cvhegvnbbxtoday4bxlkdpqeowc5kcbrhplit2a"
 }
 
 variable "ssh_public_key" {
@@ -107,4 +107,10 @@ variable "anthropic_api_key" {
   description = "Anthropic API key for fallback LLM"
   type        = string
   sensitive   = true
+}
+
+variable "admin_emails" {
+  description = "Email addresses for Cloudflare Zero Trust admin access"
+  type        = list(string)
+  default     = []
 }

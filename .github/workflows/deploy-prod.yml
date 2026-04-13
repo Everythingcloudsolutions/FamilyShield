@@ -67,7 +67,7 @@ jobs:
         with:
           environment:       prod
           working_directory: iac
-          var_file:          iac/environments/prod/terraform.tfvars
+          var_file:          environments/prod/terraform.tfvars
           github_token:      ${{ secrets.GITHUB_TOKEN }}
         env:
           TF_VAR_oci_tenancy_ocid:       ${{ secrets.OCI_TENANCY_OCID }}
@@ -76,6 +76,7 @@ jobs:
           TF_VAR_cloudflare_api_token:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TF_VAR_cloudflare_zone_id:     ${{ secrets.CLOUDFLARE_ZONE_ID }}
           TF_VAR_cloudflare_account_id:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TF_VAR_admin_emails:           '["mohit.goyal@everythingcloud.ca"]'
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD_PROD }}
           TF_VAR_supabase_url:           ${{ secrets.SUPABASE_URL_PROD }}
           TF_VAR_supabase_anon_key:      ${{ secrets.SUPABASE_ANON_KEY_PROD }}
@@ -87,7 +88,7 @@ jobs:
         with:
           environment:       prod
           working_directory: iac
-          var_file:          iac/environments/prod/terraform.tfvars
+          var_file:          environments/prod/terraform.tfvars
         env:
           TF_VAR_oci_tenancy_ocid:       ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_oci_namespace:          ${{ secrets.OCI_NAMESPACE }}
@@ -95,6 +96,7 @@ jobs:
           TF_VAR_cloudflare_api_token:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
           TF_VAR_cloudflare_zone_id:     ${{ secrets.CLOUDFLARE_ZONE_ID }}
           TF_VAR_cloudflare_account_id:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TF_VAR_admin_emails:           '["mohit.goyal@everythingcloud.ca"]'
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD_PROD }}
           TF_VAR_supabase_url:           ${{ secrets.SUPABASE_URL_PROD }}
           TF_VAR_supabase_anon_key:      ${{ secrets.SUPABASE_ANON_KEY_PROD }}
