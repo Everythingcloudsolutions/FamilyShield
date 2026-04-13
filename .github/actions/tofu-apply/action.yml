@@ -84,7 +84,28 @@ runs:
           -var="environment=${{ inputs.environment }}" \
           $VAR_FILE_ARG \
           -auto-approve \
-          -no-color
+          -no-color || {
+          # If apply failed, try to import existing resources and retry
+          echo "ℹ️  First apply attempt failed. Attempting to import existing resources..."
+
+          # Try to import the compartment if it exists
+          echo "Querying for existing compartment..."
+          COMPARTMENT_OCID=$(oci iam compartment list --compartment-id "$TF_VAR_oci_tenancy_ocid" --query "data[?name=='familyshield-${{ inputs.environment }}'] | [0].id" --raw-output 2>/dev/null || echo "")
+
+          if [ -n "$COMPARTMENT_OCID" ] && [ "$COMPARTMENT_OCID" != "None" ]; then
+            echo "✅ Found existing compartment: $COMPARTMENT_OCID"
+            tofu import -auto-approve module.compartments.oci_identity_compartment.familyshield "$COMPARTMENT_OCID" 2>&1 || true
+          fi
+
+          # Retry apply
+          echo ""
+          echo "Retrying apply after importing existing resources..."
+          tofu apply \
+            -var="environment=${{ inputs.environment }}" \
+            $VAR_FILE_ARG \
+            -auto-approve \
+            -no-color
+        }
 
         echo "✅ tofu apply complete for ${{ inputs.environment }}"
 
