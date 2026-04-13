@@ -119,20 +119,23 @@ module "compute" {
 
 ###############################################################################
 # Cloudflare DNS + Tunnel + Zero Trust
+# NOTE: Cloudflare resources are now managed via separate deploy-cloudflare.yml
+# workflow using the Cloudflare API directly (not Terraform).
+# This avoids state management conflicts and allows for independent updates.
 ###############################################################################
 
-module "cloudflare" {
-  source = "./modules/cloudflare-dns"
-
-  cloudflare_zone_id    = var.cloudflare_zone_id
-  cloudflare_account_id = var.cloudflare_account_id
-  subdomain             = "familyshield-${var.environment}"
-  root_domain           = "everythingcloud.ca"
-  tunnel_secret         = random_password.tunnel_secret.result
-  environment           = var.environment
-  vm_public_ip          = module.compute.public_ip
-  admin_emails          = var.admin_emails
-}
+# module "cloudflare" {
+#   source = "./modules/cloudflare-dns"
+#
+#   cloudflare_zone_id    = var.cloudflare_zone_id
+#   cloudflare_account_id = var.cloudflare_account_id
+#   subdomain             = "familyshield-${var.environment}"
+#   root_domain           = "everythingcloud.ca"
+#   tunnel_secret         = random_password.tunnel_secret.result
+#   environment           = var.environment
+#   vm_public_ip          = module.compute.public_ip
+#   admin_emails          = var.admin_emails
+# }
 
 ###############################################################################
 # Helpers
@@ -155,7 +158,9 @@ locals {
   docker_compose_vars = {
     environment       = var.environment
     adguard_password  = var.adguard_admin_password
-    tunnel_token      = module.cloudflare.tunnel_token
+    # tunnel_token is set by deploy-cloudflare.yml workflow via SSM Parameter or Object Storage
+    # It's not available at IaC time, so we use a placeholder here
+    tunnel_token      = "TUNNEL_TOKEN_PLACEHOLDER_${var.environment}"
     headscale_domain  = "vpn.familyshield-${var.environment}.everythingcloud.ca"
     supabase_url      = var.supabase_url
     supabase_anon_key = var.supabase_anon_key

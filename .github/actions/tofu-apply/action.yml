@@ -43,18 +43,6 @@ runs:
           -reconfigure
         echo "✅ tofu init with remote S3 backend complete"
 
-    - name: Sync state before apply
-      shell: bash
-      working-directory: ${{ inputs.working_directory }}
-      run: |
-        # With fresh state file, additional refresh to catch any resources
-        # Use -no-color and suppress tunnel config errors
-        echo "Syncing state with cloud resources..."
-        tofu refresh -var="environment=${{ inputs.environment }}" \
-          -var-file="${{ inputs.var_file }}" \
-          -no-color 2>&1 | grep -v "error getting tunnel" || true
-        echo "✅ Pre-apply sync complete"
-
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
       working-directory: ${{ inputs.working_directory }}
@@ -67,7 +55,7 @@ runs:
         tofu refresh \
           -var="environment=${{ inputs.environment }}" \
           $VAR_FILE_ARG \
-          -no-color || true
+          -no-color
 
         echo "✅ tofu refresh complete (state synced with cloud)"
 

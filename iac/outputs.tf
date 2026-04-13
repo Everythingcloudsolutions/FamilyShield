@@ -32,8 +32,15 @@ output "state_bucket_name" {
   value       = module.storage.state_bucket_name
 }
 
-output "tunnel_id" {
-  description = "Cloudflare Tunnel ID"
-  value       = module.cloudflare.tunnel_id
+output "tunnel_secret" {
+  description = "Tunnel secret (used by deploy-cloudflare workflow to create tunnel)"
+  value       = random_password.tunnel_secret.result
   sensitive   = true
 }
+
+# Cloudflare tunnel_id and tunnel_token now created by deploy-cloudflare.yml workflow
+# output "tunnel_id" {
+#   description = "Cloudflare Tunnel ID"
+#   value       = module.cloudflare.tunnel_id
+#   sensitive   = true
+# }

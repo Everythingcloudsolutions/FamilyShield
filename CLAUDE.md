@@ -79,9 +79,31 @@ tofu apply -var="environment=dev" -var-file="environments/dev/terraform.tfvars" 
 ### Bootstrap & Deployment Scripts
 
 ```bash
-bash scripts/bootstrap-oci.sh    # First-time OCI setup (10 steps)
-bash scripts/setup-github.sh     # Configure GitHub environments & branch protection
+bash scripts/bootstrap-oci.sh      # First-time OCI setup (10 steps)
+bash scripts/setup-github.sh       # Configure GitHub environments & branch protection
+bash scripts/cloudflare-api.sh     # Cloudflare resource management (API-driven)
 ```
+
+### Cloudflare API Management
+
+Cloudflare resources (tunnel, DNS records, access apps) are created and managed via the Cloudflare API, not Terraform. This is done in the `deploy-cloudflare.yml` workflow using `scripts/cloudflare-api.sh`:
+
+```bash
+# Manual setup (rarely needed)
+export CLOUDFLARE_API_TOKEN="..."
+export CLOUDFLARE_ACCOUNT_ID="..."
+export CLOUDFLARE_ZONE_ID="..."
+
+bash scripts/cloudflare-api.sh setup dev "<tunnel-secret>" "admin@example.com"
+bash scripts/cloudflare-api.sh cleanup dev
+```
+
+**Why separate from IaC?**
+
+- Terraform/OpenTofu struggles with state management when resources exist in cloud but not in state
+- Cloudflare API is simpler for tunnel + DNS + access apps
+- Decoupled architecture allows independent updates without triggering full IaC rebuild
+- Easy cleanup via API if needed (e.g., environment torn down)
 
 ### Local Development (Without OCI)
 
@@ -212,17 +234,30 @@ FamilyShield/
 ```
 PR opened → pr-check.yml runs → tofu plan posted as PR comment
     ↓
-Merge to main (manual) → deploy-dev.yml → auto deploy to dev
+Merge to main (manual) → deploy-dev.yml → IaC deployment (OCI resources)
     ↓
-dev passes (health check) → deploy-staging.yml → auto deploy to staging
-    ↓
-Manual trigger → deploy-prod.yml → Mohit approves in GitHub UI → prod deploy
+    ├─→ deploy-cloudflare.yml → Cloudflare resources (tunnel, DNS, access)
+    │
+    ├─→ build-and-push → Docker images to GHCR
+    │
+    └─→ deploy-app-dev → App containers to dev VM
+    
+    ↓ (if all pass)
+dev passes (health check) → deploy-staging.yml (same flow as above)
+    ↓ (if staging passes)
+Manual trigger → deploy-prod.yml (manual approval + same flow)
 ```
+
+**Key Change (2026-04-13):**
+Cloudflare resources (tunnel, DNS, access apps) are now managed by separate `deploy-cloudflare.yml` workflow using the Cloudflare API directly (not Terraform). This decouples Cloudflare from IaC state management, avoiding conflicts.
 
 **Environments in GitHub:**
 - `dev` — auto, no approval needed
 - `staging` — auto after dev passes
 - `prod` — **manual approval required** (Mohit must click Approve in GitHub UI)
+
+**Cleanup:**
+- Manual: `cleanup-cloudflare.yml` (workflow_dispatch) — remove Cloudflare resources if environment is torn down
 
 ### Service Architecture
 
@@ -453,8 +488,14 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
 - ✅ OCI IAM bootstrap policy (Step 6) created and verified
 - ✅ Cloudflare API token — all 3 required scopes (DNS, Tunnel, Access)
 - ✅ GitHub Actions workflows configured with AWS credentials for S3 backend
-- 🔄 Deploy-dev workflow — automated cleanup of Cloudflare resources + state management
-- 🔲 Deploy-dev must successfully complete one full run end-to-end
+- ✅ **ARCHITECTURE CHANGE (2026-04-13):** Cloudflare resources now managed via API (separate workflow)
+  - Removed Cloudflare module from IaC (`iac/main.tf`)
+  - Created `deploy-cloudflare.yml` workflow (triggered after IaC succeeds)
+  - Created `cleanup-cloudflare.yml` workflow (manual trigger)
+  - Created `scripts/cloudflare-api.sh` helper for API operations
+  - Updated all workflows to remove Cloudflare variables from IaC
+  - Simplified `tofu-apply` action (no Cloudflare state conflict workarounds)
+- 🔲 Deploy-dev must successfully complete one full run end-to-end (IaC → Cloudflare → App)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes
 
 **Application Development:**
