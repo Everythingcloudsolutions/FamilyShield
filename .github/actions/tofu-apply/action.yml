@@ -55,26 +55,17 @@ runs:
 
         # Proactively import existing Object Storage buckets if they exist in OCI but not in state
         echo ""
-        echo "📋 Checking for existing Object Storage buckets to import..."
-        # Explicit mapping of resource names to bucket prefixes (resource_name:bucket_prefix)
+        echo "📋 Attempting to import existing Object Storage buckets..."
+        # Skip expensive tofu state list (it hangs). Try imports directly with timeout.
         declare -a BUCKETS=("tfstate:familyshield-tfstate" "backups:familyshield-backups" "app_data:familyshield-app")
         for BUCKET_MAP in "${BUCKETS[@]}"; do
           RESOURCE_NAME="${BUCKET_MAP%:*}"
           BUCKET_PREFIX="${BUCKET_MAP#*:}"
           BUCKET_NAME="${BUCKET_PREFIX}-${{ inputs.environment }}"
-
-          if ! tofu state list 2>/dev/null | grep -q "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME"; then
-            # Check if bucket exists in OCI
-            BUCKET_EXISTS=$(oci os bucket get --namespace-name "$TF_VAR_oci_namespace" --bucket-name "$BUCKET_NAME" --query "name" --raw-output 2>/dev/null || echo "")
-            if [ -n "$BUCKET_EXISTS" ] && [ "$BUCKET_EXISTS" != "None" ]; then
-              echo "✅ Found existing bucket in OCI: $BUCKET_NAME"
-              echo "   Importing into state as module.storage.oci_objectstorage_bucket.$RESOURCE_NAME..."
-              tofu import "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" 2>/dev/null && echo "   ✅ Bucket imported" || echo "   ⚠️  Import may have failed, will retry on apply"
-            fi
-          else
-            echo "✅ Bucket $BUCKET_NAME already in state"
-          fi
+          echo "  ⏳ $BUCKET_NAME..."
+          timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" >/dev/null 2>&1 && echo "     ✅ Imported" || echo "     ℹ️  Skipped (already in state or not found)"
         done
+        echo "✅ Import phase complete"
 
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
@@ -109,24 +100,21 @@ runs:
           # If apply failed, try to import existing resources and retry
           echo "ℹ️  First apply attempt failed. Attempting to import existing resources..."
 
-          # Try to import existing buckets if they exist
+          # Try to import existing buckets if they exist (skip OCI CLI check - just try imports)
           echo ""
-          echo "Checking for existing Object Storage buckets..."
+          echo "Attempting import of existing Object Storage buckets..."
           declare -a BUCKETS_RETRY=("tfstate:familyshield-tfstate" "backups:familyshield-backups" "app_data:familyshield-app")
           for BUCKET_MAP in "${BUCKETS_RETRY[@]}"; do
             RESOURCE_NAME="${BUCKET_MAP%:*}"
             BUCKET_PREFIX="${BUCKET_MAP#*:}"
             BUCKET_NAME="${BUCKET_PREFIX}-${{ inputs.environment }}"
-            BUCKET_EXISTS=$(oci os bucket get --namespace-name "$TF_VAR_oci_namespace" --bucket-name "$BUCKET_NAME" --query "name" --raw-output 2>/dev/null || echo "")
-            if [ -n "$BUCKET_EXISTS" ] && [ "$BUCKET_EXISTS" != "None" ]; then
-              echo "✅ Found existing bucket: $BUCKET_NAME"
-              tofu import "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" 2>&1 || true
-            fi
+            echo "  ⏳ Importing $BUCKET_NAME..."
+            timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" >/dev/null 2>&1 && echo "     ✅ Imported" || echo "     ℹ️  Import skipped"
           done
 
           # Retry apply
           echo ""
-          echo "Retrying apply after importing existing resources..."
+          echo "Retrying apply after import attempts..."
           tofu apply \
             -var="environment=${{ inputs.environment }}" \
             $VAR_FILE_ARG \
