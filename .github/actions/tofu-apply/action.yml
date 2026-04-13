@@ -94,6 +94,29 @@ runs:
 
         echo "✅ Cloudflare pre-deployment cleanup complete (or nothing to clean)"
 
+    - name: Clean up state entries for deleted Cloudflare resources
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        # Remove Cloudflare tunnel and config from state if they were deleted
+        # This prevents "Configuration for tunnel not found" errors during refresh
+        echo "Removing deleted Cloudflare resources from state..."
+
+        tofu state list 2>/dev/null | grep -E "cloudflare_tunnel|cloudflare_record|cloudflare_access_application" | while read resource; do
+          # Check if resource still exists in the API (for records and apps only, tunnel is harder to check)
+          if echo "$resource" | grep -q "cloudflare_record\|cloudflare_access_application"; then
+            # Remove from state if it was part of our cleanup
+            if echo "$resource" | grep -q "portal\|adguard\|grafana\|vpn"; then
+              tofu state rm "$resource" 2>/dev/null && echo "✅ Removed from state: $resource" || true
+            fi
+          elif echo "$resource" | grep -q "cloudflare_tunnel"; then
+            # Always remove tunnel and tunnel_config on re-deploy to avoid state conflicts
+            tofu state rm "$resource" 2>/dev/null && echo "✅ Removed tunnel from state: $resource" || true
+          fi
+        done
+
+        echo "✅ State cleanup complete"
+
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
       working-directory: ${{ inputs.working_directory }}
