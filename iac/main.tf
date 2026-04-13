@@ -47,16 +47,13 @@ provider "oci" {
 }
 
 ###############################################################################
-# Compartments
+# Compartments — Phase 2 (Skipped for Phase 1)
+# Using tenancy_ocid directly to bypass permission issues
 ###############################################################################
 
-module "compartments" {
-  source = "./modules/oci-compartments"
-
-  tenancy_ocid            = var.oci_tenancy_ocid
-  environment             = var.environment
-  compartment_description = "FamilyShield ${var.environment} environment"
-  tags                    = local.common_tags
+locals {
+  # Phase 1: Deploy directly to tenancy scope
+  deployment_compartment_id = var.oci_tenancy_ocid
 }
 
 ###############################################################################
@@ -66,14 +63,11 @@ module "compartments" {
 module "network" {
   source = "./modules/oci-network"
 
-  compartment_id = module.compartments.compartment_id
+  compartment_id = local.deployment_compartment_id
   environment    = var.environment
   region         = var.oci_region
   vcn_cidr       = var.vcn_cidr
   tags           = local.common_tags
-
-  # Explicit dependency to ensure compartment creation completes first
-  depends_on = [module.compartments]
 }
 
 ###############################################################################
@@ -83,13 +77,10 @@ module "network" {
 module "storage" {
   source = "./modules/oci-storage"
 
-  compartment_id = module.compartments.compartment_id
+  compartment_id = local.deployment_compartment_id
   namespace      = var.oci_namespace
   environment    = var.environment
   tags           = local.common_tags
-
-  # Explicit dependency to ensure compartment creation completes first
-  depends_on = [module.compartments]
 }
 
 ###############################################################################
