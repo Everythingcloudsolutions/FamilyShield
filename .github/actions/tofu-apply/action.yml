@@ -98,34 +98,31 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
-        # Remove Cloudflare tunnel and config from state if they were deleted
-        # This prevents "Configuration for tunnel not found" errors during refresh/apply
-        echo "Removing deleted Cloudflare resources from state..."
+        echo "Attempting to remove deleted Cloudflare resources from state..."
 
-        # Get list of resources and remove environment-specific ones
-        RESOURCES=$(tofu state list 2>/dev/null || echo "")
+        # List current state
+        echo "Current state resources:"
+        tofu state list 2>&1 | head -20 || echo "No state available"
 
-        if [ -z "$RESOURCES" ]; then
-          echo "State is empty, nothing to clean"
-        else
-          echo "$RESOURCES" | while read resource; do
-            # Remove Cloudflare tunnel and tunnel_config (causes downstream errors)
-            if echo "$resource" | grep -qE "cloudflare_tunnel\.main|cloudflare_tunnel_config\.main"; then
-              tofu state rm "$resource" 2>/dev/null && echo "✅ Removed from state: $resource" || true
-            fi
+        # Try removing tunnel and tunnel_config (these cause "Configuration for tunnel not found" errors)
+        echo ""
+        echo "Removing tunnel and tunnel_config..."
+        tofu state rm 'module.cloudflare.cloudflare_tunnel.main' 2>&1 || echo "Tunnel not in state (expected)"
+        tofu state rm 'module.cloudflare.cloudflare_tunnel_config.main' 2>&1 || echo "Tunnel config not in state (expected)"
 
-            # Remove DNS records for this environment
-            if echo "$resource" | grep -qE "cloudflare_record\.(portal|adguard|grafana|vpn)"; then
-              tofu state rm "$resource" 2>/dev/null && echo "✅ Removed from state: $resource" || true
-            fi
+        echo ""
+        echo "Removing environment-specific DNS records..."
+        tofu state rm 'module.cloudflare.cloudflare_record.portal' 2>&1 || echo "Portal record not in state (expected)"
+        tofu state rm 'module.cloudflare.cloudflare_record.adguard' 2>&1 || echo "Adguard record not in state (expected)"
+        tofu state rm 'module.cloudflare.cloudflare_record.grafana' 2>&1 || echo "Grafana record not in state (expected)"
+        tofu state rm 'module.cloudflare.cloudflare_record.vpn' 2>&1 || echo "VPN record not in state (expected)"
 
-            # Remove access apps for this environment
-            if echo "$resource" | grep -qE "cloudflare_access_application\.(adguard|grafana)"; then
-              tofu state rm "$resource" 2>/dev/null && echo "✅ Removed from state: $resource" || true
-            fi
-          done
-        fi
+        echo ""
+        echo "Removing environment-specific access apps..."
+        tofu state rm 'module.cloudflare.cloudflare_access_application.adguard' 2>&1 || echo "Adguard app not in state (expected)"
+        tofu state rm 'module.cloudflare.cloudflare_access_application.grafana' 2>&1 || echo "Grafana app not in state (expected)"
 
+        echo ""
         echo "✅ State cleanup complete"
 
     - name: Tofu Refresh (sync state with cloud)
