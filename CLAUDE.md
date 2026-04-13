@@ -446,11 +446,21 @@ Infrastructure, CI/CD, IaC modules, mitmproxy addon (complete with 15 tests), AP
 
 Full architecture documentation, C4 model, user guide, troubleshooting, Claude Agent SDK agents, slash command skills.
 
-### 🔄 Phase 2: API & Portal (IN PROGRESS)
+### 🔄 Phase 2: Deployment & API/Portal (IN PROGRESS)
+
+**Infrastructure & Deployment:**
+
+- ✅ OCI IAM bootstrap policy (Step 6) created and verified
+- ✅ Cloudflare API token — all 3 required scopes (DNS, Tunnel, Access)
+- ✅ GitHub Actions workflows configured with AWS credentials for S3 backend
+- 🔄 Deploy-dev workflow — automated cleanup of Cloudflare resources + state management
+- 🔲 Deploy-dev must successfully complete one full run end-to-end
+- 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes
+
+**Application Development:**
 
 - ✅ API structure defined, enrichers for all 4 platforms (YouTube, Roblox, Discord, Twitch)
 - ✅ mitmproxy addon complete with 15 tests
-- ✅ Cloudflare + OCI IAM fixes (bootstrap policy, token scopes) — merged to main
 - 🔲 Portal: Next.js 14 scaffold needed (no `apps/portal/package.json` yet)
 - 🔲 API: TypeScript types, Redis/Supabase client factories, alert dispatcher
 - 🔲 CI/CD: Docker build workflows for api and portal images
