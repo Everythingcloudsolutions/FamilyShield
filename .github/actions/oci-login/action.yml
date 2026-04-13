@@ -53,10 +53,41 @@ runs:
 
     - name: Verify OCI connection
       shell: bash
+      env:
+        OCI_CONFIG_FILE: ~/.oci/config
       run: |
         # Install OCI CLI if not present
         if ! command -v oci &> /dev/null; then
+          echo "Installing OCI CLI..."
           pip install oci-cli --quiet
         fi
-        oci iam region list --output table 2>/dev/null | head -5 || true
+
+        # Verify config file exists and has content
+        if [ ! -f ~/.oci/config ]; then
+          echo "❌ OCI config file not found at ~/.oci/config"
+          exit 1
+        fi
+
+        CONFIG_SIZE=$(wc -c < ~/.oci/config)
+        echo "✅ OCI config file exists (${CONFIG_SIZE} bytes)"
+
+        # Verify private key exists
+        if [ ! -f ~/.oci/private_key.pem ]; then
+          echo "❌ OCI private key not found at ~/.oci/private_key.pem"
+          exit 1
+        fi
+
+        KEY_SIZE=$(wc -c < ~/.oci/private_key.pem)
+        echo "✅ OCI private key exists (${KEY_SIZE} bytes)"
+
+        # Test OCI CLI connection
+        echo "Testing OCI CLI authentication..."
+        if oci iam region list --output json 2>&1 | grep -q "name"; then
+          echo "✅ OCI CLI authentication successful"
+        else
+          echo "❌ OCI CLI authentication failed - check credentials"
+          oci iam region list 2>&1 | head -20
+          exit 1
+        fi
+
         echo "✅ OCI connection verified"
