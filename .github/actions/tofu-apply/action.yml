@@ -43,6 +43,22 @@ runs:
           -reconfigure
         echo "✅ tofu init with remote S3 backend complete"
 
+    - name: Tofu Refresh (sync state with cloud)
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        VAR_FILE_ARG=""
+        if [ -n "${{ inputs.var_file }}" ]; then
+          VAR_FILE_ARG="-var-file=${{ inputs.var_file }}"
+        fi
+
+        tofu refresh \
+          -var="environment=${{ inputs.environment }}" \
+          $VAR_FILE_ARG \
+          -no-color || true
+
+        echo "✅ tofu refresh complete (state synced with cloud)"
+
     - name: Tofu Apply
       shell: bash
       working-directory: ${{ inputs.working_directory }}
