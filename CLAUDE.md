@@ -72,7 +72,9 @@ tofu plan -var="environment=dev" -var-file="environments/dev/terraform.tfvars"
 tofu apply -var="environment=dev" -var-file="environments/dev/terraform.tfvars" -auto-approve
 ```
 
-**Key note:** When `tofu apply` runs in workflows, it runs with `working_directory: iac/`, so var_file paths MUST be relative to iac/ (e.g., `environments/dev/terraform.tfvars`, NOT `iac/environments/dev/terraform.tfvars`)
+**Key notes:**
+- When `tofu apply` runs in workflows, it runs with `working_directory: iac/`, so var_file paths MUST be relative to iac/ (e.g., `environments/dev/terraform.tfvars`, NOT `iac/environments/dev/terraform.tfvars`)
+- Full `tofu apply` requires OCI account and credentials. Use `tofu plan` locally to validate HCL without applying.
 
 ### Bootstrap & Deployment Scripts
 
@@ -80,6 +82,49 @@ tofu apply -var="environment=dev" -var-file="environments/dev/terraform.tfvars" 
 bash scripts/bootstrap-oci.sh    # First-time OCI setup (10 steps)
 bash scripts/setup-github.sh     # Configure GitHub environments & branch protection
 ```
+
+### Local Development (Without OCI)
+
+These components can be developed and tested locally before deploying to OCI:
+
+**API (Node.js):**
+
+```bash
+cd apps/api
+npm install
+npm run dev          # Watch mode on http://localhost:3001
+npm test             # Run Jest tests
+npm run lint         # Run ESLint
+```
+
+**mitmproxy addon (Python):**
+
+```bash
+cd apps/mitm
+pip install -r requirements.txt
+pytest -v            # Run all tests with verbose output
+pytest tests/test_addon.py::TestClass::test_method  # Run single test
+```
+
+**Portal (Next.js) — once scaffolded:**
+
+```bash
+cd apps/portal
+npm install
+npm run dev          # Dev server on http://localhost:3000
+npm test             # Run test suite
+```
+
+**IaC validation (OpenTofu):**
+
+```bash
+cd iac
+tofu fmt -check      # Check formatting
+tofu validate        # Validate HCL syntax
+tofu plan -var-file environments/dev/terraform.tfvars  # Review changes (requires OCI credentials)
+```
+
+**Note:** Full integration testing requires deployed infrastructure (OCI VM, Supabase, Cloudflare). Use GitHub Actions workflows for E2E testing.
 
 ---
 
@@ -240,16 +285,18 @@ The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 
 1. **Verify OCI CLI** — check credentials configured
 2. **Cloud Guard** (optional) — security monitoring setup
-3. **Create GitHub Actions IAM user** — `familyshield-github-actions`
-4. **Generate API key** — uploaded to OCI, private key → GitHub secret
+3. **Create GitHub Actions IAM user** — `familyshield-github-actions` (asks for email)
+4. **Generate API key** — uploaded to OCI, private key → GitHub secret `OCI_PRIVATE_KEY`
 5. **Create dynamic group** — matches IAM user OCID
 6. **Grant bootstrap IAM policy** — grants `any-user to manage all-resources in tenancy where request.user.id = '<OCID>'` (CRITICAL for compartment/policy creation)
 7. **Create Terraform state bucket** — versioned Object Storage
-8. **Find Ubuntu 22.04 ARM image** — for VM provisioning
+8. **Find Ubuntu 22.04 ARM image** — for VM provisioning (update `iac/variables.tf` with OCID)
 9. **Generate SSH key** — for VS Code Remote SSH access
 10. **Summary** — output all GitHub secrets to configure
 
 **Critical Detail:** Step 6 creates a bootstrap IAM policy that allows the GitHub Actions user to create compartments and policies. This policy uses `Allow any-user where request.user.id = ...` syntax (NOT `dynamic-group`) because the setup uses APIKey auth. Without this step, `tofu apply` will fail with 404-NotAuthorizedOrNotFound errors.
+
+**Idempotency:** The script is idempotent — re-running it will skip existing resources and only create missing ones.
 
 ---
 
@@ -267,14 +314,61 @@ The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 
 ---
 
+## Git Workflow
+
+**Three-branch promotion process:**
+
+```
+Feature/Fix Branch → PR to DEVELOPMENT → Test & Review → Merge to development
+                                                              ↓
+                                               DEVELOPMENT → PR to MAIN → Merge to production
+```
+
+**When to use each branch:**
+- **main** — Production-ready code only. Triggered for prod deployments.
+- **development** — Integration branch. PRs merged here are tested in dev environment first.
+- **feature/fix/*** — Work branches. Always branch from `development`, never from `main`.
+
+**Workflow commands:**
+
+```bash
+# Create feature branch from development (NOT main)
+git checkout development
+git pull origin development
+git checkout -b fix/description-of-change
+
+# When ready, create PR targeting DEVELOPMENT
+git push -u origin fix/description-of-change
+gh pr create --base development  # NOT main!
+
+# Trigger workflows on development branch (CRITICAL!)
+gh workflow run deploy-dev.yml --ref development
+```
+
+**PR Review & Merge Process:**
+
+1. **Open PR** → targets `development` (automatically runs `pr-check` workflow)
+2. **Review** → tofu plan is posted as PR comment for infrastructure changes
+3. **Test in CI** → `pr-check` validates, but full deployment testing happens after merge
+4. **Merge to development** → automatically triggers `deploy-dev.yml` (deploys to dev environment)
+5. **Test in dev** → smoke tests run, check health at `https://familyshield-dev.everythingcloud.ca`
+6. **If dev passes** → automatically triggers `deploy-staging.yml` (deploys to staging)
+7. **When ready for production** → manually create new PR: `development` → `main`
+8. **Merge to main** → triggers `deploy-prod.yml` which waits for manual approval in GitHub UI
+
+---
+
 ## Coding Standards
 
 - **TypeScript:** strict mode, no `any`, Zod for runtime validation
 - **Python:** black formatter, flake8 lint, type hints required, docstrings on all classes
 - **Terraform/OpenTofu:** `tofu fmt` before commit, tflint clean, all resources tagged
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `iac:`, `docs:`, `chore:`)
-- **PRs:** one PR per feature, created on feature/fix branch, NEVER auto-merge to main
-- **Git workflow:** Create branch → commit → create PR → wait for user review/approval → merge to main
+- **PRs:** 
+  - Create on feature/fix branch
+  - Target `development` (NOT main)
+  - Wait for user review before merging
+  - After testing in dev, create separate PR: `development` → `main`
 - **Secrets:** never in code, always via environment variables or GitHub Secrets
 - **Tests:** new feature = new tests, no merge without tests passing
 
@@ -354,9 +448,12 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
 
 ### 🔄 Phase 2: API & Portal (IN PROGRESS)
 
-- ✅ API structure defined, enrichers for all 4 platforms
-- 🔄 Cloudflare + OCI IAM fixes (PR #3, merged 2026-04-12)
-- 🔲 Remaining: Portal (Next.js 14), API types/types/libs, tests, Docker build workflow
+- ✅ API structure defined, enrichers for all 4 platforms (YouTube, Roblox, Discord, Twitch)
+- ✅ mitmproxy addon complete with 15 tests
+- ✅ Cloudflare + OCI IAM fixes (bootstrap policy, token scopes) — merged to main
+- 🔲 Portal: Next.js 14 scaffold needed (no `apps/portal/package.json` yet)
+- 🔲 API: TypeScript types, Redis/Supabase client factories, alert dispatcher
+- 🔲 CI/CD: Docker build workflows for api and portal images
 
 ### 📋 Phase 3: E2E Testing & Production Release
 
