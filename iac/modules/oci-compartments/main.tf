@@ -14,12 +14,12 @@ data "oci_identity_compartments" "familyshield" {
 
 # Create compartment if it doesn't exist
 resource "oci_identity_compartment" "familyshield" {
-  count              = length(data.oci_identity_compartments.familyshield.compartments) == 0 ? 1 : 0
-  compartment_id     = var.tenancy_ocid
-  name               = "familyshield-${var.environment}"
-  description        = var.compartment_description
-  enable_delete      = false # Protect from accidental deletion
-  freeform_tags      = var.tags
+  count          = length(data.oci_identity_compartments.familyshield.compartments) == 0 ? 1 : 0
+  compartment_id = var.tenancy_ocid
+  name           = "familyshield-${var.environment}"
+  description    = var.compartment_description
+  enable_delete  = false # Protect from accidental deletion
+  freeform_tags  = var.tags
 }
 
 # Local to get the compartment OCID (either existing or newly created)

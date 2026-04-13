@@ -1,4 +1,5 @@
 # FamilyShield Hybrid Rebuild Plan
+
 **Objective:** Fresh start + phased IaC migration  
 **Timeline:** Phase 1 (today) → Phase 2-3 (this week)
 
@@ -114,6 +115,7 @@ echo "Next: Run bootstrap-oci.sh to verify fresh setup works"
 ```
 
 **Execute it:**
+
 ```bash
 bash scripts/cleanup-dev-environment.sh
 ```
@@ -162,6 +164,7 @@ oci iam region list \
 ```
 
 If authentication fails:
+
 ```bash
 # Re-check GitHub secrets in: Settings → Secrets and variables → Actions
 # Must have:
@@ -191,6 +194,7 @@ gh run watch $(gh run list --workflow deploy-dev.yml --limit 1 --json number -q)
 ```
 
 **Expected outcomes:**
+
 - ✅ OCI Login succeeds
 - ✅ Create compartment and IAM policy step succeeds
 - ✅ Apply IaC → dev succeeds
@@ -344,6 +348,7 @@ variable "github_actions_user_ocid" {
 ### 3.4 Result
 
 Now bootstrap is **fully automated**:
+
 ```
 tofu apply automatically:
   ✅ Creates compartment
@@ -394,6 +399,7 @@ THIS WEEK (Phase 3):
 ## Success Criteria
 
 **Phase 1 (Fresh Start):**
+
 ```
 ✅ Deploy-dev workflow runs to completion
 ✅ No 404-NotAuthorizedOrNotFound errors
@@ -403,6 +409,7 @@ THIS WEEK (Phase 3):
 ```
 
 **Phase 2 (Workflow Bootstrap):**
+
 ```
 ✅ bootstrap-dev.yml workflow can be triggered manually
 ✅ Verification step confirms all resources exist
@@ -410,6 +417,7 @@ THIS WEEK (Phase 3):
 ```
 
 **Phase 3 (IaC Migration):**
+
 ```
 ✅ Compartment created by Terraform resource (not bootstrap)
 ✅ Policy created by Terraform resource

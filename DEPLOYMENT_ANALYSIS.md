@@ -1,4 +1,5 @@
 # FamilyShield IaC Deployment Analysis
+
 **Date:** 2026-04-13  
 **Status:** Deploy-dev workflow failing with 404-NotAuthorizedOrNotFound
 
@@ -17,6 +18,7 @@
 ## Current Architecture Issues
 
 ### 1. **Bootstrap Separation Violation**
+
 ```
 Design Intent:    bootstrap-oci.sh (manual, one-time) → GitHub Actions (automatic)
 Actual Pattern:   Bootstrap not idempotent in workflow → manual script run locally
@@ -24,11 +26,13 @@ Problem:          When bootstrap.sh is NOT re-run automatically, policy expires/
 ```
 
 ### 2. **State Management Gaps**
+
 - **Orphaned Resources:** Storage buckets exist in OCI but NOT in Terraform state
 - **Import Logic Incomplete:** `tofu-apply` action tries to import but fails silently
 - **No Reconciliation:** No mechanism to detect/reconcile state divergence
 
 ### 3. **No Idempotent Policy Verification**
+
 ```bash
 # Added to workflow — but this STILL requires:
 oci iam policy create --statements "[\"Allow any-user to manage...\"]"
@@ -36,6 +40,7 @@ oci iam policy create --statements "[\"Allow any-user to manage...\"]"
 ```
 
 ### 4. **IAM Permission Assumptions**
+
 - Assumes GitHub Actions user already has "list compartments" permission
 - But that permission might come FROM the bootstrap policy we're trying to create
 - Chicken-and-egg problem
@@ -44,13 +49,15 @@ oci iam policy create --statements "[\"Allow any-user to manage...\"]"
 
 ## Fresh Start Analysis
 
-### ✅ Would Help With:
+### ✅ Would Help With
+
 1. **Clear state file** — remove orphaned resources
 2. **Clean bucket state** — remove 409 conflicts
 3. **Verify bootstrap idempotence** — rebuild from zero
 4. **Force policy re-application** — ensure GitHub Actions user has full permissions
 
-### ❌ Would NOT Help With:
+### ❌ Would NOT Help With
+
 1. **IAM permission model** — same policy issue will recur
 2. **Workflow design** — still separating bootstrap from IaC
 3. **Monitoring** — no drift detection or health checks
@@ -61,6 +68,7 @@ oci iam policy create --statements "[\"Allow any-user to manage...\"]"
 ## Root Cause: "Bootstrap Paradigm" Problem
 
 **Current Design:**
+
 ```
 Local Machine:  bash bootstrap-oci.sh → Manual setup of IAM + secrets
                                        ↓
@@ -69,6 +77,7 @@ GitHub Actions: Deploy-dev workflow → Try to find resources that should exist
 ```
 
 **Problem:** Bootstrap happens OUTSIDE the workflow. If it fails or is skipped:
+
 - Policy doesn't exist → 404 errors
 - User permissions incomplete → silent failures
 - No way to verify bootstrap success
@@ -78,6 +87,7 @@ GitHub Actions: Deploy-dev workflow → Try to find resources that should exist
 ## Recommended Solutions
 
 ### **Option 1: Fresh Start + Verification (50% Improvement)**
+
 **Cost:** 1-2 hours manual work
 
 ```bash
@@ -97,6 +107,7 @@ GitHub Actions: Deploy-dev workflow → Try to find resources that should exist
 ---
 
 ### **Option 2: Integrate Bootstrap Into Workflow (85% Improvement)**
+
 **Cost:** 3-4 hours implementation
 
 Replace manual bootstrap with workflow-native approach:
@@ -132,10 +143,12 @@ jobs:
 ---
 
 ### **Option 3: Full IaC-Managed Lifecycle (95% Improvement + Production-Ready)**
+
 **Cost:** 5-6 hours implementation  
 **Benefit:** True IaC paradigm
 
 #### **3.1 Automate Compartment Creation**
+
 ```hcl
 # iac/modules/oci-compartments/main.tf (MODIFIED)
 
@@ -159,11 +172,13 @@ output "compartment_id" {
 ```
 
 #### **3.2 Eliminate Bootstrap-oci.sh**
+
 - Remove manual script entirely
 - Replace with `terraform init && terraform apply`
 - GitHub Actions user key is only secret needed
 
 #### **3.3 Implement State Locking**
+
 ```hcl
 # iac/main.tf
 terraform {
@@ -175,6 +190,7 @@ terraform {
 ```
 
 #### **3.4 Add Health Checks & Drift Detection**
+
 ```bash
 # .github/workflows/health-check.yml (cron: every 6 hours)
 - name: Detect IaC Drift
@@ -189,7 +205,7 @@ terraform {
 
 ## Real-World IaC Best Practices (Your Question)
 
-### ❌ What FamilyShield Currently Does Wrong:
+### ❌ What FamilyShield Currently Does Wrong
 
 | Anti-Pattern | Current State | Production Risk |
 |--------------|---------------|-----------------|
@@ -200,7 +216,7 @@ terraform {
 | **Silent failures** | `2>/dev/null` in scripts | Policies fail to create, errors hidden |
 | **Assumption-based** | Assumes bootstrap was run | Single point of failure |
 
-### ✅ Production-Grade IaC Should:
+### ✅ Production-Grade IaC Should
 
 1. **Self-Healing:** `tofu apply` fixes drift automatically
 2. **Immutable:** No manual resource changes allowed
@@ -215,7 +231,9 @@ terraform {
 ## Recommendation
 
 ### **Immediate (Next 2 Hours):**
+
 Try **Option 1** (Fresh Start):
+
 ```bash
 # Manual cleanup
 oci iam policy delete --policy-id $(oci iam policy list ... bootstrap)
@@ -239,7 +257,9 @@ gh workflow run deploy-dev.yml --ref development
 ---
 
 ### **Medium-Term (2-3 Days):**
+
 Implement **Option 2** (Workflow Bootstrap):
+
 - Move bootstrap logic into GitHub Actions
 - Add explicit verification steps
 - Log all policy/compartment creation for debugging
@@ -248,7 +268,9 @@ Implement **Option 2** (Workflow Bootstrap):
 ---
 
 ### **Long-Term (1-2 Weeks):**
+
 Implement **Option 3** (Full IaC):
+
 - Compartments/policies created by Terraform
 - State locking enabled
 - Drift detection running 24/7
@@ -279,6 +301,7 @@ Phase 4 (This week):   Add drift detection + state locking → production-ready
 ```
 
 This way:
+
 - ✅ You have working infrastructure today
 - ✅ You fix the root cause (bootstrap automation)
 - ✅ You achieve production-grade IaC within days
