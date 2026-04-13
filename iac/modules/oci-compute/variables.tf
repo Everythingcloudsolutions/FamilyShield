@@ -2,6 +2,10 @@ variable "compartment_id" {
   type = string
 }
 
+variable "tenancy_ocid" {
+  type = string
+}
+
 variable "subnet_id" {
   type = string
 }

@@ -39,7 +39,7 @@ resource "oci_core_instance" "familyshield" {
   }
 }
 
-# Fetch availability domains
+# Fetch availability domains (use tenancy for query since compartment may not exist yet)
 data "oci_identity_availability_domains" "ads" {
-  compartment_id = var.compartment_id
+  compartment_id = var.tenancy_ocid
 }

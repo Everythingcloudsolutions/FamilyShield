@@ -94,6 +94,7 @@ module "compute" {
   source = "./modules/oci-compute"
 
   compartment_id = module.compartments.compartment_id
+  tenancy_ocid   = var.oci_tenancy_ocid
   subnet_id      = module.network.public_subnet_id
   environment    = var.environment
   ssh_public_key = var.ssh_public_key
