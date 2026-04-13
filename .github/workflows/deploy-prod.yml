@@ -70,6 +70,9 @@ jobs:
           var_file:          environments/prod/terraform.tfvars
           github_token:      ${{ secrets.GITHUB_TOKEN }}
         env:
+          AWS_ACCESS_KEY_ID:             ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY:         ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE:                 ${{ secrets.OCI_NAMESPACE }}
           TF_VAR_oci_tenancy_ocid:       ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_oci_namespace:          ${{ secrets.OCI_NAMESPACE }}
           TF_VAR_ssh_public_key:         ${{ secrets.OCI_SSH_PUBLIC_KEY }}
@@ -90,6 +93,9 @@ jobs:
           working_directory: iac
           var_file:          environments/prod/terraform.tfvars
         env:
+          AWS_ACCESS_KEY_ID:             ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY:         ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE:                 ${{ secrets.OCI_NAMESPACE }}
           TF_VAR_oci_tenancy_ocid:       ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_oci_namespace:          ${{ secrets.OCI_NAMESPACE }}
           TF_VAR_ssh_public_key:         ${{ secrets.OCI_SSH_PUBLIC_KEY }}
