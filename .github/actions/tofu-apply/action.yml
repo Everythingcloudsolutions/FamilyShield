@@ -43,7 +43,7 @@ runs:
           -reconfigure
         echo "✅ tofu init with remote S3 backend complete"
 
-    - name: Cleanup orphaned cloudflare resources from state
+    - name: Cleanup orphaned cloudflare resources and import existing OCI resources
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
@@ -54,6 +54,24 @@ runs:
         tofu state rm module.cloudflare.cloudflare_tunnel_config.main 2>/dev/null && echo "✅ Removed cloudflare_tunnel_config.main" || true
         tofu state rm module.cloudflare 2>/dev/null && echo "✅ Removed cloudflare module" || true
         echo "✅ State cleanup complete"
+
+        # Proactively import existing compartment if it exists in OCI but not in state
+        echo ""
+        echo "📋 Checking for existing OCI compartment to import..."
+        COMPARTMENT_OCID=$(oci iam compartment list --compartment-id "$TF_VAR_oci_tenancy_ocid" --query "data[?name=='familyshield-${{ inputs.environment }}'] | [0].id" --raw-output 2>/dev/null || echo "")
+
+        if [ -n "$COMPARTMENT_OCID" ] && [ "$COMPARTMENT_OCID" != "None" ]; then
+          # Check if compartment is already in state
+          if ! tofu state list 2>/dev/null | grep -q "module.compartments.oci_identity_compartment.familyshield"; then
+            echo "✅ Found existing compartment in OCI: $COMPARTMENT_OCID"
+            echo "   Importing into state..."
+            tofu import module.compartments.oci_identity_compartment.familyshield "$COMPARTMENT_OCID" 2>/dev/null && echo "   ✅ Compartment imported" || echo "   ⚠️  Import may have failed, will retry on apply"
+          else
+            echo "✅ Compartment already in state"
+          fi
+        else
+          echo "ℹ️  No existing compartment found in OCI"
+        fi
 
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
