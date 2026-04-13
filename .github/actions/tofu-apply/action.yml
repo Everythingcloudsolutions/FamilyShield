@@ -43,17 +43,33 @@ runs:
           -reconfigure
         echo "✅ tofu init with remote S3 backend complete"
 
-    - name: Cleanup orphaned resources
+    - name: Cleanup orphaned resources and import existing buckets
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
         echo "🗑️  Cleaning up orphaned Cloudflare resources from state..."
-        # Remove cloudflare module resources if they exist in state
-        # (from when Cloudflare was managed by Terraform before API-driven approach)
         tofu state rm module.cloudflare.cloudflare_tunnel.main 2>/dev/null && echo "✅ Removed cloudflare_tunnel.main" || true
         tofu state rm module.cloudflare.cloudflare_tunnel_config.main 2>/dev/null && echo "✅ Removed cloudflare_tunnel_config.main" || true
         tofu state rm module.cloudflare 2>/dev/null && echo "✅ Removed cloudflare module" || true
         echo "✅ State cleanup complete"
+
+        # Proactively import existing Object Storage buckets if they exist in OCI but not in state
+        echo ""
+        echo "📋 Checking for existing Object Storage buckets to import..."
+        for BUCKET_NAME in "familyshield-tfstate-${{ inputs.environment }}" "familyshield-backups-${{ inputs.environment }}" "familyshield-app-${{ inputs.environment }}"; do
+          BUCKET_TYPE=$(echo "$BUCKET_NAME" | sed "s/familyshield-//;s/-${{ inputs.environment }}//")
+          if ! tofu state list 2>/dev/null | grep -q "module.storage.oci_objectstorage_bucket.$BUCKET_TYPE"; then
+            # Check if bucket exists in OCI
+            BUCKET_EXISTS=$(oci os bucket get --namespace-name "$TF_VAR_oci_namespace" --bucket-name "$BUCKET_NAME" --query "name" --raw-output 2>/dev/null || echo "")
+            if [ -n "$BUCKET_EXISTS" ] && [ "$BUCKET_EXISTS" != "None" ]; then
+              echo "✅ Found existing bucket in OCI: $BUCKET_NAME"
+              echo "   Importing into state as module.storage.oci_objectstorage_bucket.$BUCKET_TYPE..."
+              tofu import "module.storage.oci_objectstorage_bucket.$BUCKET_TYPE" "$BUCKET_NAME" 2>/dev/null && echo "   ✅ Bucket imported" || echo "   ⚠️  Import may have failed, will retry on apply"
+            fi
+          else
+            echo "✅ Bucket $BUCKET_NAME already in state"
+          fi
+        done
 
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
