@@ -71,6 +71,9 @@ module "network" {
   region         = var.oci_region
   vcn_cidr       = var.vcn_cidr
   tags           = local.common_tags
+
+  # Explicit dependency to ensure compartment creation completes first
+  depends_on = [module.compartments]
 }
 
 ###############################################################################
@@ -84,6 +87,9 @@ module "storage" {
   namespace      = var.oci_namespace
   environment    = var.environment
   tags           = local.common_tags
+
+  # Explicit dependency to ensure compartment creation completes first
+  depends_on = [module.compartments]
 }
 
 ###############################################################################

@@ -24,5 +24,14 @@ resource "oci_identity_compartment" "familyshield" {
 
 # Local to get the compartment OCID (either existing or newly created)
 locals {
-  compartment_id = length(data.oci_identity_compartments.familyshield.compartments) > 0 ? data.oci_identity_compartments.familyshield.compartments[0].id : oci_identity_compartment.familyshield[0].id
+  compartment_id = (
+    length(data.oci_identity_compartments.familyshield.compartments) > 0
+    ? data.oci_identity_compartments.familyshield.compartments[0].id
+    : (
+      length(oci_identity_compartment.familyshield) > 0
+      ? oci_identity_compartment.familyshield[0].id
+      : ""
+    )
+  )
 }
+
