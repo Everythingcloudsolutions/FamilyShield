@@ -43,87 +43,19 @@ runs:
           -reconfigure
         echo "✅ tofu init with remote S3 backend complete"
 
-    - name: Cleanup existing Cloudflare resources
-      shell: bash
-      run: |
-        # Skip if no Cloudflare token
-        if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_ZONE_ID" ]; then
-          echo "⚠️  Missing Cloudflare credentials, skipping cleanup"
-          exit 0
-        fi
-
-        echo "Cleaning up existing Cloudflare resources for ${{ inputs.environment }}..."
-
-        # Delete tunnel by name pattern
-        TUNNEL_NAME="familyshield-${{ inputs.environment }}"
-        TUNNEL_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/tunnels" \
-          -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-          2>/dev/null | jq -r ".result[] | select(.name==\"${TUNNEL_NAME}\") | .id // empty" 2>/dev/null)
-
-        if [ -n "$TUNNEL_ID" ]; then
-          curl -s -X DELETE "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/tunnels/${TUNNEL_ID}" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" 2>/dev/null
-          echo "✅ Cleaned up tunnel: ${TUNNEL_NAME}"
-        fi
-
-        # Delete DNS records matching environment pattern
-        for RECORD_NAME in "portal-${{ inputs.environment }}" "adguard-${{ inputs.environment }}" "grafana-${{ inputs.environment }}" "vpn-${{ inputs.environment }}"; do
-          RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            2>/dev/null | jq -r ".result[] | select(.name | startswith(\"${RECORD_NAME}\")) | .id // empty" 2>/dev/null | head -1)
-
-          if [ -n "$RECORD_ID" ]; then
-            curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
-              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" 2>/dev/null
-            echo "✅ Cleaned up DNS record: ${RECORD_NAME}"
-          fi
-        done
-
-        # Delete access applications by name pattern
-        for APP_NAME in "adguard-${{ inputs.environment }}" "grafana-${{ inputs.environment }}"; do
-          APP_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/access/apps" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            2>/dev/null | jq -r ".result[] | select(.name==\"${APP_NAME}\") | .id // empty" 2>/dev/null)
-
-          if [ -n "$APP_ID" ]; then
-            curl -s -X DELETE "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/access/apps/${APP_ID}" \
-              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" 2>/dev/null
-            echo "✅ Cleaned up access app: ${APP_NAME}"
-          fi
-        done
-
-        echo "✅ Cloudflare pre-deployment cleanup complete (or nothing to clean)"
-
-    - name: Clean up state entries for deleted Cloudflare resources
+    - name: Delete problematic Cloudflare state entries
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
-        echo "Attempting to remove deleted Cloudflare resources from state..."
+        # Remove tunnel and tunnel_config from state to prevent "Configuration for tunnel not found" errors
+        # These resources will be recreated fresh by tofu apply
+        echo "Removing problematic Cloudflare resources from state..."
 
-        # List current state
-        echo "Current state resources:"
-        tofu state list 2>&1 | head -20 || echo "No state available"
+        # Try to forcefully remove tunnel and tunnel_config
+        tofu state rm -force 'module.cloudflare.cloudflare_tunnel.main' 2>&1 || true
+        tofu state rm -force 'module.cloudflare.cloudflare_tunnel_config.main' 2>&1 || true
 
-        # Try removing tunnel and tunnel_config (these cause "Configuration for tunnel not found" errors)
-        echo ""
-        echo "Removing tunnel and tunnel_config..."
-        tofu state rm 'module.cloudflare.cloudflare_tunnel.main' 2>&1 || echo "Tunnel not in state (expected)"
-        tofu state rm 'module.cloudflare.cloudflare_tunnel_config.main' 2>&1 || echo "Tunnel config not in state (expected)"
-
-        echo ""
-        echo "Removing environment-specific DNS records..."
-        tofu state rm 'module.cloudflare.cloudflare_record.portal' 2>&1 || echo "Portal record not in state (expected)"
-        tofu state rm 'module.cloudflare.cloudflare_record.adguard' 2>&1 || echo "Adguard record not in state (expected)"
-        tofu state rm 'module.cloudflare.cloudflare_record.grafana' 2>&1 || echo "Grafana record not in state (expected)"
-        tofu state rm 'module.cloudflare.cloudflare_record.vpn' 2>&1 || echo "VPN record not in state (expected)"
-
-        echo ""
-        echo "Removing environment-specific access apps..."
-        tofu state rm 'module.cloudflare.cloudflare_access_application.adguard' 2>&1 || echo "Adguard app not in state (expected)"
-        tofu state rm 'module.cloudflare.cloudflare_access_application.grafana' 2>&1 || echo "Grafana app not in state (expected)"
-
-        echo ""
-        echo "✅ State cleanup complete"
+        echo "✅ State cleanup complete - tunnel resources removed"
 
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
