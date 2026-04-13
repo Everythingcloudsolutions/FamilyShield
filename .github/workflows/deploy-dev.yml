@@ -34,6 +34,45 @@ jobs:
           oci_fingerprint:  ${{ secrets.OCI_FINGERPRINT }}
           oci_private_key:  ${{ secrets.OCI_PRIVATE_KEY }}
 
+      - name: Create compartment and IAM policy if missing
+        shell: bash
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+        run: |
+          COMPARTMENT_NAME="familyshield-dev"
+
+          # Check if compartment exists
+          COMPARTMENT=$(oci iam compartment list --compartment-id "$OCI_TENANCY_OCID" --query "data[?name=='$COMPARTMENT_NAME'] | [0]" --raw-output 2>/dev/null || echo "")
+
+          if [ -z "$COMPARTMENT" ] || [ "$COMPARTMENT" == "None" ]; then
+            echo "📋 Creating compartment: $COMPARTMENT_NAME"
+            oci iam compartment create \
+              --compartment-id "$OCI_TENANCY_OCID" \
+              --name "$COMPARTMENT_NAME" \
+              --description "FamilyShield dev environment" \
+              --query 'data.id' --raw-output || echo "⚠️  Compartment creation may have failed"
+          else
+            echo "✅ Compartment already exists"
+          fi
+
+          # Ensure GitHub Actions user has policy to manage resources
+          echo ""
+          echo "📋 Checking for GitHub Actions IAM policy..."
+          POLICY_NAME="familyshield-github-actions-policy"
+          POLICY=$(oci iam policy list --compartment-id "$OCI_TENANCY_OCID" --query "data[?name=='$POLICY_NAME'] | [0]" --raw-output 2>/dev/null || echo "")
+
+          if [ -z "$POLICY" ] || [ "$POLICY" == "None" ]; then
+            echo "Creating IAM policy for GitHub Actions user: $OCI_USER_OCID"
+            oci iam policy create \
+              --compartment-id "$OCI_TENANCY_OCID" \
+              --name "$POLICY_NAME" \
+              --statements "[\"Allow any-user to manage all-resources in tenancy where request.user.id = '$OCI_USER_OCID'\"]" \
+              2>/dev/null || echo "⚠️  Policy creation may have failed (may already exist)"
+          else
+            echo "✅ IAM policy already exists"
+          fi
+
       - name: Apply IaC → dev
         uses: ./.github/actions/tofu-apply
         with:
