@@ -43,34 +43,26 @@ runs:
           -reconfigure
         echo "✅ tofu init with remote S3 backend complete"
 
-    - name: Delete problematic Cloudflare state entries
+    - name: Clean Cloudflare tunnel state from remote backend
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
-        # Remove tunnel and tunnel_config from state to prevent "Configuration for tunnel not found" errors
-        # These resources will be recreated fresh by tofu apply
-        echo "Removing problematic Cloudflare resources from state..."
-        echo ""
+        # The problem: remote S3 backend has stale tunnel state
+        # Solution: pull remote state, remove tunnel, push back
+        echo "Cleaning tunnel state from remote backend..."
 
-        # Check if tunnel exists in state
-        echo "Listing state resources:"
-        if tofu state list 2>/dev/null | grep -q "cloudflare_tunnel"; then
-          echo "Found cloudflare_tunnel in state, removing..."
-          tofu state rm -force 'module.cloudflare.cloudflare_tunnel.main'
-          echo "✅ Tunnel removed"
+        # Pull remote state to local
+        tofu state pull > /tmp/state.json 2>&1 || echo "Could not pull state"
+
+        if grep -q "cloudflare_tunnel" /tmp/state.json 2>/dev/null; then
+          echo "Found cloudflare_tunnel in remote state, removing..."
+          tofu state rm -force 'module.cloudflare.cloudflare_tunnel.main' 2>&1
+          tofu state rm -force 'module.cloudflare.cloudflare_tunnel_config.main' 2>&1
+          echo "✅ Tunnel resources removed from state"
         else
-          echo "No cloudflare_tunnel in state"
+          echo "No cloudflare_tunnel in remote state"
         fi
 
-        if tofu state list 2>/dev/null | grep -q "cloudflare_tunnel_config"; then
-          echo "Found cloudflare_tunnel_config in state, removing..."
-          tofu state rm -force 'module.cloudflare.cloudflare_tunnel_config.main'
-          echo "✅ Tunnel config removed"
-        else
-          echo "No cloudflare_tunnel_config in state"
-        fi
-
-        echo ""
         echo "✅ State cleanup complete"
 
     - name: Tofu Refresh (sync state with cloud)
