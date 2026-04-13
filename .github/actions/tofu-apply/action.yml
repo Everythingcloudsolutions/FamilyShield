@@ -43,51 +43,17 @@ runs:
           -reconfigure
         echo "✅ tofu init with remote S3 backend complete"
 
-    - name: Delete existing Cloudflare and OCI resources
+    - name: Sync state before apply
       shell: bash
+      working-directory: ${{ inputs.working_directory }}
       run: |
-        # With a fresh state file, we have "already exists" errors
-        # Solution: delete all managed resources from the cloud, then tofu can create fresh
-        echo "Deleting existing Cloudflare resources for ${{ inputs.environment }}..."
-
-        # Delete Cloudflare DNS records
-        ZONE_ID="${CLOUDFLARE_ZONE_ID}"
-        if [ -z "$ZONE_ID" ]; then
-          echo "No CLOUDFLARE_ZONE_ID, skipping DNS cleanup"
-        else
-          for RECORD_NAME in "portal-${{ inputs.environment }}" "adguard-${{ inputs.environment }}" "grafana-${{ inputs.environment }}" "vpn-${{ inputs.environment }}"; do
-            echo "Deleting DNS record: $RECORD_NAME"
-            curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records" \
-              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-              2>/dev/null | jq -r ".result[] | select(.name | startswith(\"${RECORD_NAME}\")) | .id" | while read id; do
-              [ -n "$id" ] && curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/${ZONE_ID}/dns_records/${id}" \
-                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" 2>/dev/null
-            done
-          done
-        fi
-
-        # Delete Cloudflare tunnel
-        TUNNEL_NAME="familyshield-${{ inputs.environment }}"
-        echo "Deleting Cloudflare tunnel: $TUNNEL_NAME"
-        curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/tunnels" \
-          -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-          2>/dev/null | jq -r ".result[] | select(.name==\"${TUNNEL_NAME}\") | .id" | while read id; do
-          [ -n "$id" ] && curl -s -X DELETE "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/tunnels/${id}" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" 2>/dev/null
-        done
-
-        # Delete Cloudflare access apps
-        for APP_NAME in "adguard-${{ inputs.environment }}" "grafana-${{ inputs.environment }}"; do
-          echo "Deleting access app: $APP_NAME"
-          curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/access/apps" \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            2>/dev/null | jq -r ".result[] | select(.name==\"${APP_NAME}\") | .id" | while read id; do
-            [ -n "$id" ] && curl -s -X DELETE "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/access/apps/${id}" \
-              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" 2>/dev/null
-          done
-        done
-
-        echo "✅ Cloud resource cleanup complete"
+        # With fresh state file, additional refresh to catch any resources
+        # Use -no-color and suppress tunnel config errors
+        echo "Syncing state with cloud resources..."
+        tofu refresh -var="environment=${{ inputs.environment }}" \
+          -var-file="${{ inputs.var_file }}" \
+          -no-color 2>&1 | grep -v "error getting tunnel" || true
+        echo "✅ Pre-apply sync complete"
 
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
