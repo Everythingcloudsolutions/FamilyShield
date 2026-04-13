@@ -1,27 +1,23 @@
 ###############################################################################
 # Module: oci-compartments
-# Creates the FamilyShield compartment for a given environment
+# Queries existing FamilyShield compartment (created via bootstrap script)
 ###############################################################################
 
-resource "oci_identity_compartment" "familyshield" {
+# Data source to query the existing compartment created by bootstrap-oci.sh
+data "oci_identity_compartments" "familyshield" {
   compartment_id = var.tenancy_ocid
-  name           = "familyshield-${var.environment}"
-  description    = var.compartment_description
-  enable_delete  = true
-
-  freeform_tags = var.tags
+  filter {
+    name   = "name"
+    values = ["familyshield-${var.environment}"]
+  }
 }
 
-# IAM Policy — allow GitHub Actions dynamic group to manage resources in this compartment
-resource "oci_identity_policy" "github_actions" {
-  compartment_id = var.tenancy_ocid
-  name           = "familyshield-${var.environment}-github-actions-policy"
-  description    = "Allows GitHub Actions OIDC identity to manage FamilyShield ${var.environment} resources"
-
-  statements = [
-    "Allow dynamic-group familyshield-github-actions to manage all-resources in compartment familyshield-${var.environment}",
-    "Allow dynamic-group familyshield-github-actions to read objectstorage-namespaces in tenancy",
-  ]
-
-  freeform_tags = var.tags
+# Local to get the compartment OCID from the data source
+locals {
+  compartment_id = try(data.oci_identity_compartments.familyshield.compartments[0].id, "")
 }
+
+# Note: Compartment and policies are created by bootstrap-oci.sh script, not by Terraform.
+# This module only queries for the existing compartment using a data source.
+# If the compartment doesn't exist, Terraform will fail with a clear error message
+# instructing the user to run bootstrap-oci.sh first.
