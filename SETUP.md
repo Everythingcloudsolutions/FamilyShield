@@ -247,15 +247,19 @@ FamilyShield uses Cloudflare to manage DNS for `everythingcloud.ca` and to creat
 ### 3.3 Create a Cloudflare API Token
 
 The API token allows OpenTofu to configure Cloudflare automatically during deploys.
+FamilyShield requires **three** Cloudflare permissions — do NOT use a template, as templates only grant DNS access.
 
 1. Go to **dash.cloudflare.com/profile/api-tokens**
 2. Click **Create Token**
-3. Click **Use template** next to **Edit zone DNS**
-4. Under **Zone Resources**, change "All zones" to:
-   - `Include → Specific zone → everythingcloud.ca`
-5. Click **Continue to summary → Create Token**
-6. **Copy the token now** — it is only shown once and cannot be retrieved later
-7. Save it in your text file
+3. Click **Create Custom Token** (do NOT use a template — templates lack Tunnel and Access scopes)
+4. Name the token: `familyshield-deploy`
+5. Add three permissions:
+   - **Zone | DNS | Edit** → Include → Specific zone → `everythingcloud.ca`
+   - **Account | Cloudflare Tunnel | Edit** → Include → All accounts
+   - **Account | Access: Apps and Policies | Edit** → Include → All accounts
+6. Click **Continue to summary → Create Token**
+7. **Copy the token now** — it is only shown once and cannot be retrieved later
+8. Save it in your text file
 
 ---
 
@@ -700,8 +704,28 @@ All admin URLs are behind Cloudflare Zero Trust — you log in with your Cloudfl
 **GitHub Actions tofu apply fails with "OCI auth error"**
 → The `OCI_PRIVATE_KEY` secret must contain the full PEM file including the `-----BEGIN RSA PRIVATE KEY-----` header and `-----END RSA PRIVATE KEY-----` footer.
 
-**Cloudflare API error during tofu apply**
-→ Check the `CLOUDFLARE_API_TOKEN` secret has "Edit zone DNS" permission scoped to `everythingcloud.ca`.
+**GitHub Actions tofu apply fails with "404-NotAuthorizedOrNotFound" on compartments or policies**
+→ The GitHub Actions IAM user has no tenancy-level permissions. Re-run:
+  ```bash
+  bash scripts/bootstrap-oci.sh
+  ```
+  The script will skip existing resources (user, API key, bucket) and create only the missing
+  bootstrap IAM policy (Step 6).
+  
+  **Manual alternative** in OCI Console: Identity → Policies → Create Policy (root compartment):
+  - Name: `familyshield-bootstrap-policy`
+  - Statement: `Allow any-user to manage all-resources in tenancy where request.user.id = '<OCI_USER_OCID>'`
+  - Replace `<OCI_USER_OCID>` with your OCI_USER_OCID GitHub secret value
+
+**Cloudflare Authentication error (10000) during tofu apply**
+→ The API token is missing required scopes. The "Edit zone DNS" template is NOT sufficient.
+  FamilyShield requires three permissions:
+  - Zone → DNS → Edit (for CNAME records)
+  - Account → Cloudflare Tunnel → Edit (for Argo Tunnel creation)
+  - Account → Access: Apps and Policies → Edit (for Zero Trust access applications)
+  
+  Re-create the token as a **Custom Token** with all three permissions (see Part 3.3 for steps).
+  Update the `CLOUDFLARE_API_TOKEN` GitHub secret, then re-run the workflow.
 
 **Supabase project shows "Project is paused"**
 → Free tier projects pause after 7 days of inactivity. Log in to supabase.com and click **Restore project**. Takes about 1 minute.
