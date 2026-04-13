@@ -22,9 +22,9 @@ terraform {
   }
 
   backend "s3" {
-    bucket                      = "familyshield-tfstate"
-    key                         = "root/terraform.tfstate"
-    region                      = "ca-toronto-1"
+    bucket = "familyshield-tfstate"
+    key    = "root/terraform.tfstate"
+    region = "ca-toronto-1"
     # endpoint is passed via -backend-config flag in GitHub Actions workflow
     # (requires dynamic OCI_NAMESPACE value from environment)
     skip_region_validation      = true
@@ -150,8 +150,8 @@ locals {
   }
 
   docker_compose_vars = {
-    environment       = var.environment
-    adguard_password  = var.adguard_admin_password
+    environment      = var.environment
+    adguard_password = var.adguard_admin_password
     # tunnel_token is set by deploy-cloudflare.yml workflow via SSM Parameter or Object Storage
     # It's not available at IaC time, so we use a placeholder here
     tunnel_token      = "TUNNEL_TOKEN_PLACEHOLDER_${var.environment}"

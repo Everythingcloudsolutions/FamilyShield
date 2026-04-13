@@ -22,10 +22,6 @@ output "adguard_url" {
   value       = "https://adguard-${var.environment}.everythingcloud.ca"
 }
 
-output "compartment_id" {
-  description = "OCI compartment OCID for this environment"
-  value       = module.compartments.compartment_id
-}
 
 output "state_bucket_name" {
   description = "OCI Object Storage bucket for Terraform state"
