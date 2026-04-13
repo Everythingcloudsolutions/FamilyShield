@@ -1,20 +1,12 @@
 ###############################################################################
 # Module: oci-compartments
 # Creates and manages FamilyShield compartments for each environment
+# Simplified: No data source query (was hanging). Just create directly.
+# Terraform state manages idempotency.
 ###############################################################################
 
-# Data source to query the existing compartment
-data "oci_identity_compartments" "familyshield" {
-  compartment_id = var.tenancy_ocid
-  filter {
-    name   = "name"
-    values = ["familyshield-${var.environment}"]
-  }
-}
-
-# Create compartment if it doesn't exist
+# Create compartment directly (state file prevents duplicates)
 resource "oci_identity_compartment" "familyshield" {
-  count          = length(data.oci_identity_compartments.familyshield.compartments) == 0 ? 1 : 0
   compartment_id = var.tenancy_ocid
   name           = "familyshield-${var.environment}"
   description    = var.compartment_description
@@ -22,16 +14,9 @@ resource "oci_identity_compartment" "familyshield" {
   freeform_tags  = var.tags
 }
 
-# Local to get the compartment OCID (either existing or newly created)
+# Output the compartment ID (always the created one since no data source)
 locals {
-  compartment_id = (
-    length(data.oci_identity_compartments.familyshield.compartments) > 0
-    ? data.oci_identity_compartments.familyshield.compartments[0].id
-    : (
-      length(oci_identity_compartment.familyshield) > 0
-      ? oci_identity_compartment.familyshield[0].id
-      : ""
-    )
-  )
+  compartment_id = oci_identity_compartment.familyshield.id
 }
+
 
