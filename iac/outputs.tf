@@ -2,15 +2,16 @@
 # FamilyShield — Root Outputs
 ###############################################################################
 
-output "vm_public_ip" {
-  description = "Public IP of the OCI ARM VM — use for VS Code Remote SSH"
-  value       = module.compute.public_ip
-}
+# VM outputs skipped until Phase 2 (compute module disabled for now)
+# output "vm_public_ip" {
+#   description = "Public IP of the OCI ARM VM — use for VS Code Remote SSH"
+#   value       = module.compute.public_ip
+# }
 
-output "vm_ssh_command" {
-  description = "SSH command to connect to the VM"
-  value       = "ssh -i ~/.ssh/familyshield ubuntu@${module.compute.public_ip}"
-}
+# output "vm_ssh_command" {
+#   description = "SSH command to connect to the VM"
+#   value       = "ssh -i ~/.ssh/familyshield ubuntu@${module.compute.public_ip}"
+# }
 
 output "portal_url" {
   description = "FamilyShield portal URL"

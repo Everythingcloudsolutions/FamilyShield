@@ -87,30 +87,33 @@ module "storage" {
 }
 
 ###############################################################################
-# Compute — ARM VM (Always Free: 4 OCPU / 24GB)
+# Compute — Testing Phase
+# SKIPPED until supporting infrastructure is verified.
+# Phase 1 deploys compartments, VCN, storage only.
+# Phase 2 will add VM with proven working foundation.
 ###############################################################################
 
-module "compute" {
-  source = "./modules/oci-compute"
-
-  compartment_id = module.compartments.compartment_id
-  tenancy_ocid   = var.oci_tenancy_ocid
-  subnet_id      = module.network.public_subnet_id
-  environment    = var.environment
-  ssh_public_key = var.ssh_public_key
-  instance_shape = "VM.Standard.A1.Flex"
-  ocpus          = 2
-  memory_in_gbs  = 6
-  image_id       = var.oci_ubuntu_arm_image_id
-  cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
-    environment = var.environment
-    docker_compose_b64 = base64encode(templatefile(
-      "${path.module}/templates/docker-compose.yaml.tpl",
-      local.docker_compose_vars
-    ))
-  })
-  tags = local.common_tags
-}
+# module "compute" {
+#   source = "./modules/oci-compute"
+#
+#   compartment_id = module.compartments.compartment_id
+#   tenancy_ocid   = var.oci_tenancy_ocid
+#   subnet_id      = module.network.public_subnet_id
+#   environment    = var.environment
+#   ssh_public_key = var.ssh_public_key
+#   instance_shape = "VM.Standard.A1.Flex"
+#   ocpus          = 2
+#   memory_in_gbs  = 6
+#   image_id       = var.oci_ubuntu_arm_image_id
+#   cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
+#     environment = var.environment
+#     docker_compose_b64 = base64encode(templatefile(
+#       "${path.module}/templates/docker-compose.yaml.tpl",
+#       local.docker_compose_vars
+#     ))
+#   })
+#   tags = local.common_tags
+# }
 
 ###############################################################################
 # Cloudflare DNS + Tunnel + Zero Trust
