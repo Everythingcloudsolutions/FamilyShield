@@ -43,7 +43,7 @@ runs:
           -reconfigure
         echo "✅ tofu init with remote S3 backend complete"
 
-    - name: Cleanup orphaned cloudflare resources and import existing OCI resources
+    - name: Cleanup orphaned resources
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
@@ -54,42 +54,6 @@ runs:
         tofu state rm module.cloudflare.cloudflare_tunnel_config.main 2>/dev/null && echo "✅ Removed cloudflare_tunnel_config.main" || true
         tofu state rm module.cloudflare 2>/dev/null && echo "✅ Removed cloudflare module" || true
         echo "✅ State cleanup complete"
-
-        # Proactively import existing compartment if it exists in OCI but not in state
-        echo ""
-        echo "📋 Checking for existing OCI compartment to import..."
-        COMPARTMENT_OCID=$(oci iam compartment list --compartment-id "$TF_VAR_oci_tenancy_ocid" --query "data[?name=='familyshield-${{ inputs.environment }}'] | [0].id" --raw-output 2>/dev/null || echo "")
-
-        if [ -n "$COMPARTMENT_OCID" ] && [ "$COMPARTMENT_OCID" != "None" ]; then
-          # Check if compartment is already in state
-          if ! tofu state list 2>/dev/null | grep -q "module.compartments.oci_identity_compartment.familyshield"; then
-            echo "✅ Found existing compartment in OCI: $COMPARTMENT_OCID"
-            echo "   Importing into state..."
-            tofu import module.compartments.oci_identity_compartment.familyshield "$COMPARTMENT_OCID" 2>/dev/null && echo "   ✅ Compartment imported" || echo "   ⚠️  Import may have failed, will retry on apply"
-          else
-            echo "✅ Compartment already in state"
-          fi
-        else
-          echo "ℹ️  No existing compartment found in OCI"
-        fi
-
-        # Proactively import existing Object Storage buckets if they exist in OCI but not in state
-        echo ""
-        echo "📋 Checking for existing Object Storage buckets to import..."
-        for BUCKET_NAME in "familyshield-tfstate-${{ inputs.environment }}" "familyshield-backups-${{ inputs.environment }}" "familyshield-app-${{ inputs.environment }}"; do
-          BUCKET_TYPE=$(echo "$BUCKET_NAME" | sed "s/familyshield-//;s/-${{ inputs.environment }}//")
-          if ! tofu state list 2>/dev/null | grep -q "module.storage.oci_objectstorage_bucket.$BUCKET_TYPE"; then
-            # Check if bucket exists in OCI
-            BUCKET_EXISTS=$(oci os bucket get --namespace-name "$TF_VAR_oci_namespace" --bucket-name "$BUCKET_NAME" --query "name" --raw-output 2>/dev/null || echo "")
-            if [ -n "$BUCKET_EXISTS" ] && [ "$BUCKET_EXISTS" != "None" ]; then
-              echo "✅ Found existing bucket in OCI: $BUCKET_NAME"
-              echo "   Importing into state as module.storage.oci_objectstorage_bucket.$BUCKET_TYPE..."
-              tofu import "module.storage.oci_objectstorage_bucket.$BUCKET_TYPE" "$BUCKET_NAME" 2>/dev/null && echo "   ✅ Bucket imported" || echo "   ⚠️  Bucket import may have failed, will retry on apply"
-            fi
-          else
-            echo "✅ Bucket $BUCKET_NAME already in state"
-          fi
-        done
 
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
@@ -123,15 +87,6 @@ runs:
           -no-color || {
           # If apply failed, try to import existing resources and retry
           echo "ℹ️  First apply attempt failed. Attempting to import existing resources..."
-
-          # Try to import the compartment if it exists
-          echo "Querying for existing compartment..."
-          COMPARTMENT_OCID=$(oci iam compartment list --compartment-id "$TF_VAR_oci_tenancy_ocid" --query "data[?name=='familyshield-${{ inputs.environment }}'] | [0].id" --raw-output 2>/dev/null || echo "")
-
-          if [ -n "$COMPARTMENT_OCID" ] && [ "$COMPARTMENT_OCID" != "None" ]; then
-            echo "✅ Found existing compartment: $COMPARTMENT_OCID"
-            tofu import module.compartments.oci_identity_compartment.familyshield "$COMPARTMENT_OCID" 2>&1 || true
-          fi
 
           # Try to import existing buckets if they exist
           echo ""
