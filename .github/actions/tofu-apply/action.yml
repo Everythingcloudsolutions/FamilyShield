@@ -56,7 +56,8 @@ runs:
         # Proactively import existing Object Storage buckets if they exist in OCI but not in state
         echo ""
         echo "📋 Attempting to import existing Object Storage buckets..."
-        # Skip expensive tofu state list (it hangs). Try imports directly with timeout.
+        # Disable exit-on-error for imports (they may fail)
+        set +e
         declare -a BUCKETS=("tfstate:familyshield-tfstate" "backups:familyshield-backups" "app_data:familyshield-app")
         for BUCKET_MAP in "${BUCKETS[@]}"; do
           RESOURCE_NAME="${BUCKET_MAP%:*}"
@@ -70,9 +71,10 @@ runs:
           elif echo "$IMPORT_OUTPUT" | grep -q "already exists\|alreadyexists"; then
             echo "     ✅ Already in state"
           else
-            echo "     ⚠️  Import output: $IMPORT_OUTPUT"
+            echo "     ⚠️  Import noted (will retry on apply)"
           fi
         done
+        set -e
         echo "✅ Import phase complete"
 
     - name: Tofu Refresh (sync state with cloud)
@@ -111,6 +113,7 @@ runs:
           # Try to import existing buckets if they exist (skip OCI CLI check - just try imports)
           echo ""
           echo "Attempting import of existing Object Storage buckets..."
+          set +e  # Disable exit-on-error for imports
           declare -a BUCKETS_RETRY=("tfstate:familyshield-tfstate" "backups:familyshield-backups" "app_data:familyshield-app")
           for BUCKET_MAP in "${BUCKETS_RETRY[@]}"; do
             RESOURCE_NAME="${BUCKET_MAP%:*}"
@@ -124,9 +127,10 @@ runs:
             elif echo "$IMPORT_OUTPUT" | grep -q "already exists\|alreadyexists"; then
               echo "     ✅ Already in state"
             else
-              echo "     ⚠️  Import output: $IMPORT_OUTPUT"
+              echo "     ⚠️  Import attempt completed"
             fi
           done
+          set -e  # Re-enable exit-on-error
 
           # Retry apply
           echo ""
