@@ -3,7 +3,7 @@
 > **Who this is for:** Anyone setting up FamilyShield for the first time, including people with no prior Oracle Cloud experience.
 > **Time needed:** About 2 hours the first time.
 > **Cost:** $0 CAD/month — this guide uses Always Free tiers throughout.
-> **Last updated:** 2026-04-05
+> **Last updated:** 2026-04-13
 
 ---
 
@@ -388,6 +388,37 @@ Add these as GitHub Repository Secrets:
 
 ---
 
+## Part 7.1 — Generate AWS Credentials for Terraform Remote State
+
+The Terraform state (a record of all deployed resources) needs to be stored in OCI Object Storage and persist across GitHub Actions workflow runs. To do this securely, we generate AWS-style credentials for the GitHub Actions user.
+
+Open **Git Bash** and run:
+
+```bash
+# Replace <OCI_USER_OCID> with the OCI_USER_OCID from the bootstrap output above
+oci iam customer-secret-key create \
+  --user-id <OCI_USER_OCID> \
+  --display-name "familyshield-github-terraform" \
+  --query 'data.{access_key: key, secret_key: secret}' \
+  --output table
+```
+
+You will see output like this:
+
+```
++----------------------+----------------------------------------+
+| access_key           | secret_key                             |
++----------------------+----------------------------------------+
+| 1a2b3c4d5e6f7g8h9i0j | 1a2b3c4d5e6f7g8h9i0j1a2b3c4d5e6f7  |
++----------------------+----------------------------------------+
+```
+
+**Copy these two values into your text file — you will add them as GitHub secrets in the next step.**
+
+> These are NOT the OCI API key from bootstrap-oci.sh. These are "Customer Secret Keys" used specifically for S3-compatible access to Object Storage.
+
+---
+
 ## Part 8 — Add GitHub Secrets
 
 Secrets are stored encrypted in GitHub and injected into workflows at deploy time. They never appear in code.
@@ -409,6 +440,15 @@ Secrets are stored encrypted in GitHub and injected into workflows at deploy tim
 | `OCI_SSH_PRIVATE_KEY` | Open `~/.ssh/familyshield` in a text editor, copy the entire file contents including `-----BEGIN OPENSSH PRIVATE KEY-----` and `-----END OPENSSH PRIVATE KEY-----` |
 
 > To open these files in Git Bash: `cat ~/.oci/familyshield-github/private.pem` — then select all and copy.
+
+### Secrets from Part 7.1 (AWS Credentials for Terraform State)
+
+| Secret Name | Value |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | From Part 7.1 output — the `access_key` value |
+| `AWS_SECRET_ACCESS_KEY` | From Part 7.1 output — the `secret_key` value |
+
+> These enable GitHub Actions workflows to persist Terraform state in OCI Object Storage between runs.
 
 ### Secrets from your text file
 

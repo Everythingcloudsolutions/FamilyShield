@@ -26,9 +26,22 @@ runs:
     - name: Tofu Init
       shell: bash
       working-directory: ${{ inputs.working_directory }}
+      env:
+        AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ca-toronto-1
       run: |
-        tofu init -reconfigure
-        echo "✅ tofu init complete"
+        tofu init \
+          -backend-config="bucket=familyshield-tfstate" \
+          -backend-config="key=${{ inputs.environment }}/terraform.tfstate" \
+          -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
+          -backend-config="region=ca-toronto-1" \
+          -backend-config="skip_region_validation=true" \
+          -backend-config="skip_credentials_validation=true" \
+          -backend-config="skip_metadata_api_check=true" \
+          -backend-config="use_path_style=true" \
+          -reconfigure
+        echo "✅ tofu init with remote S3 backend complete"
 
     - name: Tofu Apply
       shell: bash
