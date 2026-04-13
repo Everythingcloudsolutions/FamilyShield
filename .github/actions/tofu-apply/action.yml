@@ -94,7 +94,7 @@ runs:
 
           if [ -n "$COMPARTMENT_OCID" ] && [ "$COMPARTMENT_OCID" != "None" ]; then
             echo "✅ Found existing compartment: $COMPARTMENT_OCID"
-            tofu import -auto-approve module.compartments.oci_identity_compartment.familyshield "$COMPARTMENT_OCID" 2>&1 || true
+            tofu import module.compartments.oci_identity_compartment.familyshield "$COMPARTMENT_OCID" 2>&1 || true
           fi
 
           # Retry apply
