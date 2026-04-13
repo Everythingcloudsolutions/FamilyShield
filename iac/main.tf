@@ -25,7 +25,8 @@ terraform {
     bucket                      = "familyshield-tfstate"
     key                         = "root/terraform.tfstate"
     region                      = "ca-toronto-1"
-    endpoint                    = "https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com"
+    # endpoint is passed via -backend-config flag in GitHub Actions workflow
+    # (requires dynamic OCI_NAMESPACE value from environment)
     skip_region_validation      = true
     skip_credentials_validation = true
     skip_metadata_api_check     = true
