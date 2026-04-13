@@ -63,7 +63,15 @@ runs:
           BUCKET_PREFIX="${BUCKET_MAP#*:}"
           BUCKET_NAME="${BUCKET_PREFIX}-${{ inputs.environment }}"
           echo "  ⏳ $BUCKET_NAME..."
-          timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" >/dev/null 2>&1 && echo "     ✅ Imported" || echo "     ℹ️  Skipped (already in state or not found)"
+          IMPORT_OUTPUT=$(timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" 2>&1)
+          IMPORT_EXIT=$?
+          if [ $IMPORT_EXIT -eq 0 ]; then
+            echo "     ✅ Imported"
+          elif echo "$IMPORT_OUTPUT" | grep -q "already exists\|alreadyexists"; then
+            echo "     ✅ Already in state"
+          else
+            echo "     ⚠️  Import output: $IMPORT_OUTPUT"
+          fi
         done
         echo "✅ Import phase complete"
 
@@ -109,7 +117,15 @@ runs:
             BUCKET_PREFIX="${BUCKET_MAP#*:}"
             BUCKET_NAME="${BUCKET_PREFIX}-${{ inputs.environment }}"
             echo "  ⏳ Importing $BUCKET_NAME..."
-            timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" >/dev/null 2>&1 && echo "     ✅ Imported" || echo "     ℹ️  Import skipped"
+            IMPORT_OUTPUT=$(timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" 2>&1)
+            IMPORT_EXIT=$?
+            if [ $IMPORT_EXIT -eq 0 ]; then
+              echo "     ✅ Imported"
+            elif echo "$IMPORT_OUTPUT" | grep -q "already exists\|alreadyexists"; then
+              echo "     ✅ Already in state"
+            else
+              echo "     ⚠️  Import output: $IMPORT_OUTPUT"
+            fi
           done
 
           # Retry apply
