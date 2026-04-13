@@ -47,7 +47,7 @@ runs:
       shell: bash
       run: |
         # Skip if no Cloudflare token
-        if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+        if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_ZONE_ID" ]; then
           echo "⚠️  Missing Cloudflare credentials, skipping cleanup"
           exit 0
         fi
@@ -65,6 +65,19 @@ runs:
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" 2>/dev/null
           echo "✅ Cleaned up tunnel: ${TUNNEL_NAME}"
         fi
+
+        # Delete DNS records matching environment pattern
+        for RECORD_NAME in "portal-${{ inputs.environment }}" "adguard-${{ inputs.environment }}" "grafana-${{ inputs.environment }}" "vpn-${{ inputs.environment }}"; do
+          RECORD_ID=$(curl -s -X GET "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records" \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            2>/dev/null | jq -r ".result[] | select(.name | startswith(\"${RECORD_NAME}\")) | .id // empty" 2>/dev/null | head -1)
+
+          if [ -n "$RECORD_ID" ]; then
+            curl -s -X DELETE "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${RECORD_ID}" \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" 2>/dev/null
+            echo "✅ Cleaned up DNS record: ${RECORD_NAME}"
+          fi
+        done
 
         # Delete access applications by name pattern
         for APP_NAME in "adguard-${{ inputs.environment }}" "grafana-${{ inputs.environment }}"; do
