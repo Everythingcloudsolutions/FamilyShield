@@ -6,12 +6,12 @@ name: Deploy → Dev
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch: # Allow manual trigger
 
 permissions:
   contents: read
   id-token: write
-  packages: write     # For pushing Docker images to GHCR
+  packages: write # For pushing Docker images to GHCR
 
 jobs:
   deploy-infra-dev:
@@ -30,9 +30,9 @@ jobs:
         uses: ./.github/actions/oci-login
         with:
           oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid:    ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint:  ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key:  ${{ secrets.OCI_PRIVATE_KEY }}
+          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
 
       - name: Create compartment and IAM policy if missing
         shell: bash
@@ -76,22 +76,22 @@ jobs:
       - name: Apply IaC → dev
         uses: ./.github/actions/tofu-apply
         with:
-          environment:       dev
+          environment: dev
           working_directory: iac
-          var_file:          environments/dev/terraform.tfvars
+          var_file: environments/dev/terraform.tfvars
         env:
-          AWS_ACCESS_KEY_ID:             ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY:         ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          OCI_NAMESPACE:                 ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_oci_tenancy_ocid:       ${{ secrets.OCI_TENANCY_OCID }}
-          TF_VAR_oci_namespace:          ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_ssh_public_key:         ${{ secrets.OCI_SSH_PUBLIC_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_oci_namespace: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_ssh_public_key: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
           # Cloudflare variables removed — now managed by separate deploy-cloudflare.yml workflow
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
-          TF_VAR_supabase_url:           ${{ secrets.SUPABASE_URL }}
-          TF_VAR_supabase_anon_key:      ${{ secrets.SUPABASE_ANON_KEY }}
-          TF_VAR_groq_api_key:           ${{ secrets.GROQ_API_KEY }}
-          TF_VAR_anthropic_api_key:      ${{ secrets.ANTHROPIC_API_KEY }}
+          TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL }}
+          TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY }}
+          TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
       - name: Capture IaC outputs
         id: outputs
@@ -131,7 +131,7 @@ jobs:
             ghcr.io/everythingcloudsolutions/familyshield-${{ matrix.app }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/arm64   # OCI Always Free ARM
+          platforms: linux/arm64 # OCI Always Free ARM
 
   deploy-app-dev:
     name: "App deploy → dev VM"
@@ -143,9 +143,9 @@ jobs:
       - name: Deploy updated containers to dev VM
         uses: appleboy/ssh-action@v1
         with:
-          host:     ${{ needs.deploy-infra-dev.outputs.vm_ip }}
+          host: ${{ needs.deploy-infra-dev.outputs.vm_ip }}
           username: ubuntu
-          key:      ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
           script: |
             cd /opt/familyshield
             # Pull latest images
