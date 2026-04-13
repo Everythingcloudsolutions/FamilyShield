@@ -60,24 +60,6 @@ variable "environment" {
   }
 }
 
-# ── Cloudflare ────────────────────────────────────────────────────────────────
-
-variable "cloudflare_api_token" {
-  description = "Cloudflare API token with Zone:DNS:Edit and Tunnel permissions"
-  type        = string
-  sensitive   = true
-}
-
-variable "cloudflare_zone_id" {
-  description = "Cloudflare Zone ID for everythingcloud.ca"
-  type        = string
-}
-
-variable "cloudflare_account_id" {
-  description = "Cloudflare Account ID"
-  type        = string
-}
-
 # ── Application Secrets ───────────────────────────────────────────────────────
 
 variable "adguard_admin_password" {

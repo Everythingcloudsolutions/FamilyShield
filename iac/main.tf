@@ -1,9 +1,10 @@
 ###############################################################################
 # FamilyShield — Root IaC Orchestration
-# Provider: Oracle Cloud (OCI) + Cloudflare + Supabase
+# Provider: Oracle Cloud (OCI)
 # Region:   ca-toronto-1
 # Author:   Everythingcloudsolutions
 # Year:     2026
+# Note: Cloudflare resources are now managed by deploy-cloudflare.yml workflow
 ###############################################################################
 
 terraform {
@@ -13,10 +14,6 @@ terraform {
     oci = {
       source  = "oracle/oci"
       version = "~> 5.0"
-    }
-    cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 4.0"
     }
     random = {
       source  = "hashicorp/random"
@@ -46,10 +43,6 @@ provider "oci" {
   # Auth via OCI OIDC from GitHub Actions — no API key stored in GitHub
   # For local dev: auth via ~/.oci/config
   auth = var.oci_auth_type # "InstancePrincipal" in CI, "APIKey" locally
-}
-
-provider "cloudflare" {
-  api_token = var.cloudflare_api_token
 }
 
 ###############################################################################
