@@ -27,14 +27,6 @@ variable "oci_auth_type" {
   default     = "APIKey"
 }
 
-variable "oci_ubuntu_arm_image_id" {
-  description = "OCI ARM Ubuntu 22.04 image OCID for ca-toronto-1"
-  type        = string
-  # Find via: oci compute image list --compartment-id <tenancy-ocid> --operating-system "Canonical Ubuntu" --shape VM.Standard.A1.Flex
-  # Current ca-toronto-1 Ubuntu 22.04 ARM image (update periodically):
-  default = "ocid1.image.oc1.ca-toronto-1.aaaaaaaawzbmdqqvrcLW4cvhegvnbbxtoday4bxlkdpqeowc5kcbrhplit2a"
-}
-
 variable "ssh_public_key" {
   description = "SSH public key to install on OCI VMs for VS Code Remote SSH"
   type        = string

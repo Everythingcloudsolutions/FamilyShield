@@ -109,7 +109,7 @@ module "compute" {
   instance_shape = "VM.Standard.A1.Flex"
   ocpus          = var.instance_ocpus
   memory_in_gbs  = var.instance_memory
-  image_id       = var.oci_ubuntu_arm_image_id
+  # image_id intentionally NOT set — compute module dynamically queries for Ubuntu 22.04 ARM image
   cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
     environment = var.environment
     docker_compose_b64 = base64encode(templatefile(
