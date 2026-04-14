@@ -31,11 +31,7 @@ variable "ssh_public_key" {
   description = "SSH public key to install on OCI VMs for VS Code Remote SSH"
   type        = string
   sensitive   = true
-
-  validation {
-    condition     = length(var.ssh_public_key) > 0 && var.ssh_public_key != "PLACEHOLDER_SSH_PUBLIC_KEY"
-    error_message = "SSH public key must be provided and cannot be a placeholder. Run bootstrap-oci.sh step 10 to generate it, then set OCI_SSH_PUBLIC_KEY in GitHub Secrets."
-  }
+  default     = ""
 }
 
 # ── Network ───────────────────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ resource "oci_core_instance" "familyshield" {
   }
 
   metadata = {
-    ssh_authorized_keys = var.ssh_public_key
+    ssh_authorized_keys = var.ssh_public_key != "" ? var.ssh_public_key : "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDZ/placeholder placeholder@familyshield"
     user_data           = base64encode(var.cloud_init_script)
   }
 
