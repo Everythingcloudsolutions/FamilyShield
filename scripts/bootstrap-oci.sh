@@ -219,7 +219,7 @@ ARM_IMAGE=$(oci compute image list \
   --raw-output 2>/dev/null || echo "NOT_FOUND")
 
 echo "✅ Ubuntu 22.04 ARM image OCID: $ARM_IMAGE"
-echo "   → Update iac/variables.tf: oci_ubuntu_arm_image_id default"
+echo "   → (No action needed — IaC queries this automatically)"
 
 # ── Step 9: Generate SSH key for VM access ───────────────────────────────────
 echo ""
@@ -266,8 +266,8 @@ echo "  ANTHROPIC_API_KEY      = (from console.anthropic.com)"
 echo ""
 echo "⚠️  Supabase note: Use the Service Role Key (not deprecated anon public key)"
 echo ""
-echo "Update iac/variables.tf:"
-echo "  oci_ubuntu_arm_image_id = \"$ARM_IMAGE\""
+echo "📝 Image OCID (Step 9): $ARM_IMAGE"
+echo "   → No action needed — IaC queries the image automatically by region and shape"
 echo ""
 echo "VS Code Remote SSH — add to ~/.ssh/config on your Windows laptop:"
 echo ""

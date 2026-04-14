@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-12
+> Last updated: 2026-04-14
 
 ---
 
@@ -223,7 +223,7 @@ FamilyShield/
 │   ├── troubleshooting/README.md ← Developer + parent troubleshooting
 │   └── diagrams/                ← draw.io / Excalidraw source files
 └── scripts/
-    ├── bootstrap-oci.sh         ← First-time OCI setup (10 steps)
+    ├── bootstrap-oci.sh         ← First-time OCI setup (11 steps)
     └── setup-github.sh          ← GitHub environments + branch protection
 ```
 
@@ -311,9 +311,9 @@ All backend services run on a single OCI Always Free ARM VM (4 OCPU / 24GB RAM) 
 | VM shape | VM.Standard.A1.Flex (Always Free) |
 | Always Free limit | 4 OCPU / 24GB RAM total |
 | Boot volume | 50GB per VM |
-| OS | Ubuntu 22.04 ARM64 |
-| Compartments | familyshield-dev, familyshield-staging, familyshield-prod |
-| State buckets | Per-environment (familyshield-tfstate-{environment}) |
+| OS | Ubuntu 22.04 ARM64 (dynamically queried — no hardcoding) |
+| Compartments | familyshield-dev, familyshield-staging, familyshield-prod (created by bootstrap Step 7) |
+| Storage bucket | Single bucket: `familyshield-tfstate` with environment prefixes (`dev/`, `staging/`, `prod/`) |
 | GitHub Actions auth | OCI IAM user + API key (no OIDC — simpler for Always Free) |
 
 ### Resource Allocation Per Environment
@@ -336,12 +336,12 @@ The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 5. **Create dynamic group** — matches IAM user OCID
 6. **Grant bootstrap IAM policy** — grants `any-user to manage all-resources in tenancy where request.user.id = '<OCID>'` (CRITICAL for resource creation)
 7. **Create environment compartments** — creates `familyshield-dev`, `familyshield-staging`, `familyshield-prod` (REQUIRED by IaC)
-8. **Create Terraform state bucket** — versioned Object Storage in tenancy
-9. **Find Ubuntu 22.04 ARM image** — for VM provisioning (update `iac/variables.tf` with OCID)
+8. **Create Terraform state bucket** — single bucket `familyshield-tfstate` with environment-specific prefixes (`dev/`, `staging/`, `prod/`)
+9. **Find Ubuntu 22.04 ARM image** — queries OCI for latest Ubuntu 22.04 ARM image compatible with VM.Standard.A1.Flex (automatic in IaC, no manual update needed)
 10. **Generate SSH key** — for VS Code Remote SSH access
 11. **Summary** — output all GitHub secrets to configure
 
-**Critical Detail:** Step 6 creates a bootstrap IAM policy that allows the GitHub Actions user to manage resources in the tenancy. Step 7 creates three compartments that IaC queries for and uses. Without these, `tofu apply` will fail with 404-NotAuthorizedOrNotFound errors.
+**Critical Detail:** Step 6 creates a bootstrap IAM policy that allows the GitHub Actions user to manage resources in the tenancy. Step 7 creates three compartments that IaC queries for and uses. Without these, `tofu apply` will fail with 404-NotAuthorizedOrNotFound errors. Step 8 creates a single shared bucket with prefixes (Option A architecture).
 
 **Idempotency:** The script is idempotent — re-running it will skip existing resources and only create missing ones. Safe to run multiple times.
 

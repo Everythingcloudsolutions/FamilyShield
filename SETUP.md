@@ -354,12 +354,14 @@ You now have everything needed to run the bootstrap script. This script will:
 5. Create a dynamic group for GitHub Actions OIDC identities
 6. Grant bootstrap IAM policy to the GitHub Actions user (grants tenancy-level permissions)
 7. **Create three environment compartments** (`familyshield-dev`, `familyshield-staging`, `familyshield-prod`) — **REQUIRED by IaC**
-8. Create the Terraform state storage bucket (`familyshield-tfstate`)
-9. Find the correct Ubuntu 22.04 ARM64 image OCID for Toronto
+8. Create the Terraform state storage bucket — **single bucket `familyshield-tfstate` with environment-specific prefixes** (`dev/`, `staging/`, `prod/`)
+9. Find the correct Ubuntu 22.04 ARM64 image for Toronto (automatic — IaC queries dynamically)
 10. Generate an SSH key pair for VM access
 11. Print all the GitHub Secret values you need
 
 The compartments created in **Step 7 are critical** — the IaC (Terraform/OpenTofu) queries for these compartments and fails with a clear error if they don't exist.
+
+**Note on Step 9:** The script finds the Ubuntu 22.04 ARM image OCID but you no longer need to manually update it in the code. The IaC now queries for the image dynamically based on region and shape, so the OCID is never hardcoded. The bootstrap output is informational only.
 
 Open **Git Bash**, navigate to the repo root, and run:
 
@@ -481,20 +483,7 @@ The bootstrap script printed a line like:
 ✅ Ubuntu 22.04 ARM image OCID: ocid1.image.oc1.ca-toronto-1.aaaaaa...
 ```
 
-You need to put this value into the IaC code so OpenTofu knows which VM image to use.
-
-1. Open `iac/variables.tf` in VS Code
-2. Find the section:
-
-   ```hcl
-   variable "oci_ubuntu_arm_image_id" {
-     description = "Ubuntu 22.04 ARM64 image OCID for ca-toronto-1"
-     default     = "REPLACE_WITH_BOOTSTRAP_OUTPUT"
-   }
-   ```
-
-3. Replace `REPLACE_WITH_BOOTSTRAP_OUTPUT` with the OCID from the bootstrap output
-4. Save the file
+**Note:** The image OCID output from bootstrap is informational only. The IaC now automatically queries for the Ubuntu 22.04 ARM image compatible with your VM shape and region, so no manual update is needed. You can proceed directly to Part 10.
 
 ---
 
@@ -532,8 +521,9 @@ After it finishes, try to set up production protection:
 You now have everything set up. This step will create the actual cloud server (VM) and all the services that run on it.
 
 **What happens:**
-1. You create a change in GitHub that includes the ARM image ID we found earlier
-2. GitHub automatically checks the change (called `tofu plan`)
+
+1. You create a branch with a small change to trigger the deployment workflow
+2. GitHub automatically checks the infrastructure changes (called `tofu plan`)
 3. You review what will be created, then approve the change
 4. GitHub automatically deploys everything to your dev environment
 5. Within 5–10 minutes, your OCI cloud server is running
@@ -549,38 +539,32 @@ You now have everything set up. This step will create the actual cloud server (V
 3. Click **Create Branch** and name it: `feat/initial-setup`
    - Branch name doesn't matter — it's just for organizing your work
 
-4. In the file explorer on your laptop, open:
-   ```
-   C:\Users\mohit.kumar.goyal\OneDrive - Accenture\Github\FamilyShield\iac\variables.tf
+4. Create a simple change to trigger the workflow. Open `iac/environments/dev/terraform.tfvars` in VS Code and add a comment:
+
+   ```hcl
+   # Development environment configuration
+   # VM sizing: 1 OCPU / 6GB RAM
+   environment   = "dev"
    ```
 
-5. Find this line (around line 35):
-   ```
-   oci_ubuntu_arm_image_id = "ocid1.image.oc1.ca-toronto-1.aaaaaa...NOT_FOUND"
-   ```
+5. **Save the file** (Ctrl+S)
 
-6. Replace `NOT_FOUND` with the image ID from your bootstrap output:
-   ```
-   oci_ubuntu_arm_image_id = "ocid1.image.oc1.ca-toronto-1.aaaaaaaawzbmdqqvrcLW4cvhegvnbbxtoday4bxlkdpqeowc5kcbrhpit2a"
-   ```
-   (Use **YOUR** ID from the bootstrap output, not this example)
-
-7. **Save the file** (Ctrl+S)
-
-8. Go back to **GitHub Desktop**:
-   - It should show `iac/variables.tf` as changed
+6. Go back to **GitHub Desktop**:
+   - It should show `iac/environments/dev/terraform.tfvars` as changed (or another .tf file if you made a different change)
    - In the "Commit to" field at the bottom left, type:
+
      ```
-     Add OCI ARM image ID for first deploy
+     Add deployment trigger change
      ```
+
    - Click **Commit to feat/initial-setup**
 
-9. Click **Publish branch**
+7. Click **Publish branch**
 
-10. Click **Create Pull Request**
-    - GitHub will open the pull request in your browser
-    - Add a title: `Initial cloud deployment — add ARM image ID`
-    - Click **Create pull request**
+8. Click **Create Pull Request**
+   - GitHub will open the pull request in your browser
+   - Add a title: `Initial cloud deployment`
+   - Click **Create pull request**
 
 ### Step 11.2 — Wait for GitHub to Check Your Change
 

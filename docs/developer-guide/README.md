@@ -80,8 +80,8 @@ This script performs 11 steps:
 5. Create the dynamic group for GitHub Actions OIDC identities
 6. Grant bootstrap IAM policy (grants tenancy-level permissions to the user)
 7. **Create three environment compartments** (`familyshield-dev`, `familyshield-staging`, `familyshield-prod`) — **REQUIRED by IaC**
-8. Bootstrap the Terraform state Object Storage bucket
-9. Find the correct Ubuntu 22.04 ARM image OCID for ca-toronto-1 (update `iac/variables.tf`)
+8. Bootstrap the Terraform state Object Storage bucket (`familyshield-tfstate` with environment prefixes)
+9. Find the correct Ubuntu 22.04 ARM image OCID for ca-toronto-1 (informational only — IaC queries this automatically)
 10. Generate an SSH key pair for VM access
 11. Print all the GitHub Secret values you need to add
 
@@ -157,23 +157,21 @@ Then in VS Code:
 ## 6. First Deploy
 
 ```bash
-# 1. Update the ARM image OCID in iac/variables.tf
-#    (value from bootstrap-oci.sh output)
-
-# 2. Commit and push to a feature branch
+# 1. Commit and push to a feature branch
+# Note: No manual updates needed for image OCID — IaC queries it automatically
 git checkout -b feat/phase-1-bootstrap
 git add .
 git commit -m "feat: initial IaC scaffold for Phase 1"
 git push origin feat/phase-1-bootstrap
 
-# 3. Open a Pull Request → GitHub Actions runs:
+# 2. Open a Pull Request → GitHub Actions runs:
 #    - Lint & Validate
 #    - tofu plan (posted as PR comment — review it!)
 #    - Security scan
 
-# 4. Merge PR → GitHub Actions auto-deploys to dev
+# 3. Merge PR → GitHub Actions auto-deploys to dev
 
-# 5. Check deploy at:
+# 4. Check deploy at:
 #    https://familyshield-dev.everythingcloud.ca
 ```
 
