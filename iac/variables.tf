@@ -49,6 +49,20 @@ variable "vcn_cidr" {
   default     = "10.0.0.0/16"
 }
 
+# ── Compute ───────────────────────────────────────────────────────────────────
+
+variable "instance_ocpus" {
+  description = "Number of OCPUs for compute instance (environment-specific)"
+  type        = number
+  default     = 1
+}
+
+variable "instance_memory" {
+  description = "Memory in GB for compute instance (environment-specific)"
+  type        = number
+  default     = 6
+}
+
 # ── Environment ───────────────────────────────────────────────────────────────
 
 variable "environment" {

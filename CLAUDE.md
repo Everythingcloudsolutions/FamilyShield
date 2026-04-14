@@ -79,10 +79,12 @@ tofu apply -var="environment=dev" -var-file="environments/dev/terraform.tfvars" 
 ### Bootstrap & Deployment Scripts
 
 ```bash
-bash scripts/bootstrap-oci.sh      # First-time OCI setup (10 steps)
+bash scripts/bootstrap-oci.sh      # First-time OCI setup (11 steps) — creates compartments!
 bash scripts/setup-github.sh       # Configure GitHub environments & branch protection
 bash scripts/cloudflare-api.sh     # Cloudflare resource management (API-driven)
 ```
+
+**CRITICAL: Always run `bootstrap-oci.sh` first!** It creates the three environment compartments (dev, staging, prod) that IaC queries and uses.
 
 ### Cloudflare API Management
 
@@ -307,14 +309,23 @@ All backend services run on a single OCI Always Free ARM VM (4 OCPU / 24GB RAM) 
 |---|---|
 | Tenancy region | ca-toronto-1 (Toronto, Canada) |
 | VM shape | VM.Standard.A1.Flex (Always Free) |
-| VM resources | 4 OCPU, 24GB RAM |
-| Boot volume | 50GB |
+| Always Free limit | 4 OCPU / 24GB RAM total |
+| Boot volume | 50GB per VM |
 | OS | Ubuntu 22.04 ARM64 |
 | Compartments | familyshield-dev, familyshield-staging, familyshield-prod |
-| State bucket | familyshield-tfstate (OCI Object Storage, versioned) |
+| State buckets | Per-environment (familyshield-tfstate-{environment}) |
 | GitHub Actions auth | OCI IAM user + API key (no OIDC — simpler for Always Free) |
 
-### Critical: Bootstrap Script Steps
+### Resource Allocation Per Environment
+
+| Environment | Sizing | Notes |
+| --- | --- | --- |
+| **Dev** | 1 OCPU / 6GB RAM | Always on for development |
+| **Staging** | 1 OCPU / 6GB RAM | Ephemeral — spun up for QA testing, torn down after |
+| **Prod** | 2 OCPU / 6GB RAM | Always on for production |
+| **Total** | 4 OCPU / 18GB (baseline) + staging ephemeral | Stays within Always Free tier when staging not running |
+
+### Critical: Bootstrap Script Steps (11 steps)
 
 The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 
@@ -323,15 +334,16 @@ The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 3. **Create GitHub Actions IAM user** — `familyshield-github-actions` (asks for email)
 4. **Generate API key** — uploaded to OCI, private key → GitHub secret `OCI_PRIVATE_KEY`
 5. **Create dynamic group** — matches IAM user OCID
-6. **Grant bootstrap IAM policy** — grants `any-user to manage all-resources in tenancy where request.user.id = '<OCID>'` (CRITICAL for compartment/policy creation)
-7. **Create Terraform state bucket** — versioned Object Storage
-8. **Find Ubuntu 22.04 ARM image** — for VM provisioning (update `iac/variables.tf` with OCID)
-9. **Generate SSH key** — for VS Code Remote SSH access
-10. **Summary** — output all GitHub secrets to configure
+6. **Grant bootstrap IAM policy** — grants `any-user to manage all-resources in tenancy where request.user.id = '<OCID>'` (CRITICAL for resource creation)
+7. **Create environment compartments** — creates `familyshield-dev`, `familyshield-staging`, `familyshield-prod` (REQUIRED by IaC)
+8. **Create Terraform state bucket** — versioned Object Storage in tenancy
+9. **Find Ubuntu 22.04 ARM image** — for VM provisioning (update `iac/variables.tf` with OCID)
+10. **Generate SSH key** — for VS Code Remote SSH access
+11. **Summary** — output all GitHub secrets to configure
 
-**Critical Detail:** Step 6 creates a bootstrap IAM policy that allows the GitHub Actions user to create compartments and policies. This policy uses `Allow any-user where request.user.id = ...` syntax (NOT `dynamic-group`) because the setup uses APIKey auth. Without this step, `tofu apply` will fail with 404-NotAuthorizedOrNotFound errors.
+**Critical Detail:** Step 6 creates a bootstrap IAM policy that allows the GitHub Actions user to manage resources in the tenancy. Step 7 creates three compartments that IaC queries for and uses. Without these, `tofu apply` will fail with 404-NotAuthorizedOrNotFound errors.
 
-**Idempotency:** The script is idempotent — re-running it will skip existing resources and only create missing ones.
+**Idempotency:** The script is idempotent — re-running it will skip existing resources and only create missing ones. Safe to run multiple times.
 
 ---
 
@@ -495,8 +507,16 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - Created `scripts/cloudflare-api.sh` helper for API operations
   - Updated all workflows to remove Cloudflare variables from IaC
   - Simplified `tofu-apply` action (no Cloudflare state conflict workarounds)
+- ✅ **ARCHITECTURE CHANGE (2026-04-14):** IaC module sequencing & compartment query logic
+  - Bootstrap script Step 7 now creates three compartments: `familyshield-dev`, `familyshield-staging`, `familyshield-prod`
+  - IaC compartments module changed from creation to data source queries (no duplicate compartments)
+  - Re-enabled compartments module in main.tf with proper dependency order
+  - Updated compute module to accept environment-specific sizing via tfvars
+  - Resource allocation: Dev (1C/6GB) + Staging ephemeral (1C/6GB) + Prod (2C/6GB) = within 4C/24GB Always Free
+  - Per-environment state buckets: `familyshield-tfstate-{environment}`
+  - Bucket import logic handles existing resources without 409 conflicts
 - 🔲 Deploy-dev must successfully complete one full run end-to-end (IaC → Cloudflare → App)
-- 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes
+- 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 
 **Application Development:**
 

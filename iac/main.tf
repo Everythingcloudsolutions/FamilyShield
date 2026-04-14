@@ -47,23 +47,28 @@ provider "oci" {
 }
 
 ###############################################################################
-# Compartments — Phase 2 (Skipped for Phase 1)
-# Using tenancy_ocid directly to bypass permission issues
+# Compartments — Bootstrap-driven (Phase 2)
+# Bootstrap script Step 7 creates: familyshield-dev, familyshield-staging, familyshield-prod
+# IaC queries for existing compartments (no creation here)
 ###############################################################################
 
-locals {
-  # Phase 1: Deploy directly to tenancy scope
-  deployment_compartment_id = var.oci_tenancy_ocid
+module "compartments" {
+  source = "./modules/oci-compartments"
+
+  tenancy_ocid            = var.oci_tenancy_ocid
+  environment             = var.environment
+  compartment_description = "FamilyShield ${var.environment} environment"
+  tags                    = local.common_tags
 }
 
 ###############################################################################
-# Networking
+# Networking — Depends on: Compartments
 ###############################################################################
 
 module "network" {
   source = "./modules/oci-network"
 
-  compartment_id = local.deployment_compartment_id
+  compartment_id = module.compartments.compartment_id
   environment    = var.environment
   region         = var.oci_region
   vcn_cidr       = var.vcn_cidr
@@ -71,46 +76,49 @@ module "network" {
 }
 
 ###############################################################################
-# Object Storage (state + backups)
+# Object Storage (state + backups) — Depends on: Compartments
 ###############################################################################
 
 module "storage" {
   source = "./modules/oci-storage"
 
-  compartment_id = local.deployment_compartment_id
+  compartment_id = module.compartments.compartment_id
   namespace      = var.oci_namespace
   environment    = var.environment
   tags           = local.common_tags
 }
 
 ###############################################################################
-# Compute — Testing Phase
-# SKIPPED until supporting infrastructure is verified.
-# Phase 1 deploys compartments, VCN, storage only.
-# Phase 2 will add VM with proven working foundation.
+# Compute — Environment-specific VM sizing
+# Depends on: Compartments, Network, Storage
+# Resource allocation per environment:
+#   - dev:     1 OCPU / 6GB RAM (always on)
+#   - staging: 1 OCPU / 6GB RAM (ephemeral, torn down after QA)
+#   - prod:    2 OCPU / 6GB RAM (always on)
+# Total within OCI Always Free: 4 OCPU / 24GB RAM max
 ###############################################################################
 
-# module "compute" {
-#   source = "./modules/oci-compute"
-#
-#   compartment_id = module.compartments.compartment_id
-#   tenancy_ocid   = var.oci_tenancy_ocid
-#   subnet_id      = module.network.public_subnet_id
-#   environment    = var.environment
-#   ssh_public_key = var.ssh_public_key
-#   instance_shape = "VM.Standard.A1.Flex"
-#   ocpus          = 2
-#   memory_in_gbs  = 6
-#   image_id       = var.oci_ubuntu_arm_image_id
-#   cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
-#     environment = var.environment
-#     docker_compose_b64 = base64encode(templatefile(
-#       "${path.module}/templates/docker-compose.yaml.tpl",
-#       local.docker_compose_vars
-#     ))
-#   })
-#   tags = local.common_tags
-# }
+module "compute" {
+  source = "./modules/oci-compute"
+
+  compartment_id = module.compartments.compartment_id
+  tenancy_ocid   = var.oci_tenancy_ocid
+  subnet_id      = module.network.public_subnet_id
+  environment    = var.environment
+  ssh_public_key = var.ssh_public_key
+  instance_shape = "VM.Standard.A1.Flex"
+  ocpus          = var.instance_ocpus
+  memory_in_gbs  = var.instance_memory
+  image_id       = var.oci_ubuntu_arm_image_id
+  cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
+    environment = var.environment
+    docker_compose_b64 = base64encode(templatefile(
+      "${path.module}/templates/docker-compose.yaml.tpl",
+      local.docker_compose_vars
+    ))
+  })
+  tags = local.common_tags
+}
 
 ###############################################################################
 # Cloudflare DNS + Tunnel + Zero Trust

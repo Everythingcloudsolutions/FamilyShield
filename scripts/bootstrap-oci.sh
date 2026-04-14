@@ -155,9 +155,40 @@ else
   echo "✅ Bootstrap policy already exists: $BOOTSTRAP_POLICY_NAME"
 fi
 
-# ── Step 7: Bootstrap Terraform State Bucket ─────────────────────────────────
+# ── Step 7: Create Environment Compartments ────────────────────────────────────
 echo ""
-echo "STEP 7 — Bootstrap Terraform State Bucket"
+echo "STEP 7 — Create Environment Compartments (dev, staging, prod)"
+echo "--------------------------------------------------------------"
+
+for ENVIRONMENT in dev staging prod; do
+  COMPARTMENT_NAME="familyshield-${ENVIRONMENT}"
+
+  # Check if compartment already exists
+  COMPARTMENT_ID=$(oci iam compartment list \
+    --compartment-id "$TENANCY_OCID" \
+    --all \
+    --query "data[?name=='$COMPARTMENT_NAME'] | [0].id" \
+    --raw-output 2>/dev/null || echo "")
+
+  if [ -z "$COMPARTMENT_ID" ] || [ "$COMPARTMENT_ID" = "None" ]; then
+    # Create new compartment
+    COMPARTMENT_ID=$(oci iam compartment create \
+      --compartment-id "$TENANCY_OCID" \
+      --name "$COMPARTMENT_NAME" \
+      --description "FamilyShield ${ENVIRONMENT} environment resources" \
+      --query "data.id" \
+      --raw-output)
+    echo "   ✅ Created compartment: $COMPARTMENT_NAME ($COMPARTMENT_ID)"
+  else
+    echo "   ✅ Compartment exists: $COMPARTMENT_NAME ($COMPARTMENT_ID)"
+  fi
+done
+
+echo "✅ Environment compartments ready"
+
+# ── Step 8: Bootstrap Terraform State Bucket ─────────────────────────────────
+echo ""
+echo "STEP 8 — Bootstrap Terraform State Bucket"
 echo "------------------------------------------"
 
 NAMESPACE=$(oci os ns get --query "data" --raw-output)
@@ -174,7 +205,7 @@ echo "   Namespace: $NAMESPACE"
 
 # ── Step 8: Find ARM image OCID ──────────────────────────────────────────────
 echo ""
-echo "STEP 8 — Find OCI ARM Ubuntu Image OCID"
+echo "STEP 9 — Find OCI ARM Ubuntu Image OCID"
 echo "----------------------------------------"
 
 ARM_IMAGE=$(oci compute image list \
@@ -192,8 +223,8 @@ echo "   → Update iac/variables.tf: oci_ubuntu_arm_image_id default"
 
 # ── Step 9: Generate SSH key for VM access ───────────────────────────────────
 echo ""
-echo "STEP 9 — Generate SSH Key for OCI VM"
-echo "-------------------------------------"
+echo "STEP 10 — Generate SSH Key for OCI VM"
+echo "--------------------------------------"
 
 SSH_KEY_PATH="$HOME/.ssh/familyshield"
 if [ ! -f "$SSH_KEY_PATH" ]; then
@@ -205,7 +236,7 @@ fi
 
 PUBLIC_KEY=$(cat "$SSH_KEY_PATH.pub")
 
-# ── Step 10: Summary ────────────────────────────────────────────────────────
+# ── Step 11: Summary ────────────────────────────────────────────────────────
 echo ""
 echo "════════════════════════════════════════════════════════"
 echo " FamilyShield OCI Bootstrap Complete!"
