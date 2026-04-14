@@ -82,7 +82,7 @@ module "network" {
 module "storage" {
   source = "./modules/oci-storage"
 
-  compartment_id = module.compartments.compartment_id
+  compartment_id = var.oci_tenancy_ocid # tfstate bucket lives in tenancy root (created by bootstrap)
   namespace      = var.oci_namespace
   environment    = var.environment
   tags           = local.common_tags
