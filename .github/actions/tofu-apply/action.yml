@@ -48,6 +48,14 @@ runs:
       working-directory: ${{ inputs.working_directory }}
       env:
         OCI_NAMESPACE: ${{ env.OCI_NAMESPACE }}
+        TF_VAR_oci_tenancy_ocid: ${{ env.TF_VAR_oci_tenancy_ocid }}
+        TF_VAR_oci_namespace: ${{ env.TF_VAR_oci_namespace }}
+        TF_VAR_ssh_public_key: ${{ env.TF_VAR_ssh_public_key }}
+        TF_VAR_adguard_admin_password: ${{ env.TF_VAR_adguard_admin_password }}
+        TF_VAR_supabase_url: ${{ env.TF_VAR_supabase_url }}
+        TF_VAR_supabase_anon_key: ${{ env.TF_VAR_supabase_anon_key }}
+        TF_VAR_groq_api_key: ${{ env.TF_VAR_groq_api_key }}
+        TF_VAR_anthropic_api_key: ${{ env.TF_VAR_anthropic_api_key }}
       run: |
         echo "🗑️  Cleaning up orphaned resources from state..."
 
@@ -78,7 +86,7 @@ runs:
         fi
 
         # Try import with variables - if it fails, check if already in state
-        IMPORT_OUTPUT=$(timeout 15 tofu import -input=false $VAR_ARGS "module.storage.oci_objectstorage_bucket.tfstate" "$IMPORT_ID" 2>&1)
+        IMPORT_OUTPUT=$(timeout 90 tofu import -input=false $VAR_ARGS "module.storage.oci_objectstorage_bucket.tfstate" "$IMPORT_ID" 2>&1)
         IMPORT_EXIT=$?
 
         if [ $IMPORT_EXIT -eq 0 ]; then
@@ -90,7 +98,7 @@ runs:
         else
           # Import failed for other reason - log it and try state list to diagnose
           echo "     ⚠️  Import error (checking state):"
-          echo "$IMPORT_OUTPUT" | head -3
+          echo "$IMPORT_OUTPUT" | head -10
           STATE_CHECK=$(tofu state list 2>&1 | grep "module.storage.oci_objectstorage_bucket.tfstate" || echo "not found")
           if [ "$STATE_CHECK" != "not found" ]; then
             echo "     ✅ Resource already in state"
@@ -158,7 +166,7 @@ runs:
           BUCKET_NAME="familyshield-tfstate"
           IMPORT_ID="$OCI_NAMESPACE/$BUCKET_NAME"
           echo "  ⏳ Importing $BUCKET_NAME (ID: $IMPORT_ID)..."
-          IMPORT_OUTPUT=$(timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.tfstate" "$IMPORT_ID" 2>&1)
+          IMPORT_OUTPUT=$(timeout 90 tofu import -input=false "module.storage.oci_objectstorage_bucket.tfstate" "$IMPORT_ID" 2>&1)
           IMPORT_EXIT=$?
           if [ $IMPORT_EXIT -eq 0 ]; then
             echo "     ✅ Imported successfully"
