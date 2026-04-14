@@ -70,14 +70,25 @@ runs:
         BUCKET_NAME="familyshield-tfstate"
         IMPORT_ID="$OCI_NAMESPACE/$BUCKET_NAME"
         echo "  ⏳ Importing $BUCKET_NAME (ID: $IMPORT_ID)..."
+
+        # Try import - if it fails, check if already in state
         IMPORT_OUTPUT=$(timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.tfstate" "$IMPORT_ID" 2>&1)
         IMPORT_EXIT=$?
+
         if [ $IMPORT_EXIT -eq 0 ]; then
           echo "     ✅ Imported successfully"
-        elif echo "$IMPORT_OUTPUT" | grep -qE "already exists in state|Resource already managed by Terraform"; then
+        elif echo "$IMPORT_OUTPUT" | grep -qE "already exists in state|already managed"; then
           echo "     ✅ Already in state"
+        elif echo "$IMPORT_OUTPUT" | grep -qE "not found|404"; then
+          echo "     ℹ️  Bucket not in OCI yet (will be created)"
         else
-          echo "     ⚠️  Import skipped (tofu apply will handle it)"
+          # Import failed for other reason - log it and try state list to diagnose
+          echo "     ⚠️  Import error (checking state):"
+          echo "$IMPORT_OUTPUT" | head -3
+          STATE_CHECK=$(tofu state list 2>&1 | grep "module.storage.oci_objectstorage_bucket.tfstate" || echo "not found")
+          if [ "$STATE_CHECK" != "not found" ]; then
+            echo "     ✅ Resource already in state"
+          fi
         fi
 
         set -e
