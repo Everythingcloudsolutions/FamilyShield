@@ -1,8 +1,8 @@
-# FamilyShield — Claude Project Memory
+# CLAUDE.md
 
-> This file is read automatically by Claude Code at the start of every session.
-> Keep it updated as the project evolves.
-> Last updated: 2026-04-05
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+> Last updated: 2026-04-12
 
 ---
 
@@ -12,6 +12,7 @@
 - **Location:** Canada
 - **Currency:** Always use CAD ($) — never GBP or USD
 - **Year:** 2026 — always use 2026 in dates, docs, comments, version refs
+- **Git Workflow:** Always create feature/fix branches and PRs. NEVER merge to main without explicit user approval
 
 ---
 
@@ -23,6 +24,62 @@ Intelligent parental control platform. Cloud-first, open source, IaC-driven.
 **Portal URL (dev):** https://familyshield-dev.everythingcloud.ca
 **Portal URL (prod):** https://familyshield.everythingcloud.ca
 **Domain:** familyshield.everythingcloud.ca (subdomain of everythingcloud.ca — Cloudflare)
+
+---
+
+## Development Commands
+
+### API (TypeScript/Node.js)
+
+```bash
+cd apps/api
+npm install                # Install dependencies
+npm run dev               # Watch mode (tsx watch)
+npm run build             # Compile to dist/
+npm run start             # Run compiled code
+npm test                  # Run jest tests
+npm run test:coverage     # Test coverage report
+npm run lint              # Run ESLint
+npm run lint:fix          # Auto-fix linting issues
+npm run typecheck         # Type-check without emitting
+```
+
+**Key files:** `package.json` defines scripts, Jest config in `jest.config.js`, tsconfig at `tsconfig.json`
+
+### mitmproxy (Python)
+
+```bash
+cd apps/mitm
+pip install -r requirements.txt    # Install dependencies
+pytest                             # Run all tests
+pytest tests/test_addon.py        # Run specific test file
+pytest tests/test_addon.py::TestClass::test_method  # Run single test
+pytest --cov=.                    # Run with coverage report
+pytest -v                         # Verbose output
+```
+
+**Key files:** `requirements.txt` lists dependencies, `familyshield_addon.py` is the main addon, `tests/test_addon.py` has all test cases
+
+### Infrastructure as Code (OpenTofu)
+
+```bash
+cd iac
+tofu fmt -recursive                # Format HCL files
+tofu fmt -recursive -check         # Check formatting without changing
+tofu init -backend-config="key=dev/terraform.tfstate" -reconfigure
+tofu validate                      # Validate syntax
+tofu plan -var="environment=dev" -var-file="environments/dev/terraform.tfvars"
+tofu apply -var="environment=dev" -var-file="environments/dev/terraform.tfvars" -auto-approve
+```
+
+**Key note:** When `tofu apply` runs in workflows, it runs with `working_directory: iac/`, so var_file paths MUST be relative to iac/ (e.g., `environments/dev/terraform.tfvars`, NOT `iac/environments/dev/terraform.tfvars`)
+
+### Bootstrap & Deployment Scripts
+
+```bash
+bash scripts/bootstrap-oci.sh    # First-time OCI setup (10 steps)
+bash scripts/setup-github.sh     # Configure GitHub environments & branch protection
+```
 
 ---
 
@@ -73,125 +130,46 @@ FamilyShield/
 │       ├── cloud-init.yaml.tpl  ← VM bootstrap: UFW, fail2ban, Docker, systemd
 │       └── docker-compose.yaml.tpl ← All 10 services
 ├── apps/
-│   ├── portal/                  ← Next.js 14 parent portal [NOT YET BUILT]
+│   ├── portal/                  ← Next.js 14 parent portal [IN PROGRESS]
 │   ├── api/                     ← Node.js enrichment worker + Express health
-│   │   └── src/
-│   │       ├── index.ts
-│   │       ├── worker/event-consumer.ts
-│   │       ├── llm/router.ts    ← Groq → Anthropic fallback
-│   │       └── enrichers/       ← youtube.ts, roblox.ts, twitch.ts, discord.ts
+│   │   ├── src/
+│   │   │   ├── index.ts
+│   │   │   ├── worker/event-consumer.ts
+│   │   │   ├── llm/router.ts    ← Groq → Anthropic fallback
+│   │   │   └── enrichers/       ← youtube.ts, roblox.ts, twitch.ts, discord.ts
+│   │   └── package.json (scripts: dev, build, test, lint, typecheck)
 │   ├── mitm/                    ← mitmproxy Python addon
 │   │   ├── familyshield_addon.py
-│   │   └── tests/test_addon.py
-│   ├── agent-iac/               ← [NOT YET BUILT] IaC management agent
-│   ├── agent-cloud/             ← [NOT YET BUILT] Cloud environment agent
-│   ├── agent-api/               ← [NOT YET BUILT] Platform API agent
-│   └── agent-mitm/              ← [NOT YET BUILT] Traffic inspection agent
+│   │   ├── tests/test_addon.py
+│   │   └── requirements.txt
+│   ├── agent-iac/               ← [SCAFFOLD ONLY] IaC management agent
+│   ├── agent-cloud/             ← [SCAFFOLD ONLY] Cloud environment agent
+│   ├── agent-api/               ← [SCAFFOLD ONLY] Platform API agent
+│   └── agent-mitm/              ← [SCAFFOLD ONLY] Traffic inspection agent
 ├── docs/
 │   ├── architecture/README.md   ← C4 model L1-L3, Mermaid diagrams, wire diagram
 │   ├── developer-guide/README.md
 │   ├── qa-framework/README.md
-│   ├── user-guide/              ← [NOT YET BUILT]
-│   ├── troubleshooting/         ← [NOT YET BUILT]
-│   └── diagrams/                ← [NOT YET BUILT] draw.io / Excalidraw sources
+│   ├── user-guide/README.md     ← Non-technical parent guide
+│   ├── troubleshooting/README.md ← Developer + parent troubleshooting
+│   └── diagrams/                ← draw.io / Excalidraw source files
 └── scripts/
-    ├── bootstrap-oci.sh         ← First-time OCI setup
+    ├── bootstrap-oci.sh         ← First-time OCI setup (10 steps)
     └── setup-github.sh          ← GitHub environments + branch protection
 ```
 
 ---
 
-## Current Build Status
+## High-Level Architecture
 
-### ✅ DONE — Phase 0: Scaffold
-
-| File / Component | Status |
-|---|---|
-| Monorepo structure (all dirs) | ✅ |
-| `.gitignore`, `.env.example` | ✅ |
-| `FamilyShield.code-workspace` | ✅ |
-| `.devcontainer/devcontainer.json` | ✅ |
-| `.devcontainer/post-create.sh` | ✅ |
-| GitHub Actions: `pr-check.yml` | ✅ |
-| GitHub Actions: `deploy-dev.yml` | ✅ |
-| GitHub Actions: `deploy-staging.yml` | ✅ |
-| GitHub Actions: `deploy-prod.yml` (manual gate) | ✅ |
-| Reusable action: `oci-login` | ✅ |
-| Reusable action: `tofu-plan` (posts PR comment) | ✅ |
-| Reusable action: `tofu-apply` | ✅ |
-| IaC: `iac/main.tf` (root orchestration) | ✅ |
-| IaC: `iac/variables.tf` | ✅ |
-| IaC: `iac/outputs.tf` | ✅ |
-| IaC module: `oci-compartments` | ✅ |
-| IaC module: `oci-network` | ✅ |
-| IaC module: `oci-compute` (Always Free ARM) | ✅ |
-| IaC module: `oci-storage` (3 buckets) | ✅ |
-| IaC module: `cloudflare-dns` (Tunnel + ZT) | ✅ |
-| IaC module: `supabase` | ✅ |
-| IaC module: `docker-services` | ✅ |
-| Template: `cloud-init.yaml.tpl` | ✅ |
-| Template: `docker-compose.yaml.tpl` (10 services) | ✅ |
-| `scripts/bootstrap-oci.sh` | ✅ |
-| `scripts/setup-github.sh` | ✅ |
-| `apps/mitm/familyshield_addon.py` | ✅ |
-| `apps/mitm/tests/test_addon.py` (15 tests) | ✅ |
-| `apps/mitm/Dockerfile` | ✅ |
-| `apps/api/package.json` | ✅ |
-| `apps/api/src/index.ts` | ✅ |
-| `apps/api/src/worker/event-consumer.ts` | ✅ |
-| `apps/api/src/llm/router.ts` | ✅ |
-| `apps/api/src/enrichers/` (all 4 platforms) | ✅ |
-| `docs/architecture/README.md` (C4 + Mermaid) | ✅ |
-| `docs/developer-guide/README.md` | ✅ |
-| `docs/qa-framework/README.md` | ✅ |
-
-### ✅ DONE — Phase 1: Agents, Skills, Docs, Diagrams
-
-| File / Component | Status |
-|---|---|
-| `docs/architecture/README.md` — Assumptions A1-A12, ADRs 1-11 | ✅ |
-| `docs/user-guide/README.md` — non-technical parent guide (12 sections) | ✅ |
-| `docs/troubleshooting/README.md` — parent + developer guide (1,393 lines) | ✅ |
-| `docs/diagrams/network-wire.drawio` — 5-zone swimlane wire diagram | ✅ |
-| `docs/diagrams/data-model.drawio` — 8-table ER diagram | ✅ |
-| `docs/diagrams/system-overview.excalidraw` — high-level Excalidraw | ✅ |
-| `docs/diagrams/data-flow.excalidraw` — 8-step content event flow | ✅ |
-| `.claude/commands/deploy.md` — /deploy skill | ✅ |
-| `.claude/commands/enrol-device.md` — /enrol-device skill | ✅ |
-| `.claude/commands/check-health.md` — /check-health skill | ✅ |
-| `.claude/commands/review-alerts.md` — /review-alerts skill | ✅ |
-| `apps/agent-iac/` — IaC management agent (10 files, Claude Agent SDK) | ✅ |
-| `apps/agent-cloud/` — Cloud environment agent (10 files, Claude Agent SDK) | ✅ |
-| `apps/agent-api/` — Platform API agent (11 files, Claude Agent SDK) | ✅ |
-| `apps/agent-mitm/` — Traffic inspection agent (14 files, Claude Agent SDK) | ✅ |
-
-### 🔲 TODO — Phase 2: API, Portal, CI/CD
-
-| File / Component | Priority |
-|---|---|
-| `apps/api/src/types.ts` — shared TypeScript types | HIGH |
-| `apps/api/src/lib/redis.ts` — Redis client factory | HIGH |
-| `apps/api/src/lib/supabase.ts` — Supabase client factory | HIGH |
-| `apps/api/src/alerts/dispatcher.ts` — ntfy push alerts | HIGH |
-| `apps/api/tsconfig.json` | HIGH |
-| `apps/api/Dockerfile` | HIGH |
-| `apps/portal/` — full Next.js 14 scaffold | HIGH |
-| `apps/portal/src/app/` — layout, auth, dashboard pages | HIGH |
-| `.github/workflows/app-build.yml` — Docker image build | MEDIUM |
-| `docs/testing/fixtures/` — Supabase SQL migrations | MEDIUM |
-| `scripts/dev-start.sh` — local dev startup | MEDIUM |
-| `scripts/enrol-device.sh` — iOS/Windows device setup | MEDIUM |
-
----
-
-## GitHub Environments & Deployment Flow
+### Deployment Flow
 
 ```
 PR opened → pr-check.yml runs → tofu plan posted as PR comment
     ↓
-Merge to main → deploy-dev.yml → auto deploy to dev
+Merge to main (manual) → deploy-dev.yml → auto deploy to dev
     ↓
-dev passes → deploy-staging.yml → auto deploy to staging
+dev passes (health check) → deploy-staging.yml → auto deploy to staging
     ↓
 Manual trigger → deploy-prod.yml → Mohit approves in GitHub UI → prod deploy
 ```
@@ -200,6 +178,46 @@ Manual trigger → deploy-prod.yml → Mohit approves in GitHub UI → prod depl
 - `dev` — auto, no approval needed
 - `staging` — auto after dev passes
 - `prod` — **manual approval required** (Mohit must click Approve in GitHub UI)
+
+### Service Architecture
+
+All backend services run on a single OCI Always Free ARM VM (4 OCPU / 24GB RAM) in `ca-toronto-1`. Services communicate via:
+- **Redis** (port 6379) — event queue between mitmproxy and API
+- **Supabase** — PostgreSQL + Realtime WebSocket
+- **Shared volumes** — config files mounted at /etc/familyshield/
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  OCI ARM VM (Ubuntu 22.04)                                  │
+├─────────────────────────────────────────────────────────────┤
+│  ┌─ Cloudflare Tunnel (outbound only)                       │
+│  │  └─ mitmproxy (8888/8889) → Redis → API                 │
+│  │                                                          │
+│  ├─ DNS: AdGuard Home (53, 3080)                            │
+│  ├─ VPN: Headscale (8080)                                  │
+│  ├─ API: Node.js enrichment worker (3001)                   │
+│  ├─ Time-series: InfluxDB (8086) + Grafana (3001)          │
+│  ├─ Automations: Node-RED (1880)                            │
+│  ├─ Notifications: ntfy (2586)                              │
+│  └─ Cache: Redis (6379)                                    │
+│                                                             │
+│  All services managed by docker-compose via systemd        │
+└─────────────────────────────────────────────────────────────┘
+         ↓ HTTPS (Cloudflare Tunnel)
+     ┌─────────────────┐
+     │ Parent Portal   │
+     │ (Next.js on     │
+     │ Cloudflare      │
+     │ Pages)          │
+     └─────────────────┘
+```
+
+### Data Flow
+
+1. **Device** connects via AdGuard + mitmproxy for DNS/HTTPS inspection
+2. **mitmproxy** extracts content IDs (video_id, game_place_id, etc.) → Redis queue
+3. **API worker** polls Redis → calls platform APIs (YouTube, Roblox, etc.) → AI risk scoring (Groq → Anthropic fallback)
+4. **Results** stored in Supabase → **Portal** displays in real-time via WebSocket
 
 ---
 
@@ -216,22 +234,22 @@ Manual trigger → deploy-prod.yml → Mohit approves in GitHub UI → prod depl
 | State bucket | familyshield-tfstate (OCI Object Storage, versioned) |
 | GitHub Actions auth | OCI IAM user + API key (no OIDC — simpler for Always Free) |
 
----
+### Critical: Bootstrap Script Steps
 
-## Docker Services on OCI VM (all 10)
+The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 
-| Container | Port | Purpose |
-|---|---|---|
-| `familyshield-adguard` | 53, 3080 | DNS filtering, per-device profiles |
-| `familyshield-headscale` | 8080 | Tailscale control plane (WireGuard VPN) |
-| `familyshield-mitmproxy` | 8888, 8889 | SSL inspection, content ID extraction |
-| `familyshield-redis` | 6379 | Event queue (mitmproxy → API worker) |
-| `familyshield-api` | 3001 | Enrichment worker + health endpoint |
-| `familyshield-nodered` | 1880 | Rule engine / flow automation |
-| `familyshield-influxdb` | 8086 | Time-series metrics |
-| `familyshield-grafana` | 3001 | Usage dashboards |
-| `familyshield-ntfy` | 2586 | Push notifications to parent phone |
-| `familyshield-cloudflared` | — | Cloudflare Tunnel daemon (outbound only) |
+1. **Verify OCI CLI** — check credentials configured
+2. **Cloud Guard** (optional) — security monitoring setup
+3. **Create GitHub Actions IAM user** — `familyshield-github-actions`
+4. **Generate API key** — uploaded to OCI, private key → GitHub secret
+5. **Create dynamic group** — matches IAM user OCID
+6. **Grant bootstrap IAM policy** — grants `any-user to manage all-resources in tenancy where request.user.id = '<OCID>'` (CRITICAL for compartment/policy creation)
+7. **Create Terraform state bucket** — versioned Object Storage
+8. **Find Ubuntu 22.04 ARM image** — for VM provisioning
+9. **Generate SSH key** — for VS Code Remote SSH access
+10. **Summary** — output all GitHub secrets to configure
+
+**Critical Detail:** Step 6 creates a bootstrap IAM policy that allows the GitHub Actions user to create compartments and policies. This policy uses `Allow any-user where request.user.id = ...` syntax (NOT `dynamic-group`) because the setup uses APIKey auth. Without this step, `tofu apply` will fail with 404-NotAuthorizedOrNotFound errors.
 
 ---
 
@@ -255,13 +273,14 @@ Manual trigger → deploy-prod.yml → Mohit approves in GitHub UI → prod depl
 - **Python:** black formatter, flake8 lint, type hints required, docstrings on all classes
 - **Terraform/OpenTofu:** `tofu fmt` before commit, tflint clean, all resources tagged
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `iac:`, `docs:`, `chore:`)
-- **PRs:** one PR per feature, tofu plan comment reviewed before merge
+- **PRs:** one PR per feature, created on feature/fix branch, NEVER auto-merge to main
+- **Git workflow:** Create branch → commit → create PR → wait for user review/approval → merge to main
 - **Secrets:** never in code, always via environment variables or GitHub Secrets
 - **Tests:** new feature = new tests, no merge without tests passing
 
 ---
 
-## Key Design Principles (never compromise these)
+## Key Design Principles (never compromise)
 
 1. **Always-On** — enforcement in cloud, not home hardware
 2. **Privacy First** — content IDs extracted, not frames or message content
@@ -269,6 +288,41 @@ Manual trigger → deploy-prod.yml → Mohit approves in GitHub UI → prod depl
 4. **Age-Adaptive** — 3 profiles: 6-10 (strict), 11-14 (moderate), 15-17 (guided)
 5. **IaC-Driven** — everything reproducible via `tofu apply`
 6. **Modular** — every component swappable without touching others
+
+---
+
+## Known Issues & Troubleshooting
+
+### Cloudflare API Token — Missing Scopes
+
+**Error:** `Authentication error (10000)` when creating Argo Tunnel or Access Applications
+
+**Cause:** The Cloudflare API token must have ALL THREE scopes:
+- Zone → DNS → Edit (for CNAME records)
+- Account → Cloudflare Tunnel → Edit (for Argo Tunnel)
+- Account → Access: Apps and Policies → Edit (for Zero Trust apps)
+
+The "Edit zone DNS" template only grants the first scope — insufficient. Must use a **Custom Token** with all 3.
+
+**Fix:** Recreate token in Cloudflare dashboard as Custom Token (see SETUP.md Part 3.3), update `CLOUDFLARE_API_TOKEN` GitHub secret, re-run workflow.
+
+### OCI IAM — Missing Tenancy Permissions
+
+**Error:** `404-NotAuthorizedOrNotFound` when creating compartments or identity policies
+
+**Cause:** The GitHub Actions IAM user has no tenancy-level permissions. The bootstrap script Step 6 must create a bootstrap IAM policy before `tofu apply` can create compartments.
+
+**Fix:** Run `bash scripts/bootstrap-oci.sh` again. It will skip existing resources and create only the missing policy. The policy uses `Allow any-user to manage all-resources in tenancy where request.user.id = '<OCID>'` syntax (NOT dynamic-group, which only works for Instance Principal auth).
+
+### Terraform var_file Path — Working Directory Issue
+
+**Error:** `Given variables file does not exist` during `tofu apply`
+
+**Cause:** When `tofu apply` runs with `working_directory: iac/`, var_file paths must be relative to `iac/`, not the repo root.
+
+**Example:**
+- ❌ `var_file: iac/environments/dev/terraform.tfvars` → resolves to `iac/iac/environments/dev/` (wrong)
+- ✅ `var_file: environments/dev/terraform.tfvars` → resolves to `iac/environments/dev/` (correct)
 
 ---
 
@@ -288,7 +342,26 @@ For specific tasks, say things like:
 
 ---
 
-## Session History Reference
+## Current Build Status
 
-Full design session archived at: claude.ai (this conversation)
-The complete proposal documents (PPTX + Word) are in the outputs of that session.
+### ✅ Phase 0: Scaffold
+
+Infrastructure, CI/CD, IaC modules, mitmproxy addon (complete with 15 tests), API skeleton with enrichers.
+
+### ✅ Phase 1: Agents, Skills, Docs, Diagrams
+
+Full architecture documentation, C4 model, user guide, troubleshooting, Claude Agent SDK agents, slash command skills.
+
+### 🔄 Phase 2: API & Portal (IN PROGRESS)
+
+- ✅ API structure defined, enrichers for all 4 platforms
+- 🔄 Cloudflare + OCI IAM fixes (PR #3, merged 2026-04-12)
+- 🔲 Remaining: Portal (Next.js 14), API types/types/libs, tests, Docker build workflow
+
+### 📋 Phase 3: E2E Testing & Production Release
+
+Full integration testing, security hardening, load testing, production release.
+
+---
+
+FamilyShield · Everythingcloudsolutions · Canada · 2026
