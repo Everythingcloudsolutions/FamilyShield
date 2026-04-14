@@ -3,18 +3,8 @@
 ###############################################################################
 
 output "state_bucket_name" {
-  description = "Name of the Terraform state bucket"
+  description = "Name of the single Terraform state bucket (shared across all environments via prefixes)"
   value       = oci_objectstorage_bucket.tfstate.name
-}
-
-output "backups_bucket_name" {
-  description = "Name of the backups bucket"
-  value       = oci_objectstorage_bucket.backups.name
-}
-
-output "app_bucket_name" {
-  description = "Name of the app data bucket"
-  value       = oci_objectstorage_bucket.app_data.name
 }
 
 output "state_bucket_url" {
