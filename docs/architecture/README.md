@@ -1,5 +1,6 @@
 # FamilyShield — Architecture
 
+> Last updated: 2026-04-14 — Added ADR-001b for resource allocation strategy (Dev/Staging/Prod sizing)
 > All diagrams render natively in GitHub. For editable source files see `docs/diagrams/`.
 > Editable draw.io files: `docs/diagrams/*.drawio` — open at diagrams.net or VS Code draw.io extension.
 > Editable Excalidraw files: `docs/diagrams/*.excalidraw` — open at excalidraw.com or VS Code Excalidraw extension.
@@ -48,6 +49,38 @@ Each ADR captures *what* was decided, *why*, and *what was rejected*.
 | Hetzner CAX21 | ~$10 | German data centre, not Canadian residency |
 
 **Decision:** OCI ca-toronto-1. Always Free ARM VM with 4 OCPU / 24GB RAM. Canadian data residency satisfies PIPEDA.
+
+---
+
+### ADR-001b: Resource Allocation — Three Environments, One Always Free Tier
+
+**Status:** Accepted  
+**Date:** 2026-04  
+**Context:** FamilyShield uses three environments (dev, staging, prod) but only one Always Free tier (4 OCPU / 24GB RAM max). How to allocate resources fairly while keeping staging ephemeral for cost optimization?
+
+**Rejected Options:**
+- Single shared VM for all three environments (risk: dev crashes take out prod)
+- Single prod-only VM, no dev/staging (risk: cannot test safely before prod)
+- Lease additional VMs (violates cost constraint)
+
+**Decision:** Three separate VMs with environment-specific sizing:
+
+| Environment | Sizing | Duration | Use Case |
+| --- | --- | --- | --- |
+| **Dev** | 1 OCPU / 6GB RAM | Always on | Daily development, testing |
+| **Staging** | 1 OCPU / 6GB RAM | Ephemeral | Spun up for QA testing only, torn down after |
+| **Prod** | 2 OCPU / 6GB RAM | Always on | Live families, higher throughput |
+
+**Resource math:**
+- Baseline (dev + prod always on): 3 OCPU / 12GB RAM
+- Staging when active: +1 OCPU / 6GB RAM = 4 OCPU / 18GB total (within 4C/24GB Always Free)
+- Staging when destroyed: 3 OCPU / 12GB (frees 1C/6GB for growth/buffer)
+
+**Enforcement:**
+- Bootstrap script (`scripts/bootstrap-oci.sh`) creates three compartments: `familyshield-dev`, `familyshield-staging`, `familyshield-prod`
+- Environment tfvars files (`iac/environments/{dev,staging,prod}/terraform.tfvars`) specify OCPU/memory per environment
+- IaC module sequencing ensures compartments exist before resources are created
+- Ephemeral staging is documented in `docs/qa-framework/README.md` with spinup/test/teardown procedures
 
 ---
 

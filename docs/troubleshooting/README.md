@@ -1,6 +1,6 @@
 # FamilyShield — Troubleshooting Guide
 
-> Last updated: 2026-04-05
+> Last updated: 2026-04-14 — Added compartment creation troubleshooting, updated bootstrap steps
 > Platform: FamilyShield v1 — OCI ca-toronto-1 (Toronto, Canada)
 
 ---
@@ -1377,6 +1377,45 @@ oci iam user get --user-id $OCI_USER_OCID
 
 # Check the oci-login action logs in GitHub Actions for the exact error
 # Actions → pr-check / deploy-dev → expand "OCI Login" step
+```
+
+#### Compartment not found during IaC deployment
+
+**Symptom:** `tofu apply` or `tofu plan` fails with error:
+```
+❌ FamilyShield compartment 'familyshield-{environment}' not found in OCI.
+This compartment must be created by the bootstrap script BEFORE running tofu apply.
+```
+
+**Root cause:** The `bootstrap-oci.sh` script has not been run, or it failed at **Step 7** (Create environment compartments).
+
+**Fix:**
+
+1. Run the bootstrap script from your local Windows laptop (one-time setup):
+
+```bash
+chmod +x scripts/bootstrap-oci.sh
+bash scripts/bootstrap-oci.sh
+```
+
+2. The script performs 11 steps. **Step 7** creates three compartments:
+   - `familyshield-dev`
+   - `familyshield-staging`
+   - `familyshield-prod`
+
+3. Verify the compartments were created:
+
+```bash
+# List all compartments in your tenancy
+oci iam compartment list --compartment-id $OCI_TENANCY_OCID --all --query "data[?name | contains('familyshield')]" --output table
+```
+
+You should see three compartments listed. If not, the bootstrap script failed — re-run it and check for errors in Step 7.
+
+4. After bootstrap completes, re-run the workflow:
+
+```bash
+gh workflow run deploy-dev.yml --ref development
 ```
 
 #### tofu plan failures

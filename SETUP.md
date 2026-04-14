@@ -3,7 +3,7 @@
 > **Who this is for:** Anyone setting up FamilyShield for the first time, including people with no prior Oracle Cloud experience.
 > **Time needed:** About 2 hours the first time.
 > **Cost:** $0 CAD/month — this guide uses Always Free tiers throughout.
-> **Last updated:** 2026-04-13
+> **Last updated:** 2026-04-14 — Added Step 7 compartment creation to bootstrap
 
 ---
 
@@ -343,17 +343,23 @@ Anthropic is only used when Groq is unavailable (rare).
 
 ---
 
-## Part 7 — Run the Bootstrap Script
+## Part 7 — Run the Bootstrap Script (11 Steps)
 
 You now have everything needed to run the bootstrap script. This script will:
 
-- Verify OCI CLI is working
-- Create a dedicated IAM user for GitHub Actions (`familyshield-github-actions`)
-- Generate an API key pair for that user and upload the public key to OCI
-- Create the Terraform state storage bucket (`familyshield-tfstate`)
-- Find the correct Ubuntu 22.04 ARM64 image OCID for Toronto
-- Generate an SSH key pair for VM access
-- Print all the GitHub Secret values you need
+1. Verify OCI CLI is working
+2. Optional: Enable Cloud Guard security monitoring
+3. Create a dedicated IAM user for GitHub Actions (`familyshield-github-actions`)
+4. Generate an API key pair for that user and upload the public key to OCI
+5. Create a dynamic group for GitHub Actions OIDC identities
+6. Grant bootstrap IAM policy to the GitHub Actions user (grants tenancy-level permissions)
+7. **Create three environment compartments** (`familyshield-dev`, `familyshield-staging`, `familyshield-prod`) — **REQUIRED by IaC**
+8. Create the Terraform state storage bucket (`familyshield-tfstate`)
+9. Find the correct Ubuntu 22.04 ARM64 image OCID for Toronto
+10. Generate an SSH key pair for VM access
+11. Print all the GitHub Secret values you need
+
+The compartments created in **Step 7 are critical** — the IaC (Terraform/OpenTofu) queries for these compartments and fails with a clear error if they don't exist.
 
 Open **Git Bash**, navigate to the repo root, and run:
 
