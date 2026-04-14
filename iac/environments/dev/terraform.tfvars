@@ -7,10 +7,3 @@ ssh_public_key          = "PLACEHOLDER_SSH_PUBLIC_KEY"
 # Phase 2: VM provisioning (compute module currently disabled)
 # instance_ocpus = 2
 # instance_memory = 6
-
-tags = {
-  Project     = "FamilyShield"
-  Environment = "dev"
-  ManagedBy   = "OpenTofu"
-  CreatedDate = "2026-04-13"
-}

@@ -56,6 +56,9 @@ runs:
         # Proactively import existing Object Storage buckets if they exist in OCI but not in state
         echo ""
         echo "📋 Attempting to import existing Object Storage buckets..."
+        # Get the namespace for import IDs
+        OCI_NAMESPACE="${{ env.OCI_NAMESPACE }}"
+
         # Disable exit-on-error for imports (they may fail)
         set +e
         declare -a BUCKETS=("tfstate:familyshield-tfstate" "backups:familyshield-backups" "app_data:familyshield-app")
@@ -63,15 +66,18 @@ runs:
           RESOURCE_NAME="${BUCKET_MAP%:*}"
           BUCKET_PREFIX="${BUCKET_MAP#*:}"
           BUCKET_NAME="${BUCKET_PREFIX}-${{ inputs.environment }}"
-          echo "  ⏳ $BUCKET_NAME..."
-          IMPORT_OUTPUT=$(timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" 2>&1)
+          # OCI Object Storage import ID format: namespace/bucket-name
+          IMPORT_ID="$OCI_NAMESPACE/$BUCKET_NAME"
+          echo "  ⏳ Importing $BUCKET_NAME (ID: $IMPORT_ID)..."
+          IMPORT_OUTPUT=$(timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$IMPORT_ID" 2>&1)
           IMPORT_EXIT=$?
           if [ $IMPORT_EXIT -eq 0 ]; then
-            echo "     ✅ Imported"
-          elif echo "$IMPORT_OUTPUT" | grep -q "already exists\|alreadyexists"; then
+            echo "     ✅ Imported successfully"
+          elif echo "$IMPORT_OUTPUT" | grep -qE "already exists in state|Resource already managed by Terraform"; then
             echo "     ✅ Already in state"
           else
-            echo "     ⚠️  Import noted (will retry on apply)"
+            # Don't fail here — tofu will try to import on apply
+            echo "     ⚠️  Import skipped (will retry during apply)"
           fi
         done
         set -e
@@ -110,24 +116,27 @@ runs:
           # If apply failed, try to import existing resources and retry
           echo "ℹ️  First apply attempt failed. Attempting to import existing resources..."
 
-          # Try to import existing buckets if they exist (skip OCI CLI check - just try imports)
+          # Try to import existing buckets if they exist
           echo ""
-          echo "Attempting import of existing Object Storage buckets..."
+          echo "Attempting import of existing Object Storage buckets with correct ID format..."
+          OCI_NAMESPACE="${{ env.OCI_NAMESPACE }}"
           set +e  # Disable exit-on-error for imports
           declare -a BUCKETS_RETRY=("tfstate:familyshield-tfstate" "backups:familyshield-backups" "app_data:familyshield-app")
           for BUCKET_MAP in "${BUCKETS_RETRY[@]}"; do
             RESOURCE_NAME="${BUCKET_MAP%:*}"
             BUCKET_PREFIX="${BUCKET_MAP#*:}"
             BUCKET_NAME="${BUCKET_PREFIX}-${{ inputs.environment }}"
-            echo "  ⏳ Importing $BUCKET_NAME..."
-            IMPORT_OUTPUT=$(timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$BUCKET_NAME" 2>&1)
+            # OCI Object Storage import ID format: namespace/bucket-name
+            IMPORT_ID="$OCI_NAMESPACE/$BUCKET_NAME"
+            echo "  ⏳ Importing $BUCKET_NAME (ID: $IMPORT_ID)..."
+            IMPORT_OUTPUT=$(timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.$RESOURCE_NAME" "$IMPORT_ID" 2>&1)
             IMPORT_EXIT=$?
             if [ $IMPORT_EXIT -eq 0 ]; then
-              echo "     ✅ Imported"
-            elif echo "$IMPORT_OUTPUT" | grep -q "already exists\|alreadyexists"; then
+              echo "     ✅ Imported successfully"
+            elif echo "$IMPORT_OUTPUT" | grep -qE "already exists in state|Resource already managed by Terraform"; then
               echo "     ✅ Already in state"
             else
-              echo "     ⚠️  Import attempt completed"
+              echo "     ⚠️  Import failed (continuing anyway)"
             fi
           done
           set -e  # Re-enable exit-on-error
