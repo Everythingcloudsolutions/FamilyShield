@@ -63,7 +63,6 @@ runs:
         # Import the existing single tfstate bucket if it exists in OCI but not in state
         echo ""
         echo "📋 Attempting to import existing tfstate bucket..."
-        OCI_NAMESPACE="${{ env.OCI_NAMESPACE }}"
         set +e
 
         BUCKET_NAME="familyshield-tfstate"
@@ -116,7 +115,6 @@ runs:
           echo "ℹ️  First apply attempt failed. Attempting to import tfstate bucket..."
 
           echo ""
-          OCI_NAMESPACE="${{ env.OCI_NAMESPACE }}"
           set +e  # Disable exit-on-error for imports
 
           BUCKET_NAME="familyshield-tfstate"
