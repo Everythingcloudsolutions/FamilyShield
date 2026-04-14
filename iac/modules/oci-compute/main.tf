@@ -26,9 +26,11 @@ resource "oci_core_instance" "familyshield" {
     display_name     = "familyshield-${var.environment}-vnic"
   }
 
-  metadata = {
-    ssh_authorized_keys = var.ssh_public_key != "" ? var.ssh_public_key : null
+  metadata = var.ssh_public_key != "" ? {
+    ssh_authorized_keys = var.ssh_public_key
     user_data           = base64encode(var.cloud_init_script)
+  } : {
+    user_data = base64encode(var.cloud_init_script)
   }
 
   freeform_tags = var.tags

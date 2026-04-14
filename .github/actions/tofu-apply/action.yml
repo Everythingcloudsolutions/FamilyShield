@@ -71,8 +71,14 @@ runs:
         IMPORT_ID="$OCI_NAMESPACE/$BUCKET_NAME"
         echo "  ⏳ Importing $BUCKET_NAME (ID: $IMPORT_ID)..."
 
-        # Try import - if it fails, check if already in state
-        IMPORT_OUTPUT=$(timeout 15 tofu import -input=false "module.storage.oci_objectstorage_bucket.tfstate" "$IMPORT_ID" 2>&1)
+        # Build var args for import command (same as apply)
+        VAR_ARGS="-var=environment=${{ inputs.environment }}"
+        if [ -n "${{ inputs.var_file }}" ]; then
+          VAR_ARGS="$VAR_ARGS -var-file=${{ inputs.var_file }}"
+        fi
+
+        # Try import with variables - if it fails, check if already in state
+        IMPORT_OUTPUT=$(timeout 15 tofu import -input=false $VAR_ARGS "module.storage.oci_objectstorage_bucket.tfstate" "$IMPORT_ID" 2>&1)
         IMPORT_EXIT=$?
 
         if [ $IMPORT_EXIT -eq 0 ]; then
