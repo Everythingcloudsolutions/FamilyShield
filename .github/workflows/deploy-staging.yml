@@ -38,9 +38,9 @@ jobs:
         uses: ./.github/actions/oci-login
         with:
           oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid:    ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint:  ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key:  ${{ secrets.OCI_PRIVATE_KEY }}
+          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
 
       - name: Validate IAM Permissions
         shell: bash
@@ -51,22 +51,22 @@ jobs:
       - name: Apply IaC → staging
         uses: ./.github/actions/tofu-apply
         with:
-          environment:       staging
+          environment: staging
           working_directory: iac
-          var_file:          environments/staging/terraform.tfvars
+          var_file: environments/staging/terraform.tfvars
         env:
-          AWS_ACCESS_KEY_ID:             ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY:         ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          OCI_NAMESPACE:                 ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_oci_tenancy_ocid:       ${{ secrets.OCI_TENANCY_OCID }}
-          TF_VAR_oci_namespace:          ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_ssh_public_key:         ${{ secrets.OCI_SSH_PUBLIC_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_oci_namespace: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_ssh_public_key: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
           # Cloudflare variables removed — now managed by separate deploy-cloudflare.yml workflow
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
-          TF_VAR_supabase_url:           ${{ secrets.SUPABASE_URL_STAGING }}
-          TF_VAR_supabase_anon_key:      ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
-          TF_VAR_groq_api_key:           ${{ secrets.GROQ_API_KEY }}
-          TF_VAR_anthropic_api_key:      ${{ secrets.ANTHROPIC_API_KEY }}
+          TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_STAGING }}
+          TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
       - name: Promote images from dev → staging
         run: |
