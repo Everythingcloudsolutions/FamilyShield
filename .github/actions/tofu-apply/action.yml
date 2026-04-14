@@ -47,6 +47,8 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       env:
+        AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
         OCI_NAMESPACE: ${{ env.OCI_NAMESPACE }}
         TF_VAR_oci_tenancy_ocid: ${{ env.TF_VAR_oci_tenancy_ocid }}
         TF_VAR_oci_namespace: ${{ env.TF_VAR_oci_namespace }}
@@ -98,7 +100,7 @@ runs:
         else
           # Import failed for other reason - log it and try state list to diagnose
           echo "     ⚠️  Import error (checking state):"
-          echo "$IMPORT_OUTPUT" | head -10
+          echo "$IMPORT_OUTPUT"
           STATE_CHECK=$(tofu state list 2>&1 | grep "module.storage.oci_objectstorage_bucket.tfstate" || echo "not found")
           if [ "$STATE_CHECK" != "not found" ]; then
             echo "     ✅ Resource already in state"
@@ -112,6 +114,8 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       env:
+        AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
         TF_VAR_oci_tenancy_ocid: ${{ env.TF_VAR_oci_tenancy_ocid }}
         TF_VAR_oci_namespace: ${{ env.TF_VAR_oci_namespace }}
         TF_VAR_ssh_public_key: ${{ env.TF_VAR_ssh_public_key }}
@@ -137,6 +141,8 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       env:
+        AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
         OCI_NAMESPACE: ${{ env.OCI_NAMESPACE }}
         TF_VAR_oci_tenancy_ocid: ${{ env.TF_VAR_oci_tenancy_ocid }}
         TF_VAR_oci_namespace: ${{ env.TF_VAR_oci_namespace }}
