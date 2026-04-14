@@ -42,6 +42,12 @@ jobs:
           oci_fingerprint:  ${{ secrets.OCI_FINGERPRINT }}
           oci_private_key:  ${{ secrets.OCI_PRIVATE_KEY }}
 
+      - name: Validate IAM Permissions
+        shell: bash
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+        run: bash scripts/validate-iam-permissions.sh
+
       - name: Apply IaC → staging
         uses: ./.github/actions/tofu-apply
         with:
