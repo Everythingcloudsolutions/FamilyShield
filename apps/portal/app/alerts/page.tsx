@@ -1,6 +1,8 @@
 /**
  * Alerts Page — server component with client-side table
  */
+export const dynamic = 'force-dynamic'
+
 import { createClient } from '@supabase/supabase-js'
 import { AlertTable } from '../../components/AlertTable'
 import type { Alert } from '../../lib/types'
@@ -11,8 +13,8 @@ interface AlertsPageProps {
 
 async function getServerSupabase() {
   return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '',
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   )
 }
 

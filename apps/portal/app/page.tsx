@@ -2,6 +2,8 @@
  * Dashboard — server component
  * Fetches initial data from Supabase, passes to client components.
  */
+export const dynamic = 'force-dynamic'
+
 import { createClient } from '@supabase/supabase-js'
 import { AlertFeed } from '../components/AlertFeed'
 import { DeviceCard } from '../components/DeviceCard'
@@ -9,9 +11,10 @@ import { RiskBadge } from '../components/RiskBadge'
 import type { Alert, Device, RiskLevel } from '../lib/types'
 
 async function getServerSupabase() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
-  return createClient(url, key)
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  )
 }
 
 function StatCard({
