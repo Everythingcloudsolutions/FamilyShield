@@ -26,11 +26,13 @@ jobs:
     steps:
       - name: Confirm production deploy intent
         run: |
-          if [ "${{ github.event.inputs.confirm }}" != "DEPLOY" ]; then
+          # Push to main triggers automatically (no confirm needed — branch protection is the gate)
+          # workflow_dispatch requires explicit "DEPLOY" confirmation
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.confirm }}" != "DEPLOY" ]; then
             echo "❌ You must type DEPLOY in the confirm field to proceed"
             exit 1
           fi
-          echo "✅ Production deploy confirmed by ${{ github.actor }}"
+          echo "✅ Production deploy confirmed by ${{ github.actor }} (trigger: ${{ github.event_name }})"
 
       - name: Check staging passed
         run: |
@@ -146,16 +148,26 @@ jobs:
     needs: deploy-infra-prod
     steps:
       - name: Verify prod is healthy
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID_PROD }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET_PROD }}
         run: |
           BASE_URL="https://familyshield.everythingcloud.ca"
+          CF_HEADERS=()
+          if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
+            CF_HEADERS=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+          fi
           for i in {1..5}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL" || echo "000")
-            if [ "$STATUS" = "200" ]; then
-              echo "✅ Production portal healthy: $STATUS"
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$BASE_URL" || echo "000")
+            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
+              echo "✅ Production portal healthy (HTTP $STATUS)"
               exit 0
+            elif [[ "$STATUS" =~ ^5 ]]; then
+              echo "❌ Server error $STATUS — failing immediately"
+              exit 1
             fi
             echo "Attempt $i: $STATUS — waiting 30s..."
             sleep 30
           done
-          echo "❌ Production portal not responding after 5 attempts"
+          echo "❌ Production portal not responding after 5 attempts (last: $STATUS)"
           exit 1
