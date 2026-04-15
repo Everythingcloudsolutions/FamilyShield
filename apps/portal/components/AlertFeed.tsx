@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { getSupabase } from '../lib/supabase'
 import { RiskBadge } from './RiskBadge'
 import type { Alert, Platform } from '../lib/types'
 
@@ -46,7 +46,7 @@ export function AlertFeed({ initialAlerts }: AlertFeedProps) {
   const [alerts, setAlerts] = useState<Alert[]>(initialAlerts.slice(0, 20))
 
   useEffect(() => {
-    const channel = supabase
+    const channel = getSupabase()
       .channel('alerts-feed')
       .on(
         'postgres_changes',
@@ -58,7 +58,7 @@ export function AlertFeed({ initialAlerts }: AlertFeedProps) {
       )
       .subscribe()
 
-    return () => { void supabase.removeChannel(channel) }
+    return () => { void getSupabase().removeChannel(channel) }
   }, [])
 
   return (

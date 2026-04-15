@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
  */
 import { useState } from 'react'
 import { DeviceCard } from '../../components/DeviceCard'
-import { supabase } from '../../lib/supabase'
+import { getSupabase } from '../../lib/supabase'
 import type { Device, DeviceProfile } from '../../lib/types'
 
 interface EnrolFormData {
@@ -54,7 +54,7 @@ function EnrolModal({
       enrolled_at: new Date().toISOString(),
     }
 
-    const { error: dbError } = await supabase.from('devices').insert(newDevice)
+    const { error: dbError } = await getSupabase().from('devices').insert(newDevice)
     if (dbError) {
       setError(dbError.message)
       setSubmitting(false)
