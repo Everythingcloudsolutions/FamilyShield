@@ -28,18 +28,18 @@ die() {
 }
 
 info() {
-  echo "ℹ️ $*"
+  echo "ℹ️ $*" >&2
 }
 
 success() {
-  echo "✅ $*"
+  echo "✅ $*" >&2
 }
 
 header() {
-  echo ""
-  echo "─────────────────────────────────────────────────────────────────────────────"
-  echo "$*"
-  echo "─────────────────────────────────────────────────────────────────────────────"
+  echo "" >&2
+  echo "─────────────────────────────────────────────────────────────────────────────" >&2
+  echo "$*" >&2
+  echo "─────────────────────────────────────────────────────────────────────────────" >&2
 }
 
 validate_env() {
@@ -169,10 +169,12 @@ get_tunnel_token() {
 
   header "Getting Tunnel Token: $tunnel_id"
 
-  local response=$(cf_api GET "/accounts/$ACCOUNT_ID/cfd_tunnel/$tunnel_id/token")
-  local token=$(echo "$response" | jq -r '.result // .errors // .' 2>/dev/null)
+  local response
+  response=$(cf_api GET "/accounts/$ACCOUNT_ID/cfd_tunnel/$tunnel_id/token")
+  local token
+  token=$(echo "$response" | jq -r '.result // empty' 2>/dev/null)
 
-  [ -n "$token" ] && [ "$token" != "null" ] || die "Failed to get tunnel token"
+  [ -n "$token" ] || die "Failed to get tunnel token: $(echo "$response" | jq -r '.errors[0].message // .' 2>/dev/null)"
 
   success "Tunnel token retrieved"
   echo "$token"
@@ -331,13 +333,15 @@ setup_cloudflare() {
   validate_env
 
   # 1. Create tunnel
-  local tunnel_id=$(create_tunnel "$environment" "$tunnel_secret")
+  local tunnel_id
+  tunnel_id=$(create_tunnel "$environment" "$tunnel_secret")
 
   # 2. Configure tunnel routes (ingress rules)
   configure_tunnel_routes "$tunnel_id" "$environment"
 
   # 3. Get tunnel token (will be used by mitmproxy)
-  local tunnel_token=$(get_tunnel_token "$tunnel_id")
+  local tunnel_token
+  tunnel_token=$(get_tunnel_token "$tunnel_id")
 
   # 4. Create DNS records
   create_dns_record "ssh.familyshield-$environment" "$tunnel_id"
