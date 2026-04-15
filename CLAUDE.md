@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-14
+> Last updated: 2026-04-15
 
 ---
 
@@ -199,10 +199,14 @@ FamilyShield/
 │       ├── cloud-init.yaml.tpl  ← VM bootstrap: UFW, fail2ban, Docker, systemd
 │       └── docker-compose.yaml.tpl ← All 10 services
 ├── apps/
-│   ├── portal/                  ← Next.js 14 parent portal [IN PROGRESS]
+│   ├── portal/                  ← Next.js 14 parent portal [SCAFFOLDED]
 │   ├── api/                     ← Node.js enrichment worker + Express health
 │   │   ├── src/
 │   │   │   ├── index.ts
+│   │   │   ├── types.ts             ← Shared TypeScript types (events, alerts, scores)
+│   │   │   ├── lib/redis.ts         ← Redis singleton client factory
+│   │   │   ├── lib/supabase.ts      ← Supabase singleton client factory
+│   │   │   ├── alerts/dispatcher.ts ← Alert dispatcher (Phase 1 placeholder)
 │   │   │   ├── worker/event-consumer.ts
 │   │   │   ├── llm/router.ts    ← Groq → Anthropic fallback
 │   │   │   └── enrichers/       ← youtube.ts, roblox.ts, twitch.ts, discord.ts
@@ -515,6 +519,11 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - Resource allocation: Dev (1C/6GB) + Staging ephemeral (1C/6GB) + Prod (2C/6GB) = within 4C/24GB Always Free
   - Per-environment state buckets: `familyshield-tfstate-{environment}`
   - Bucket import logic handles existing resources without 409 conflicts
+- ✅ **SSH Tunnel Routing (2026-04-15):** All VM SSH now routes through Cloudflare Tunnel (zero public IP exposure)
+  - Phase 1 (deploy-dev.yml): Public IP (bootstrap only, tunnel not ready)
+  - Phase 2 (deploy-cloudflare.yml): `redeploy-via-tunnel` job — health check + app deploy via tunnel
+  - Phase 3 (post-deploy-tunnel-ssh-dev.yml): Final tunnel SSH verification
+  - SSH hostname: `ssh.familyshield-{env}.everythingcloud.ca`
 - 🔲 Deploy-dev must successfully complete one full run end-to-end (IaC → Cloudflare → App)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 
@@ -522,9 +531,9 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
 
 - ✅ API structure defined, enrichers for all 4 platforms (YouTube, Roblox, Discord, Twitch)
 - ✅ mitmproxy addon complete with 15 tests
-- 🔲 Portal: Next.js 14 scaffold needed (no `apps/portal/package.json` yet)
-- 🔲 API: TypeScript types, Redis/Supabase client factories, alert dispatcher
-- 🔲 CI/CD: Docker build workflows for api and portal images
+- ✅ Portal: Next.js 14 scaffold complete (`apps/portal/` — package.json, Dockerfile, tsconfig.json)
+- ✅ API: TypeScript types, Redis/Supabase client factories, alert dispatcher (`src/types.ts`, `src/lib/`, `src/alerts/`)
+- ✅ CI/CD: Docker build workflows for api and portal (`build-and-push` matrix job in deploy-dev.yml)
 
 ### 📋 Phase 3: E2E Testing & Production Release
 
