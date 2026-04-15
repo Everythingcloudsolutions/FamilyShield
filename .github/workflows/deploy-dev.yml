@@ -194,6 +194,8 @@ jobs:
           username: ubuntu
           key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
           script: |
+            # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
+            sudo cloud-init status --wait 2>/dev/null || true
             cd /opt/familyshield
             # Pull latest images
             docker compose pull api portal
