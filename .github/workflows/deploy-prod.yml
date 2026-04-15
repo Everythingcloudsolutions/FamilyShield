@@ -261,16 +261,24 @@ jobs:
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
 
+          # Start cloudflared via docker run (no docker-compose.yml dependency).
+          # --network host lets cloudflared reach services on localhost:3000/3001.
+          # The token downloads ingress config from Cloudflare's control plane.
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=15 \
             ubuntu@"$VM_IP" \
-            "printf 'services:\n  cloudflared:\n    environment:\n      - TUNNEL_TOKEN=%s\n' \"$TUNNEL_TOKEN\" \
-               > /opt/familyshield/docker-compose.override.yaml && \
-             cd /opt/familyshield && \
-             docker compose up -d --no-deps cloudflared && \
-             docker compose ps cloudflared && \
+            "docker stop familyshield-cloudflared 2>/dev/null || true; \
+             docker rm familyshield-cloudflared 2>/dev/null || true; \
+             docker run -d \
+               --name familyshield-cloudflared \
+               --restart unless-stopped \
+               --network host \
+               cloudflare/cloudflared:latest \
+               tunnel --no-autoupdate run --token $TUNNEL_TOKEN && \
+             sleep 3 && \
+             docker inspect familyshield-cloudflared --format '{{.State.Status}}' && \
              echo '✅ cloudflared started with tunnel token'"
 
       - name: Wait for tunnel to become active (up to 3 min)
