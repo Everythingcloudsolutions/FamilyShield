@@ -1,7 +1,10 @@
 # FamilyShield — Troubleshooting Guide
 
-> Last updated: 2026-04-14 — Added compartment creation troubleshooting, updated bootstrap steps
+> Last updated: 2026-04-15
 > Platform: FamilyShield v1 — OCI ca-toronto-1 (Toronto, Canada)
+
+> **New joiners and infrastructure debuggers:** Start with the companion document:
+> **[Infrastructure Deployment Troubleshooting Log](infrastructure.md)** — a chronological record of every real deployment pipeline problem encountered, with root causes and exact fixes.
 
 ---
 
@@ -84,7 +87,7 @@ This section is for parents. No technical knowledge required. Find the symptom t
 
 ### 3. The dashboard isn't loading
 
-**What's happening:** The parent portal is hosted at https://familyshield.everythingcloud.ca. If it won't load, it could be a temporary outage, a login issue, or a network problem on your end.
+**What's happening:** The parent portal is hosted at <https://familyshield.everythingcloud.ca>. If it won't load, it could be a temporary outage, a login issue, or a network problem on your end.
 
 **Steps to fix:**
 
@@ -100,7 +103,7 @@ This section is for parents. No technical knowledge required. Find the symptom t
 
 5. **Wait 5 minutes and try again.** The portal may be restarting after an update.
 
-6. **Check the status page (if available).** Visit https://familyshield-dev.everythingcloud.ca/health in your browser. If you see "OK", the backend is running fine and the issue is likely your browser.
+6. **Check the status page (if available).** Visit <https://familyshield-dev.everythingcloud.ca/health> in your browser. If you see "OK", the backend is running fine and the issue is likely your browser.
 
 7. **Still not loading?** Contact the FamilyShield administrator.
 
@@ -179,7 +182,7 @@ This section is for parents. No technical knowledge required. Find the symptom t
 
 2. **Check your spam/junk folder.** If you use email-based login (magic link), the login email may have been filtered as spam.
 
-3. **Try a fresh browser window.** Open an incognito or private window and go to https://familyshield.everythingcloud.ca again. Click "Log In" and try your email.
+3. **Try a fresh browser window.** Open an incognito or private window and go to <https://familyshield.everythingcloud.ca> again. Click "Log In" and try your email.
 
 4. **Clear cookies for the portal domain.** Old or corrupted session cookies can block login.
    - Chrome: Press Ctrl+Shift+Delete → select "Cookies and other site data" → Clear data → try logging in again.
@@ -198,7 +201,7 @@ This section is for parents. No technical knowledge required. Find the symptom t
 
 **Steps to fix:**
 
-1. **Make sure you are logged in to the parent portal first.** The links in notifications will take you to the portal, which requires you to be logged in. Open https://familyshield.everythingcloud.ca in your browser, log in, then tap the notification link again.
+1. **Make sure you are logged in to the parent portal first.** The links in notifications will take you to the portal, which requires you to be logged in. Open <https://familyshield.everythingcloud.ca> in your browser, log in, then tap the notification link again.
 
 2. **Try copying and pasting the link.** Instead of tapping, long-press on the link in the ntfy notification, copy it, and paste it into your browser.
 
@@ -434,6 +437,7 @@ docker logs -f familyshield-adguard
 ```
 
 Expected healthy API response:
+
 ```json
 {"dns_addresses":["0.0.0.0"],"dns_port":53,"http_port":3080,"protection_enabled":true,"running":true}
 ```
@@ -568,6 +572,7 @@ openssl x509 -in /opt/familyshield/certs/familyshield-ca.pem -noout -text | \
 ```
 
 **Device-specific installation:**
+
 - **iOS:** The `.pem` file must be served over HTTP (not HTTPS) for iOS to download and prompt installation. After install, go to Settings → General → About → Certificate Trust Settings and toggle ON.
 - **Windows:** Double-click the `.cer` file → Install Certificate → Local Machine → Trusted Root Certification Authorities.
 - **Android 7+:** Android restricts user-installed CAs for apps. Requires a device MDM profile or rooted device. Consider DNS-only monitoring for Android.
@@ -910,144 +915,105 @@ docker exec familyshield-api node -e "
 
 ### Cloudflare Tunnel Issues
 
-> **Note (2026-04-13):** Cloudflare tunnels are now created by the `deploy-cloudflare.yml` workflow via API, not by a running container. The tunnel is configured on the Cloudflare side, and mitmproxy on the OCI VM connects to it using the tunnel token.
+> **Architecture note (2026-04-15):** The Cloudflare tunnel is managed by the `setup-cloudflare-{env}` job in each deploy workflow. The `cloudflared` daemon runs on the OCI VM as a standalone `docker run` container (not from `docker-compose.yml`). It receives its tunnel token via the `--token` flag and downloads ingress configuration from Cloudflare's control plane — no local config file needed. For the full history of how this architecture was reached, see [Infrastructure Deployment Troubleshooting Log](infrastructure.md).
 
-#### Tunnel shows as disconnected in Cloudflare dashboard
+#### Tunnel shows as INACTIVE in Cloudflare dashboard
 
-**Symptom:** Cloudflare dashboard shows tunnel status as "DISCONNECTED" or "INACTIVE"; portal returns timeouts.
+**Symptom:** Cloudflare dashboard shows tunnel status as **INACTIVE**; portal returns timeouts or 502.
 
 ```bash
-# The tunnel is created by deploy-cloudflare workflow, but mitmproxy must connect to it
-# The connection is made by the mitmproxy service running on the OCI VM
+# 1. Check if cloudflared container is running on the VM
+ssh ubuntu@<vm-ip> "docker ps | grep cloudflared"
+# Should show: familyshield-cloudflared  Up X minutes
 
-# 1. Check mitmproxy is running on the OCI VM
-ssh familyshield-dev
-docker ps | grep mitmproxy
-# Should show: familyshield-mitmproxy (running)
+# 2. Check cloudflared logs for connection status
+ssh ubuntu@<vm-ip> "docker logs familyshield-cloudflared --tail 20"
+# Healthy: "Registered tunnel connection connIndex=0"
+# Bad token: "Invalid tunnel token" or "Authentication error"
 
-# 2. Check mitmproxy logs for tunnel token connection errors
-docker logs familyshield-mitmproxy --tail 50 | grep -i "cloudflare\|tunnel\|error"
-# You should see: "Tunnel connection registered" or "Connected to Cloudflare"
-# If you see "invalid token", the tunnel_token in docker-compose is wrong
+# 3. If cloudflared is not running, get the real token then start it:
+export CLOUDFLARE_API_TOKEN="<your-token>"
+export CLOUDFLARE_ACCOUNT_ID="<your-account>"
+TUNNEL_ID=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel" \
+  | jq -r '.result[] | select(.name=="familyshield-dev") | .id')
+TUNNEL_TOKEN=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/token" \
+  | jq -r '.result')
 
-# 3. Check the tunnel token is set correctly in docker-compose
-docker exec familyshield-mitmproxy env | grep TUNNEL
-# If TUNNEL_TOKEN=TUNNEL_TOKEN_PLACEHOLDER_dev, the token was not set
-#   → This is a known issue — see "Tunnel token not updated" section below
-
-# 4. If mitmproxy is running but tunnel still disconnected:
-docker restart familyshield-mitmproxy
-# Wait 10–15 seconds for it to reconnect
-
-# 5. Check Cloudflare dashboard
-# dash.cloudflare.com → Tunnels → familyshield-dev → should show "HEALTHY" after reconnect
+ssh ubuntu@<vm-ip> "
+  docker stop familyshield-cloudflared 2>/dev/null || true
+  docker rm familyshield-cloudflared 2>/dev/null || true
+  docker run -d \
+    --name familyshield-cloudflared \
+    --restart unless-stopped \
+    --network host \
+    cloudflare/cloudflared:latest \
+    tunnel --no-autoupdate run --token $TUNNEL_TOKEN
+"
 ```
 
-#### Tunnel token not updated after deploy-cloudflare
-
-**Symptom:** Tunnel is created successfully in Cloudflare, but mitmproxy can't connect because the tunnel token is still a placeholder (`TUNNEL_TOKEN_PLACEHOLDER_dev`).
+#### Tunnel was active, then went INACTIVE
 
 ```bash
-# Root cause: deploy-cloudflare workflow creates the tunnel and gets the token,
-# but the token is not automatically passed to the mitmproxy container on the VM
+# Usually means cloudflared crashed or the VM rebooted without --restart taking effect
+ssh ubuntu@<vm-ip>
 
-# Current workaround (manual):
-# 1. After deploy-cloudflare succeeds, get the tunnel token
-#    - Go to GitHub Actions → deploy-cloudflare → job output
-#    - Look for: TUNNEL_TOKEN=...
-#    - Copy this value
+docker ps -a | grep cloudflared
 
-# 2. SSH to the OCI VM
-ssh familyshield-dev
+# If Exited — restart it (has --restart unless-stopped):
+docker start familyshield-cloudflared
 
-# 3. Update the docker-compose.yml with the actual token
-# Edit /opt/familyshield/docker-compose.yml
-# Find: TUNNEL_TOKEN=TUNNEL_TOKEN_PLACEHOLDER_dev
-# Replace with: TUNNEL_TOKEN=<actual-token-from-step-1>
+# If docker daemon didn't start on boot:
+sudo systemctl restart docker
+docker start familyshield-cloudflared
 
-# 4. Restart mitmproxy
-docker compose -f /opt/familyshield/docker-compose.yml up -d --no-deps --scale mitmproxy=1 mitmproxy
-# Wait 15 seconds for it to connect
-
-# 5. Verify in Cloudflare dashboard
-# dash.cloudflare.com → Tunnels → familyshield-dev → should show "HEALTHY"
-
-# Future: This will be automated in a future release
+# Check reason for exit:
+docker logs familyshield-cloudflared --tail 30
+# "context canceled" = intentional stop
+# "ERR Fail to dial" = network issue — retry
+# "certificate has expired" = token expired — re-run setup-cloudflare workflow
 ```
 
-#### Tunnel disconnected (tunnel was running, then lost connection)
-
-**Symptom:** Tunnel was connected, but now shows "DISCONNECTED"; mitmproxy container is still running.
+#### Portal returning 502 or 503
 
 ```bash
-# Check cloudflared container status
-docker ps | grep cloudflared
-docker logs --tail 50 familyshield-cloudflared
+# 502 = cloudflared is connected but the backend service (api or portal) is down
+# 503 = cloudflared cannot reach the origin at all
 
-# Look for connection errors in logs
-docker logs familyshield-cloudflared 2>&1 | grep -i "error\|failed\|disconnect" | tail -20
+# Check if api and portal containers are running:
+ssh ubuntu@<vm-ip> "docker ps --format '{{.Names}}: {{.Status}}'"
 
-# Check tunnel credentials are mounted
-docker exec familyshield-cloudflared ls -la /etc/cloudflared/
+# If missing — check if docker-compose.yml exists:
+ssh ubuntu@<vm-ip> "ls /opt/familyshield/docker-compose.yml"
 
-# Restart cloudflared (it will re-establish connection automatically)
-docker restart familyshield-cloudflared
+# If docker-compose.yml exists, start api and portal:
+ssh ubuntu@<vm-ip> "cd /opt/familyshield && docker compose up -d api portal"
 
-# Monitor reconnection
-docker logs -f familyshield-cloudflared | grep -i "connect\|tunnel\|register"
-# Expected: "Connection registered connIndex=0 ip=<Cloudflare edge IP>"
+# If docker-compose.yml is MISSING (broken cloud-init):
+# Re-run the deploy workflow — the bootstrap step restores it automatically
+# Or render and copy it manually per the procedure in infrastructure.md Issue 8
 
-# Verify tunnel ID from Cloudflare dashboard matches the credential file
-docker exec familyshield-cloudflared cat /etc/cloudflared/config.yml
-# tunnel: <tunnel-UUID> — must match what's in Cloudflare Zero Trust dashboard
-```
-
-#### Portal returning 502 / 503
-
-**Symptom:** Tunnel is connected but portal pages return 502 Bad Gateway or 503 Service Unavailable.
-
-```bash
-# 502 = tunnel connected but backend service is down
-# 503 = cloudflared can't reach the origin
-
-# Check which service is behind each route
-docker exec familyshield-cloudflared cat /etc/cloudflared/config.yml
-# ingress rules map hostnames to local ports — verify the port is correct
-
-# Check the Next.js portal container (if running on OCI) or Cloudflare Pages
-# For Cloudflare Pages deployments, check the Pages dashboard for build errors
-
-# Check the API health endpoint (if portal calls the API)
-curl -s http://localhost:3001/health | jq .
-
-# Check if the port is actually listening
-ss -tlnp | grep -E "3000|3001|1880"
-
-# For 503 — check cloudflared can reach the origin service
-docker exec familyshield-cloudflared curl -sv http://localhost:3001/health
+# Confirm the services respond locally:
+ssh ubuntu@<vm-ip> "curl -s http://localhost:3001/health"
+ssh ubuntu@<vm-ip> "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000"
 ```
 
 #### Zero Trust blocking legitimate access
 
-**Symptom:** Mohit (or a parent) gets a "Access Denied" page when trying to reach the portal.
-
 ```bash
 # Check Zero Trust Access policy in Cloudflare dashboard:
 # Zero Trust → Access → Applications → FamilyShield Portal → Policies
-# Verify the email address is in the "Include" list (or matches the allowed email domain)
+# Verify the email address is in the "Include" list
 
-# Check the Access audit log in Cloudflare:
+# Check the Access audit log:
 # Zero Trust → Logs → Access → filter by email
 
 # For self-debugging — check the cf-access-jwt cookie in the browser
 # DevTools → Application → Cookies → cf-access-jwt
 # Decode at jwt.io to see which email is being authenticated
 
-# If a parent is locked out, add their email to the Access policy in Cloudflare dashboard
-# No infrastructure restart needed — policy changes take effect within seconds
-
-# Test Zero Trust authentication from CLI (generates a service token)
-# For automated health checks, use a Cloudflare Service Token instead of user auth
+# Add a parent's email to the Access policy — no restart needed; takes effect in seconds
 ```
 
 ---
@@ -1382,6 +1348,7 @@ oci iam user get --user-id $OCI_USER_OCID
 #### Compartment not found during IaC deployment
 
 **Symptom:** `tofu apply` or `tofu plan` fails with error:
+
 ```
 ❌ FamilyShield compartment 'familyshield-{environment}' not found in OCI.
 This compartment must be created by the bootstrap script BEFORE running tofu apply.
@@ -1398,12 +1365,12 @@ chmod +x scripts/bootstrap-oci.sh
 bash scripts/bootstrap-oci.sh
 ```
 
-2. The script performs 11 steps. **Step 7** creates three compartments:
+1. The script performs 11 steps. **Step 7** creates three compartments:
    - `familyshield-dev`
    - `familyshield-staging`
    - `familyshield-prod`
 
-3. Verify the compartments were created:
+2. Verify the compartments were created:
 
 ```bash
 # List all compartments in your tenancy
@@ -1412,7 +1379,7 @@ oci iam compartment list --compartment-id $OCI_TENANCY_OCID --all --query "data[
 
 You should see three compartments listed. If not, the bootstrap script failed — re-run it and check for errors in Step 7.
 
-4. After bootstrap completes, re-run the workflow:
+1. After bootstrap completes, re-run the workflow:
 
 ```bash
 gh workflow run deploy-dev.yml --ref development

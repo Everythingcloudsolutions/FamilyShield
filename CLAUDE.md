@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-15 (deployment pipeline stabilised)
+> Last updated: 2026-04-15 (deployment pipeline fully documented — all 8 blockers resolved)
 
 ---
 
@@ -493,19 +493,19 @@ gh pr create --base main --head development
 
 ## Known Issues & Troubleshooting
 
-### Cloudflare Tunnel Stays INACTIVE After Setup
+### Cloudflare Tunnel Stays INACTIVE After Setup (historical — fixed 2026-04-15)
 
-**Symptom:** Tunnel shows INACTIVE in Cloudflare dashboard even after `setup-cloudflare-{env}` job completes.
+**Root cause chain:** IaC renders `docker-compose.yaml` with `TUNNEL_TOKEN=TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real token is unknown at `tofu apply` time. If cloudflared were started via `docker compose`, it would use the placeholder and fail to authenticate.
 
-**Cause:** IaC renders `docker-compose.yaml` with `TUNNEL_TOKEN=TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real token is not known at `tofu apply` time. The workflow must deliver the real token to the VM separately.
+**Fix (current architecture):** cloudflared is started via `docker run --network host --token $TUNNEL_TOKEN` in the `setup-cloudflare-{env}` job. The `--token` flag downloads ingress configuration from Cloudflare's control plane — no local config file or docker-compose.yml needed. If tunnel is still INACTIVE after a deploy, check:
 
-**Fix (already implemented):** `setup-cloudflare-{env}` job writes a `docker-compose.override.yaml` to the VM via public-IP SSH after retrieving the real token from the Cloudflare API. Docker Compose auto-merges overrides, so `cloudflared` picks up the token on `docker compose up`.
-
-**If tunnel is still inactive:** Check that `docker-compose.override.yaml` exists on the VM:
 ```bash
-ssh ubuntu@<vm-ip> cat /opt/familyshield/docker-compose.override.yaml
-ssh ubuntu@<vm-ip> "cd /opt/familyshield && docker compose ps cloudflared"
+ssh ubuntu@<vm-ip> "docker logs familyshield-cloudflared --tail 20"
+# Healthy: "Registered tunnel connection connIndex=0"
+# Bad token: re-run the setup-cloudflare workflow job
 ```
+
+Full details in `docs/troubleshooting/infrastructure.md` — Issues 3, 4, and 8.
 
 ### cloudflare-api.sh Output Pollution (historical — fixed 2026-04-15)
 
@@ -599,12 +599,16 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - Resource allocation: Dev (1C/6GB) + Staging ephemeral (1C/6GB) + Prod (2C/6GB) = within 4C/24GB Always Free
   - Per-environment state buckets: `familyshield-tfstate-{environment}`
   - Bucket import logic handles existing resources without 409 conflicts
-- ✅ **Deployment pipeline stabilised (2026-04-15):** All three workflows (dev/staging/prod) now follow the same 6-job pattern
-  - Root cause of INACTIVE tunnel: `cloudflare-api.sh` diagnostic functions (`header()`, `info()`, `success()`) printed to stdout, polluting command substitution captures — fixed to use stderr
-  - Tunnel token (real value from Cloudflare API) was never written to VM; placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}` remained — fixed with `docker-compose.override.yaml` written via public IP SSH
-  - `deploy-staging.yml` gate job had broken `if:` condition (referenced `workflow_run.conclusion` on a `push` trigger) — removed gate job entirely
-  - All three workflows now have: IaC → build/promote → deploy-app (public IP SSH) → setup-cloudflare (token delivery + tunnel activation) → tests/smoke-check
-- 🔲 First full end-to-end successful dev pipeline run (current run in progress)
+- ✅ **Deployment pipeline stabilised (2026-04-15):** All three workflows (dev/staging/prod) now follow the same 6-job pattern with all pipeline blockers resolved:
+  - `cloudflare-api.sh` output pollution (diagnostic functions to stdout) — fixed: all diagnostics redirect to `>&2`; `local var=$(cmd)` split into two statements
+  - Tunnel token never written to VM — fixed: cloudflared now starts via `docker run --network host --token` (zero docker-compose.yml dependency)
+  - SSH key `printf` missing trailing newline → `libcrypto` error — fixed: `echo "$KEY" | tr -d '\r'` in all three workflows
+  - Concurrent runs causing Terraform state lock conflicts — fixed: `concurrency:` groups on all three workflows (`cancel-in-progress: true` dev/staging, `false` prod)
+  - Race condition on new VM boot: deploy-app runs before cloud-init finishes writing docker-compose.yml — fixed: `sudo cloud-init status --wait || true` added to all deploy-app scripts
+  - `deploy-staging.yml` gate job broken `if:` condition (`workflow_run.conclusion` on a `push` trigger is always null) — fixed: gate job removed; staging triggers on `qa` branch push
+  - docker-compose.yml missing on VM (broken cloud-init) → api/portal not running → cloudflared returns 502 → smoke test fails — fixed: "Bootstrap VM" step in all setup-cloudflare jobs
+  - All 8 issues with root causes, investigation steps, and fixes documented in `docs/troubleshooting/infrastructure.md`
+- 🔲 First full end-to-end successful dev pipeline run (all 5 jobs green: infra → build → deploy-app → setup-cloudflare → smoke-test)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 
 **Application Development:**
