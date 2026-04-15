@@ -20,9 +20,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Intelligent parental control platform. Cloud-first, open source, IaC-driven.
 
-**GitHub repo:** https://github.com/Everythingcloudsolutions/FamilyShield (private)
-**Portal URL (dev):** https://familyshield-dev.everythingcloud.ca
-**Portal URL (prod):** https://familyshield.everythingcloud.ca
+**GitHub repo:** <https://github.com/Everythingcloudsolutions/FamilyShield> (private)
+**Portal URL (dev):** <https://familyshield-dev.everythingcloud.ca>
+**Portal URL (prod):** <https://familyshield.everythingcloud.ca>
 **Domain:** familyshield.everythingcloud.ca (subdomain of everythingcloud.ca — Cloudflare)
 
 ---
@@ -73,6 +73,7 @@ tofu apply -var="environment=dev" -var-file="environments/dev/terraform.tfvars" 
 ```
 
 **Key notes:**
+
 - When `tofu apply` runs in workflows, it runs with `working_directory: iac/`, so var_file paths MUST be relative to iac/ (e.g., `environments/dev/terraform.tfvars`, NOT `iac/environments/dev/terraform.tfvars`)
 - Full `tofu apply` requires OCI account and credentials. Use `tofu plan` locally to validate HCL without applying.
 
@@ -258,16 +259,19 @@ Manual trigger → deploy-prod.yml (manual approval + same flow)
 Cloudflare resources (tunnel, DNS, access apps) are now managed by separate `deploy-cloudflare.yml` workflow using the Cloudflare API directly (not Terraform). This decouples Cloudflare from IaC state management, avoiding conflicts.
 
 **Environments in GitHub:**
+
 - `dev` — auto, no approval needed
 - `staging` — auto after dev passes
 - `prod` — **manual approval required** (Mohit must click Approve in GitHub UI)
 
 **Cleanup:**
+
 - Manual: `cleanup-cloudflare.yml` (workflow_dispatch) — remove Cloudflare resources if environment is torn down
 
 ### Service Architecture
 
 All backend services run on a single OCI Always Free ARM VM (4 OCPU / 24GB RAM) in `ca-toronto-1`. Services communicate via:
+
 - **Redis** (port 6379) — event queue between mitmproxy and API
 - **Supabase** — PostgreSQL + Realtime WebSocket
 - **Shared volumes** — config files mounted at /etc/familyshield/
@@ -367,45 +371,89 @@ The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 
 ## Git Workflow
 
-**Three-branch promotion process:**
+**Full promotion process (4-branch + QA ephemeral):**
 
 ```
-Feature/Fix Branch → PR to DEVELOPMENT → Test & Review → Merge to development
-                                                              ↓
-                                               DEVELOPMENT → PR to MAIN → Merge to production
+Feature/Fix Branch → PR to DEVELOPMENT → merge to development
+                                              ↓
+                              deploy-dev.yml (auto) → Test in dev
+                                              ↓
+                        Create qa branch from development
+                                              ↓
+                              deploy-staging.yml (auto) → Test in staging (ephemeral)
+                                              ↓
+                        Delete qa branch + PR development→main
+                                              ↓
+                              deploy-prod.yml (auto) → Test in prod (gated approval)
 ```
 
 **When to use each branch:**
-- **main** — Production-ready code only. Triggered for prod deployments.
-- **development** — Integration branch. PRs merged here are tested in dev environment first.
+
+- **main** — Production-ready code only. Auto-deploys to prod on merge using `deploy-prod.yml`.
+- **qa** — Ephemeral QA/staging environment. Created manually after dev passes, deleted after staging passes.
+- **development** — Integration branch. PRs merged here auto-deploy to dev using `deploy-dev.yml`.
 - **feature/fix/*** — Work branches. Always branch from `development`, never from `main`.
 
 **Workflow commands:**
 
 ```bash
-# Create feature branch from development (NOT main)
+# Step 1: Create feature branch from development
 git checkout development
 git pull origin development
 git checkout -b fix/description-of-change
 
-# When ready, create PR targeting DEVELOPMENT
+# Step 2: Push and create PR to development
 git push -u origin fix/description-of-change
 gh pr create --base development  # NOT main!
 
-# Trigger workflows on development branch (CRITICAL!)
-gh workflow run deploy-dev.yml --ref development
+# Step 3: Review & merge to development (auto-triggers deploy-dev.yml)
+# ... review, approve, merge ...
+
+# Step 4: After dev testing passes, create qa branch for staging
+git checkout development
+git pull origin development
+git checkout -b qa
+git push -u origin qa
+# This auto-triggers deploy-staging.yml (ephemeral environment)
+
+# Step 5: After staging testing passes, delete qa and promote to prod
+git push origin --delete qa
+
+# Step 6: Create PR from development to main
+gh pr create --base main --head development
+# This auto-triggers pr-check.yml for validation
+
+# Step 7: Review & merge to main (auto-triggers deploy-prod.yml with approval gate)
+# ... review, approve, merge ...
 ```
+
+**Workflow Triggers:**
+
+| Branch | Event | Workflow | Behavior |
+|---|---|---|---|
+| `development` | Push | `deploy-dev.yml` | Immediate deploy to dev |
+| `qa` | Push | `deploy-staging.yml` | Immediate deploy to staging (ephemeral) |
+| `main` | Push | `deploy-prod.yml` | Immediate deploy to prod (requires environment approval) |
+| PR to dev/main | Open/Update | `pr-check.yml` | Lint, validate, plan (posted as comment) |
+
+**Approval Gates:**
+
+- **Dev → Staging:** Automatic after `deploy-dev.yml` passes (no manual approval needed)
+- **Staging → Prod:** Manual user approval via GitHub UI before merging PR to main
+- **Production Deployment:** Requires GitHub Environment `prod` approval (configured in repo settings)
 
 **PR Review & Merge Process:**
 
-1. **Open PR** → targets `development` (automatically runs `pr-check` workflow)
-2. **Review** → tofu plan is posted as PR comment for infrastructure changes
-3. **Test in CI** → `pr-check` validates, but full deployment testing happens after merge
-4. **Merge to development** → automatically triggers `deploy-dev.yml` (deploys to dev environment)
-5. **Test in dev** → smoke tests run, check health at `https://familyshield-dev.everythingcloud.ca`
-6. **If dev passes** → automatically triggers `deploy-staging.yml` (deploys to staging)
-7. **When ready for production** → manually create new PR: `development` → `main`
-8. **Merge to main** → triggers `deploy-prod.yml` which waits for manual approval in GitHub UI
+1. Create feature branch and PR targeting `development` → `pr-check` runs automatically
+2. Review PR, check `tofu plan` comment and test results
+3. Merge to `development` → `deploy-dev.yml` triggers automatically
+4. Monitor dev deployment at `https://familyshield-dev.everythingcloud.ca`
+5. Once dev passes: create `qa` branch from `development` → `deploy-staging.yml` triggers
+6. Monitor staging deployment at `https://familyshield-staging.everythingcloud.ca`
+7. After staging passes: delete `qa` branch and create PR `development` → `main`
+8. Review final PR, check `tofu plan` for prod infrastructure changes
+9. Merge to `main` → `deploy-prod.yml` triggers with approval gate in GitHub UI
+
 
 ---
 
@@ -415,7 +463,7 @@ gh workflow run deploy-dev.yml --ref development
 - **Python:** black formatter, flake8 lint, type hints required, docstrings on all classes
 - **Terraform/OpenTofu:** `tofu fmt` before commit, tflint clean, all resources tagged
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `iac:`, `docs:`, `chore:`)
-- **PRs:** 
+- **PRs:**
   - Create on feature/fix branch
   - Target `development` (NOT main)
   - Wait for user review before merging
@@ -443,6 +491,7 @@ gh workflow run deploy-dev.yml --ref development
 **Error:** `Authentication error (10000)` when creating Argo Tunnel or Access Applications
 
 **Cause:** The Cloudflare API token must have ALL THREE scopes:
+
 - Zone → DNS → Edit (for CNAME records)
 - Account → Cloudflare Tunnel → Edit (for Argo Tunnel)
 - Account → Access: Apps and Policies → Edit (for Zero Trust apps)
@@ -466,6 +515,7 @@ The "Edit zone DNS" template only grants the first scope — insufficient. Must 
 **Cause:** When `tofu apply` runs with `working_directory: iac/`, var_file paths must be relative to `iac/`, not the repo root.
 
 **Example:**
+
 - ❌ `var_file: iac/environments/dev/terraform.tfvars` → resolves to `iac/iac/environments/dev/` (wrong)
 - ✅ `var_file: environments/dev/terraform.tfvars` → resolves to `iac/environments/dev/` (correct)
 
@@ -480,6 +530,7 @@ When starting a new Claude Code session, just say:
 Claude Code will read this file and know exactly what's done and what's next.
 
 For specific tasks, say things like:
+
 - "Build `apps/api/src/types.ts` — the shared TypeScript types"
 - "Scaffold the Next.js 14 portal in `apps/portal/`"
 - "Build the ntfy alert dispatcher"
