@@ -1,12 +1,12 @@
 # .github/workflows/deploy-dev.yml
-# Triggered automatically on every merge to main
+# Triggered automatically on every push to development
 # Phase 1: Deploys infrastructure (compartments, network, storage only)
-# Phase 2: Will add app deployment once VM is provisioned
+# Phase 2: App deployment via public IP (Phase 1 bootstrap)
 name: Deploy → Dev
 
 on:
   push:
-    branches: [main]
+    branches: [development]
   workflow_dispatch: # Allow manual trigger
 
 permissions:

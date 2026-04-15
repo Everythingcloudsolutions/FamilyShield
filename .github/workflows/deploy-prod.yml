@@ -1,16 +1,14 @@
 # .github/workflows/deploy-prod.yml
-# PRODUCTION DEPLOYMENT — Requires manual approval in GitHub UI
+# PRODUCTION DEPLOYMENT — Triggered on merge to main
 # Go to: Actions → Deploy → Prod → Review deployments → Approve
-# Manual trigger only — never auto-deploys
+# Requires environment approval in GitHub UI
 name: Deploy → Prod
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
-      sha:
-        description: "Git SHA to deploy (leave blank for HEAD of main)"
-        required: false
-        default: ""
       confirm:
         description: "Type DEPLOY to confirm production deployment"
         required: true
