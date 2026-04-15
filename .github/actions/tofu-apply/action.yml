@@ -66,49 +66,12 @@ runs:
         tofu state rm module.cloudflare.cloudflare_tunnel_config.main 2>/dev/null && echo "✅ Removed cloudflare_tunnel_config.main" || true
         tofu state rm module.cloudflare 2>/dev/null && echo "✅ Removed cloudflare module" || true
 
-        # Remove old environment-specific bucket resources if they exist (using single bucket now)
+        # Remove stale bucket resources — bucket is now a data source (bootstrap owns it)
+        tofu state rm module.storage.oci_objectstorage_bucket.tfstate 2>/dev/null && echo "✅ Removed stale bucket resource from state" || true
         tofu state rm module.storage.oci_objectstorage_bucket.backups 2>/dev/null && echo "✅ Removed old backups bucket resource" || true
         tofu state rm module.storage.oci_objectstorage_bucket.app_data 2>/dev/null && echo "✅ Removed old app_data bucket resource" || true
 
         echo "✅ State cleanup complete"
-
-        # Import the existing single tfstate bucket if it exists in OCI but not in state
-        echo ""
-        echo "📋 Attempting to import existing tfstate bucket..."
-        set +e
-
-        BUCKET_NAME="familyshield-tfstate"
-        IMPORT_ID="$OCI_NAMESPACE/$BUCKET_NAME"
-        echo "  ⏳ Importing $BUCKET_NAME (ID: $IMPORT_ID)..."
-
-        # Build var args for import command (same as apply)
-        VAR_ARGS="-var=environment=${{ inputs.environment }}"
-        if [ -n "${{ inputs.var_file }}" ]; then
-          VAR_ARGS="$VAR_ARGS -var-file=${{ inputs.var_file }}"
-        fi
-
-        # Try import with variables - if it fails, check if already in state
-        IMPORT_OUTPUT=$(timeout 90 tofu import -input=false $VAR_ARGS "module.storage.oci_objectstorage_bucket.tfstate" "$IMPORT_ID" 2>&1)
-        IMPORT_EXIT=$?
-
-        if [ $IMPORT_EXIT -eq 0 ]; then
-          echo "     ✅ Imported successfully"
-        elif echo "$IMPORT_OUTPUT" | grep -qE "already exists in state|already managed"; then
-          echo "     ✅ Already in state"
-        elif echo "$IMPORT_OUTPUT" | grep -qE "not found|404"; then
-          echo "     ℹ️  Bucket not in OCI yet (will be created)"
-        else
-          # Import failed for other reason - log it and try state list to diagnose
-          echo "     ⚠️  Import error (checking state):"
-          echo "$IMPORT_OUTPUT"
-          STATE_CHECK=$(tofu state list 2>&1 | grep "module.storage.oci_objectstorage_bucket.tfstate" || echo "not found")
-          if [ "$STATE_CHECK" != "not found" ]; then
-            echo "     ✅ Resource already in state"
-          fi
-        fi
-
-        set -e
-        echo "✅ Import phase complete"
 
     - name: Tofu Refresh (sync state with cloud)
       shell: bash
@@ -162,37 +125,7 @@ runs:
           -var="environment=${{ inputs.environment }}" \
           $VAR_FILE_ARG \
           -auto-approve \
-          -no-color || {
-          # If apply failed, try to import the tfstate bucket and retry
-          echo "ℹ️  First apply attempt failed. Attempting to import tfstate bucket..."
-
-          echo ""
-          set +e  # Disable exit-on-error for imports
-
-          BUCKET_NAME="familyshield-tfstate"
-          IMPORT_ID="$OCI_NAMESPACE/$BUCKET_NAME"
-          echo "  ⏳ Importing $BUCKET_NAME (ID: $IMPORT_ID)..."
-          IMPORT_OUTPUT=$(timeout 90 tofu import -input=false "module.storage.oci_objectstorage_bucket.tfstate" "$IMPORT_ID" 2>&1)
-          IMPORT_EXIT=$?
-          if [ $IMPORT_EXIT -eq 0 ]; then
-            echo "     ✅ Imported successfully"
-          elif echo "$IMPORT_OUTPUT" | grep -qE "already exists in state|Resource already managed by Terraform"; then
-            echo "     ✅ Already in state"
-          else
-            echo "     ⚠️  Import failed (continuing anyway)"
-          fi
-
-          set -e  # Re-enable exit-on-error
-
-          # Retry apply
-          echo ""
-          echo "Retrying apply after import attempt..."
-          tofu apply \
-            -var="environment=${{ inputs.environment }}" \
-            $VAR_FILE_ARG \
-            -auto-approve \
-            -no-color
-        }
+          -no-color
 
         echo "✅ tofu apply complete for ${{ inputs.environment }}"
 
