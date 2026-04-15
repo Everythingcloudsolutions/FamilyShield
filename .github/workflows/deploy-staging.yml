@@ -255,16 +255,18 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" \
-            "cd /opt/familyshield && \
-             echo '$GHCR_TOKEN' | docker login ghcr.io -u '$GHCR_USER' --password-stdin && \
-             docker compose up -d redis && \
-             sleep 5 && \
-             docker compose pull api portal 2>&1 | tail -5 && \
-             docker compose up -d --remove-orphans api portal && \
-             sleep 10 && \
-             docker compose ps && \
-             echo '✅ VM bootstrap complete — api and portal started'"
+            ubuntu@"$VM_IP" bash -s <<ENDSSH
+          set -euo pipefail
+          cd /opt/familyshield
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+          docker compose up -d redis
+          sleep 5
+          docker compose pull api portal 2>&1 | tail -5
+          docker compose up -d --remove-orphans api portal
+          sleep 10
+          docker compose ps
+          echo "✅ VM bootstrap complete — api and portal started"
+          ENDSSH
 
       - name: Write tunnel token to VM and activate cloudflared
         shell: bash
