@@ -206,7 +206,7 @@ jobs:
             exit 1
           fi
           mkdir -p ~/.ssh
-          printf '%s' "$SSH_KEY" > ~/.ssh/familyshield
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
 
           ssh -i ~/.ssh/familyshield \
