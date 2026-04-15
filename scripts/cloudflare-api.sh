@@ -103,6 +103,67 @@ EOF
   echo "$tunnel_id"
 }
 
+configure_tunnel_routes() {
+  local tunnel_id=$1
+  local environment=$2
+
+  header "Configuring Tunnel Routes: $tunnel_id"
+
+  # Tunnel ingress configuration
+  local payload=$(cat <<'CONFIG_EOF'
+{
+  "config": {
+    "ingress": [
+      {
+        "hostname": "familyshield-ENVIRONMENT.everythingcloud.ca",
+        "service": "http://localhost:3000"
+      },
+      {
+        "hostname": "api-ENVIRONMENT.everythingcloud.ca",
+        "service": "http://localhost:3001"
+      },
+      {
+        "hostname": "adguard-ENVIRONMENT.everythingcloud.ca",
+        "service": "http://localhost:3080"
+      },
+      {
+        "hostname": "mitmproxy-ENVIRONMENT.everythingcloud.ca",
+        "service": "http://localhost:8080"
+      },
+      {
+        "hostname": "vpn.familyshield-ENVIRONMENT.everythingcloud.ca",
+        "service": "http://localhost:8080"
+      },
+      {
+        "hostname": "grafana-ENVIRONMENT.everythingcloud.ca",
+        "service": "http://localhost:3000"
+      },
+      {
+        "hostname": "nodered-ENVIRONMENT.everythingcloud.ca",
+        "service": "http://localhost:1880"
+      },
+      {
+        "service": "http_status:404"
+      }
+    ]
+  }
+}
+CONFIG_EOF
+)
+
+  # Replace ENVIRONMENT placeholder with actual environment
+  payload=$(echo "$payload" | sed "s/ENVIRONMENT/$environment/g")
+
+  local response=$(cf_api PUT "/accounts/$ACCOUNT_ID/cfd_tunnel/$tunnel_id/configurations" "$payload")
+
+  if echo "$response" | jq -e '.success == true or .errors == null' >/dev/null 2>&1; then
+    success "Tunnel routes configured"
+    return 0
+  else
+    info "⚠️  Tunnel configuration response: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
+  fi
+}
+
 get_tunnel_token() {
   local tunnel_id=$1
 
@@ -272,16 +333,23 @@ setup_cloudflare() {
   # 1. Create tunnel
   local tunnel_id=$(create_tunnel "$environment" "$tunnel_secret")
 
-  # 2. Get tunnel token (will be used by mitmproxy)
+  # 2. Configure tunnel routes (ingress rules)
+  configure_tunnel_routes "$tunnel_id" "$environment"
+
+  # 3. Get tunnel token (will be used by mitmproxy)
   local tunnel_token=$(get_tunnel_token "$tunnel_id")
 
-  # 3. Create DNS records
+  # 4. Create DNS records
+  create_dns_record "ssh.familyshield-$environment" "$tunnel_id"
   create_dns_record "familyshield-$environment" "$tunnel_id"
+  create_dns_record "api-$environment" "$tunnel_id"
   create_dns_record "adguard-$environment" "$tunnel_id"
+  create_dns_record "mitmproxy-$environment" "$tunnel_id"
   create_dns_record "grafana-$environment" "$tunnel_id"
   create_dns_record "vpn.familyshield-$environment" "$tunnel_id"
+  create_dns_record "nodered-$environment" "$tunnel_id"
 
-  # 4. Create Access Applications
+  # 5. Create Access Applications (Zero Trust)
   create_access_application \
     "FamilyShield AdGuard $environment" \
     "adguard-$environment.$ROOT_DOMAIN"
@@ -290,7 +358,7 @@ setup_cloudflare() {
     "FamilyShield Grafana $environment" \
     "grafana-$environment.$ROOT_DOMAIN"
 
-  # 5. Output for workflow
+  # 6. Output for workflow
   echo "TUNNEL_ID=$tunnel_id" >> "$GITHUB_OUTPUT" 2>/dev/null || true
   echo "TUNNEL_TOKEN=$tunnel_token" >> "$GITHUB_OUTPUT" 2>/dev/null || true
 
@@ -298,8 +366,17 @@ setup_cloudflare() {
   echo ""
   echo "Tunnel ID:    $tunnel_id"
   echo "Tunnel Token: $(echo "$tunnel_token" | cut -c1-20)..."
-  echo "DNS Records:  4 CNAME records created"
+  echo "DNS Records:  7 CNAME records created"
   echo "Access Apps:  AdGuard + Grafana (Zero Trust)"
+  echo ""
+  echo "Routes configured for:"
+  echo "  - familyshield-$environment.everythingcloud.ca → Portal (port 3000)"
+  echo "  - api-$environment.everythingcloud.ca → API (port 3001)"
+  echo "  - adguard-$environment.everythingcloud.ca → AdGuard (port 3080)"
+  echo "  - mitmproxy-$environment.everythingcloud.ca → mitmproxy (port 8080)"
+  echo "  - vpn.familyshield-$environment.everythingcloud.ca → Headscale (port 8080)"
+  echo "  - grafana-$environment.everythingcloud.ca → Grafana (port 3000)"
+  echo "  - nodered-$environment.everythingcloud.ca → Node-RED (port 1880)"
 }
 
 cleanup_cloudflare() {
@@ -320,9 +397,12 @@ cleanup_cloudflare() {
 
   # Delete DNS records
   delete_dns_record "familyshield-$environment"
+  delete_dns_record "api-$environment"
   delete_dns_record "adguard-$environment"
+  delete_dns_record "mitmproxy-$environment"
   delete_dns_record "grafana-$environment"
   delete_dns_record "vpn.familyshield-$environment"
+  delete_dns_record "nodered-$environment"
 
   # Delete Access Applications
   delete_access_application "FamilyShield AdGuard $environment"

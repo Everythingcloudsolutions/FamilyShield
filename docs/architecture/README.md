@@ -59,6 +59,7 @@ Each ADR captures *what* was decided, *why*, and *what was rejected*.
 **Context:** FamilyShield uses three environments (dev, staging, prod) but only one Always Free tier (4 OCPU / 24GB RAM max). How to allocate resources fairly while keeping staging ephemeral for cost optimization?
 
 **Rejected Options:**
+
 - Single shared VM for all three environments (risk: dev crashes take out prod)
 - Single prod-only VM, no dev/staging (risk: cannot test safely before prod)
 - Lease additional VMs (violates cost constraint)
@@ -72,11 +73,13 @@ Each ADR captures *what* was decided, *why*, and *what was rejected*.
 | **Prod** | 2 OCPU / 6GB RAM | Always on | Live families, higher throughput |
 
 **Resource math:**
+
 - Baseline (dev + prod always on): 3 OCPU / 12GB RAM
 - Staging when active: +1 OCPU / 6GB RAM = 4 OCPU / 18GB total (within 4C/24GB Always Free)
 - Staging when destroyed: 3 OCPU / 12GB (frees 1C/6GB for growth/buffer)
 
 **Enforcement:**
+
 - Bootstrap script (`scripts/bootstrap-oci.sh`) creates three compartments: `familyshield-dev`, `familyshield-staging`, `familyshield-prod`
 - Environment tfvars files (`iac/environments/{dev,staging,prod}/terraform.tfvars`) specify OCPU/memory per environment
 - IaC module sequencing ensures compartments exist before resources are created
@@ -419,6 +422,88 @@ flowchart TB
 - **Stage 1 (IaC):** Creates OCI infrastructure independently — no state conflicts, runs first
 - **Stage 2 (Cloudflare):** Triggered after IaC succeeds — creates tunnel, DNS, access apps via API (not Terraform)
 - **Stage 3 (App):** Parallel Docker build + deployment after Stage 2 completes
+
+---
+
+## Cloudflare Tunnel Configuration
+
+FamilyShield uses Cloudflare Tunnel to expose backend services without opening inbound ports on the OCI VM. The tunnel creates an outbound-only connection to Cloudflare, eliminating attack surface and simplifying firewall management.
+
+### Tunnel Ingress Routes
+
+Each environment has a separate tunnel with the following routes:
+
+| Hostname | Service | Port | Purpose |
+|---|---|---|---|
+| `familyshield-{env}.everythingcloud.ca` | Portal | 3000 | Parent dashboard (Next.js) |
+| `api-{env}.everythingcloud.ca` | API | 3001 | Content enrichment worker (Node.js) |
+| `adguard-{env}.everythingcloud.ca` | AdGuard Home | 3080 | DNS management UI (Zero Trust access) |
+| `mitmproxy-{env}.everythingcloud.ca` | mitmproxy | 8080 | SSL proxy inspection UI |
+| `vpn.familyshield-{env}.everythingcloud.ca` | Headscale | 8080 | VPN control plane |
+| `grafana-{env}.everythingcloud.ca` | Grafana | 3000 | Metrics dashboards (Zero Trust access) |
+| `nodered-{env}.everythingcloud.ca` | Node-RED | 1880 | Automation/rules engine |
+
+**Note:** Zero Trust access policies are applied to admin UIs (`adguard-*`, `grafana-*`) requiring email-based authentication. Public-facing services (Portal, API) bypass Zero Trust.
+
+### Deployment Sequence
+
+1. **IaC Phase (deploy-dev.yml)**
+   - OCI VM is created in `familyshield-dev` compartment
+   - `tunnel_secret` is generated as a random password by Terraform
+   - VM is configured with `cloud-init` script
+
+2. **Tunnel Phase (deploy-cloudflare.yml — auto-triggered)**
+   - Retrieves `tunnel_secret` from IaC outputs (Terraform state)
+   - Calls Cloudflare API to create tunnel:
+     - Tunnel name: `familyshield-{env}`
+     - Tunnel secret (base64 encoded)
+     - Ingress routes (as shown above)
+   - Creates DNS CNAME records pointing to tunnel
+   - Creates Access Application policies for admin UIs
+   - Outputs tunnel credentials for workflow use
+
+3. **Health Check (deploy-dev.yml — waits for tunnel)**
+   - Polls Cloudflare API to verify tunnel exists
+   - Verifies tunnel status is ready
+   - Fails fast if tunnel creation takes >5 minutes
+
+4. **App Deployment (deploy-app-dev.yml)**
+   - Pulls Docker images from GHCR
+   - SSH into VM and deploys `docker-compose` stack
+   - Tunnel daemon (`cloudflared`) automatically connects using tunnel secret
+   - All services start listening on their ports (3000, 3001, 3080, etc.)
+
+### Cloudflare API Integration
+
+The `scripts/cloudflare-api.sh` script is responsible for all Cloudflare operations:
+
+```bash
+# Setup all Cloudflare resources for an environment
+bash scripts/cloudflare-api.sh setup dev "$tunnel_secret" "admin@example.com"
+
+# Cleanup (removes tunnel, DNS, access apps)
+bash scripts/cloudflare-api.sh cleanup dev
+```
+
+**Required secrets (GitHub):**
+
+- `CLOUDFLARE_API_TOKEN` — Custom token with scopes: DNS Edit, Tunnel Edit, Access Apps Edit
+- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account ID
+- `CLOUDFLARE_ZONE_ID` — Cloudflare zone ID for `everythingcloud.ca`
+
+### Why Not Terraform for Cloudflare?
+
+Terraform/OpenTofu struggles with Cloudflare state management when:
+
+- Resources are created outside Terraform (e.g., manual Cloudflare dashboard)
+- State gets out of sync with live resources
+- Re-running `tofu apply` tries to recreate already-existing resources (409 conflicts)
+
+**Solution:** Cloudflare resources are managed via API (`deploy-cloudflare.yml` workflow) entirely separately from IaC. This decoupling allows:
+
+- Independent updates without triggering full IaC rebuilds
+- Easy cleanup via API without state conflicts
+- Idempotent operations (rerunning setup skips existing resources)
 
 ---
 
