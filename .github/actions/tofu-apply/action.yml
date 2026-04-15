@@ -121,13 +121,73 @@ runs:
           VAR_FILE_ARG="-var-file=${{ inputs.var_file }}"
         fi
 
-        tofu apply \
-          -var="environment=${{ inputs.environment }}" \
-          $VAR_FILE_ARG \
-          -auto-approve \
-          -no-color
+        VAR_ARGS="-var=environment=${{ inputs.environment }} $VAR_FILE_ARG"
 
-        echo "✅ tofu apply complete for ${{ inputs.environment }}"
+        # First pass — deploy everything
+        set +e
+        tofu apply $VAR_ARGS -auto-approve -no-color 2>&1 | tee /tmp/apply_out.txt
+        APPLY_EXIT=${PIPESTATUS[0]}
+        set -e
+
+        if [ $APPLY_EXIT -eq 0 ]; then
+          echo "✅ tofu apply complete for ${{ inputs.environment }}"
+          exit 0
+        fi
+
+        # ── Capacity retry ────────────────────────────────────────────────────
+        # OCI Always Free ARM instances are in high demand. When capacity is
+        # unavailable the API returns 500-InternalError "Out of host capacity".
+        # Retry only the compute module every 5 minutes for up to 4 hours,
+        # mirroring the approach in github.com/sam-bee/oracle-cloud-repeater.
+        # Any other failure exits immediately without retrying.
+        # ──────────────────────────────────────────────────────────────────────
+        if grep -q "Out of host capacity" /tmp/apply_out.txt; then
+          echo ""
+          echo "⚠️  OCI ARM capacity unavailable. Will retry compute every 5 min for up to 4 hours."
+          echo "   (Approach: github.com/sam-bee/oracle-cloud-repeater — adapted for GitHub Actions)"
+          echo ""
+
+          MAX_ATTEMPTS=48   # 48 × 5 min = 4 hours
+          INTERVAL=300      # seconds
+
+          for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "🔄 Compute retry $attempt / $MAX_ATTEMPTS  ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+            set +e
+            tofu apply -target=module.compute.oci_core_instance.familyshield \
+              $VAR_ARGS -auto-approve -no-color 2>&1 | tee /tmp/retry_out.txt
+            RETRY_EXIT=${PIPESTATUS[0]}
+            set -e
+
+            if [ $RETRY_EXIT -eq 0 ]; then
+              echo ""
+              echo "✅ VM provisioned on attempt $attempt — tofu apply complete for ${{ inputs.environment }}"
+              exit 0
+            fi
+
+            if ! grep -q "Out of host capacity" /tmp/retry_out.txt; then
+              echo "❌ Non-capacity error on retry $attempt — not retrying further:"
+              cat /tmp/retry_out.txt
+              exit 1
+            fi
+
+            if [ $attempt -lt $MAX_ATTEMPTS ]; then
+              echo "   Still no capacity. Next attempt in 5 minutes..."
+              sleep $INTERVAL
+            fi
+          done
+
+          echo "❌ OCI ARM capacity unavailable after 4 hours (${MAX_ATTEMPTS} attempts)."
+          echo "   Try re-running the workflow during off-peak hours (late night UTC)."
+          exit 1
+        fi
+
+        # Non-capacity failure — surface the error and exit
+        echo "❌ tofu apply failed (non-capacity error):"
+        cat /tmp/apply_out.txt
+        exit 1
 
     - name: Capture outputs
       shell: bash

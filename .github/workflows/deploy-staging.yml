@@ -26,6 +26,7 @@ jobs:
   deploy-infra-staging:
     name: "IaC → staging"
     runs-on: ubuntu-latest
+    timeout-minutes: 360  # up to 4h capacity retry loop + buffer
     needs: gate
     environment:
       name: staging

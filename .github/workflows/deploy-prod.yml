@@ -44,6 +44,7 @@ jobs:
   deploy-infra-prod:
     name: "IaC → prod"
     runs-on: ubuntu-latest
+    timeout-minutes: 360  # up to 4h capacity retry loop + buffer
     needs: safety-check
     environment:
       name: prod # ← GitHub requires approval here
