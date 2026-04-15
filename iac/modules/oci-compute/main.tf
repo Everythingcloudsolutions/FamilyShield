@@ -29,7 +29,7 @@ resource "oci_core_instance" "familyshield" {
   metadata = var.ssh_public_key != "" ? {
     ssh_authorized_keys = var.ssh_public_key
     user_data           = base64encode(var.cloud_init_script)
-  } : {
+    } : {
     user_data = base64encode(var.cloud_init_script)
   }
 
@@ -62,7 +62,7 @@ data "oci_core_images" "ubuntu_arm" {
     values = ["22.04"]
   }
 
-  sort_by = "TIMECREATED"  # Get the most recent image
+  sort_by = "TIMECREATED" # Get the most recent image
 }
 
 # Use provided image_id, or dynamically fetched Ubuntu image as fallback
@@ -71,6 +71,6 @@ locals {
   ubuntu_images_count = length(data.oci_core_images.ubuntu_arm.images)
   dynamic_image_id    = local.ubuntu_images_count > 0 ? data.oci_core_images.ubuntu_arm.images[0].id : ""
   # Fallback to the known Ubuntu 22.04 ARM image for ca-toronto-1
-  fallback_image_id   = "ocid1.image.oc1.ca-toronto-1.aaaaaaaawzbmdqqvrcLW4cvhegvnbbxtoday4bxlkdpqeowc5kcbrhplit2a"
-  resolved_image_id   = var.image_id != "" ? var.image_id : (local.dynamic_image_id != "" ? local.dynamic_image_id : local.fallback_image_id)
+  fallback_image_id = "ocid1.image.oc1.ca-toronto-1.aaaaaaaawzbmdqqvrcLW4cvhegvnbbxtoday4bxlkdpqeowc5kcbrhplit2a"
+  resolved_image_id = var.image_id != "" ? var.image_id : (local.dynamic_image_id != "" ? local.dynamic_image_id : local.fallback_image_id)
 }

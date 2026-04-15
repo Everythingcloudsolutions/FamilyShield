@@ -36,7 +36,7 @@ variable "memory_in_gbs" {
 
 variable "image_id" {
   type        = string
-  default     = ""  # If empty, dynamically query for Ubuntu 22.04 ARM image
+  default     = "" # If empty, dynamically query for Ubuntu 22.04 ARM image
   description = "OCI image OCID. If empty, automatically queries for Ubuntu 22.04 ARM image compatible with instance shape."
 }
 
