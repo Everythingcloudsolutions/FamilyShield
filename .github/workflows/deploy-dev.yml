@@ -12,7 +12,11 @@ on:
 permissions:
   contents: read
   id-token: write
-  packages: write # For pushing Docker images to GHCR
+  packages: write
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
 
 jobs:
   deploy-infra-dev:

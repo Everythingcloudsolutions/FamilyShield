@@ -13,6 +13,10 @@ permissions:
   id-token: write
   packages: write
 
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
+
 jobs:
   deploy-infra-staging:
     name: "IaC → staging"

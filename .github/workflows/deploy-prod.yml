@@ -18,6 +18,11 @@ permissions:
   id-token: write
   packages: write
 
+# Queue prod deploys — never cancel a production deployment mid-flight
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
 jobs:
   safety-check:
     name: Pre-deploy safety check
