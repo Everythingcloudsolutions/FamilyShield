@@ -189,22 +189,31 @@ jobs:
 
       - name: Deploy updated containers to dev VM
         uses: appleboy/ssh-action@v1
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         with:
           host: ${{ needs.deploy-infra-dev.outputs.vm_ip }}
           username: ubuntu
           key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          envs: GHCR_TOKEN,GHCR_USER
           script: |
+            set -euo pipefail
             # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
             sudo cloud-init status --wait 2>/dev/null || true
             cd /opt/familyshield
-            # Pull latest images
+            # Authenticate with GHCR to pull private images
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            # Ensure Redis is running before API starts (API crashes if Redis unreachable)
+            docker compose up -d redis
+            sleep 5
+            # Pull and restart API + portal
             docker compose pull api portal
-            # Restart updated services with zero-downtime
-            docker compose up -d --no-deps --remove-orphans api portal
+            docker compose up -d --remove-orphans api portal
             # Health check
             sleep 10
             docker compose ps
-            echo "✅ Phase 1 deploy complete (apps now available via Cloudflare Tunnel)"
+            echo "✅ Deploy complete (apps now available via Cloudflare Tunnel)"
 
   setup-cloudflare-dev:
     name: "Cloudflare setup — dev"
@@ -280,6 +289,8 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
@@ -319,13 +330,18 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" \
-            "cd /opt/familyshield && \
-             docker compose pull api portal 2>&1 | tail -5 && \
-             docker compose up -d --remove-orphans api portal && \
-             sleep 10 && \
-             docker compose ps && \
-             echo '✅ VM bootstrap complete — api and portal started'"
+            ubuntu@"$VM_IP" bash -s <<ENDSSH
+          set -euo pipefail
+          cd /opt/familyshield
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+          docker compose up -d redis
+          sleep 5
+          docker compose pull api portal
+          docker compose up -d --remove-orphans api portal
+          sleep 10
+          docker compose ps
+          echo "✅ VM bootstrap complete — api and portal started"
+          ENDSSH
 
       - name: Write tunnel token to VM and activate cloudflared
         shell: bash
