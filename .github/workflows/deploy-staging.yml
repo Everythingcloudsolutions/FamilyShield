@@ -13,7 +13,6 @@ permissions:
   contents: read
   id-token: write
   packages: write
-  packages: write
 
 jobs:
   gate:

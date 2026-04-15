@@ -200,21 +200,118 @@ jobs:
             docker compose ps
             echo "✅ Phase 1 deploy complete (apps now available via Cloudflare Tunnel)"
 
-  call-cloudflare:
-    name: "Deploy → Cloudflare (dev)"
+  setup-cloudflare-dev:
+    name: "Cloudflare setup — dev"
+    runs-on: ubuntu-latest
     needs: deploy-app-dev
     if: needs.deploy-app-dev.result != 'skipped'
-    uses: ./.github/workflows/deploy-cloudflare.yml
-    with:
-      environment: dev
-      action: setup
-    secrets: inherit
+    environment:
+      name: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: OCI Login
+        uses: ./.github/actions/oci-login
+        with:
+          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.6.x"
+
+      - name: Get tunnel secret from IaC state
+        id: iac
+        working-directory: iac
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+        run: |
+          tofu init \
+            -backend-config="bucket=familyshield-tfstate" \
+            -backend-config="key=dev/terraform.tfstate" \
+            -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
+            -backend-config="region=ca-toronto-1" \
+            -backend-config="skip_region_validation=true" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="use_path_style=true" \
+            -reconfigure
+
+          TUNNEL_SECRET=$(tofu output -raw tunnel_secret 2>/dev/null || echo "")
+          if [ -z "$TUNNEL_SECRET" ]; then
+            echo "❌ Failed to get tunnel_secret — IaC not yet provisioned"
+            exit 1
+          fi
+          echo "::add-mask::$TUNNEL_SECRET"
+          echo "tunnel_secret=$TUNNEL_SECRET" >> $GITHUB_OUTPUT
+
+      - name: Setup Cloudflare (tunnel, DNS, access)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          bash scripts/cloudflare-api.sh setup dev \
+            "${{ steps.iac.outputs.tunnel_secret }}" \
+            "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+
+      - name: Wait for tunnel SSH (up to 5 min)
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+          TUNNEL_HOST="ssh.familyshield-dev.everythingcloud.ca"
+          echo "Waiting for tunnel SSH: $TUNNEL_HOST"
+          for attempt in {1..30}; do
+            if timeout 10 ssh -i ~/.ssh/familyshield \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=8 \
+              ubuntu@"$TUNNEL_HOST" "true" 2>/dev/null; then
+              echo "✅ Tunnel SSH available (attempt $attempt)"
+              break
+            fi
+            if [ $attempt -eq 30 ]; then
+              echo "❌ Tunnel SSH not available after 5 minutes"
+              exit 1
+            fi
+            echo "   Attempt $attempt/30 — waiting 10s..."
+            sleep 10
+          done
+
+      - name: Redeploy and verify via tunnel SSH
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          TUNNEL_HOST="ssh.familyshield-dev.everythingcloud.ca"
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=10 \
+            ubuntu@"$TUNNEL_HOST" \
+            "cd /opt/familyshield && \
+             echo '$GHCR_TOKEN' | docker login ghcr.io -u github --password-stdin 2>/dev/null && \
+             docker compose pull api portal 2>/dev/null || true && \
+             docker compose up -d --no-deps --remove-orphans api portal && \
+             sleep 8 && docker compose ps && \
+             uname -a && echo '✅ All running via Cloudflare Tunnel (no public IP)'"
 
   smoke-test:
     name: "Smoke test — dev (Phase 2)"
     runs-on: ubuntu-latest
-    needs: call-cloudflare
-    if: needs.call-cloudflare.result != 'skipped'
+    needs: setup-cloudflare-dev
+    if: needs.setup-cloudflare-dev.result != 'skipped'
     steps:
       - uses: actions/checkout@v4
 

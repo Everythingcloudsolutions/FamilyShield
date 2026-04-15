@@ -5,17 +5,6 @@
 name: Deploy → Cloudflare
 
 on:
-  workflow_call:
-    inputs:
-      environment:
-        type: string
-        required: true
-        description: "Target environment: dev | staging | prod"
-      action:
-        type: string
-        required: false
-        default: "setup"
-        description: "Action: setup | cleanup"
   workflow_dispatch:
     inputs:
       environment:
@@ -39,12 +28,9 @@ jobs:
   gate:
     name: Check IaC deployment
     runs-on: ubuntu-latest
-    if: >
-      github.event_name == 'workflow_call' ||
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch'
     steps:
-      - run: echo "✅ Proceeding with Cloudflare setup (trigger: ${{ github.event_name }})"
+      - run: echo "✅ Manual trigger — proceeding with Cloudflare setup"
 
   # ── Determine Environment ────────────────────────────────────────────────
   determine-env:
@@ -56,12 +42,7 @@ jobs:
     steps:
       - id: set-env
         run: |
-          # inputs.environment works for both workflow_call and workflow_dispatch
-          ENV="${{ inputs.environment }}"
-          if [ -z "$ENV" ]; then
-            ENV="dev"
-          fi
-          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
 
   # ── Get IaC Outputs ──────────────────────────────────────────────────────
   get-iac-outputs:
@@ -128,12 +109,7 @@ jobs:
       - name: Determine action
         id: action
         run: |
-          # inputs.action works for both workflow_call and workflow_dispatch
-          ACTION="${{ inputs.action }}"
-          if [ -z "$ACTION" ]; then
-            ACTION="setup"
-          fi
-          echo "action=$ACTION" >> $GITHUB_OUTPUT
+          echo "action=${{ github.event.inputs.action }}" >> $GITHUB_OUTPUT
 
       - name: Setup Cloudflare
         if: steps.action.outputs.action == 'setup'
