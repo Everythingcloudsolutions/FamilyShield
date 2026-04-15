@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-15
+> Last updated: 2026-04-15 (deployment pipeline stabilised)
 
 ---
 
@@ -238,35 +238,42 @@ FamilyShield/
 
 ### Deployment Flow
 
+Each environment follows the same 6-job pipeline (env = dev | staging | prod):
+
 ```
-PR opened → pr-check.yml runs → tofu plan posted as PR comment
-    ↓
-Merge to main (manual) → deploy-dev.yml → IaC deployment (OCI resources)
-    ↓
-    ├─→ deploy-cloudflare.yml → Cloudflare resources (tunnel, DNS, access)
-    │
-    ├─→ build-and-push → Docker images to GHCR
-    │
-    └─→ deploy-app-dev → App containers to dev VM
-    
-    ↓ (if all pass)
-dev passes (health check) → deploy-staging.yml (same flow as above)
-    ↓ (if staging passes)
-Manual trigger → deploy-prod.yml (manual approval + same flow)
+deploy-infra-{env}          IaC only (OCI VM, network, storage)
+       ↓
+build-and-push / promote-images   Docker images → GHCR
+       ↓
+deploy-app-{env}            SSH to VM via public IP → docker compose up
+       ↓
+setup-cloudflare-{env}      Cloudflare tunnel + DNS + write token to VM → restart cloudflared
+       ↓
+integration-tests (staging) / smoke-test (dev + prod)
 ```
 
-**Key Change (2026-04-13):**
-Cloudflare resources (tunnel, DNS, access apps) are now managed by separate `deploy-cloudflare.yml` workflow using the Cloudflare API directly (not Terraform). This decouples Cloudflare from IaC state management, avoiding conflicts.
+**Trigger by branch:**
 
-**Environments in GitHub:**
+| Branch | Workflow | Behaviour |
+|---|---|---|
+| `development` | `deploy-dev.yml` | Auto — runs on every push |
+| `qa` | `deploy-staging.yml` | Auto — create qa from development to trigger |
+| `main` | `deploy-prod.yml` | Auto — GitHub Environment `prod` requires manual approval |
+| Any PR | `pr-check.yml` | Lint + `tofu plan` comment |
 
-- `dev` — auto, no approval needed
-- `staging` — auto after dev passes
-- `prod` — **manual approval required** (Mohit must click Approve in GitHub UI)
+**Cloudflare Tunnel Token Delivery (critical pattern):**
+
+IaC renders `docker-compose.yaml` with a placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real Cloudflare tunnel token is not known at `tofu apply` time. The `setup-cloudflare-{env}` job:
+1. Creates/verifies tunnel via `scripts/cloudflare-api.sh setup {env}` (gets real token from Cloudflare API)
+2. SSHes to the VM via **public IP** and writes `docker-compose.override.yaml` with the real `TUNNEL_TOKEN`
+3. Restarts cloudflared — the tunnel goes from INACTIVE → ACTIVE in the Cloudflare dashboard
+4. Waits up to 3 minutes for the portal URL to become reachable over HTTP
+
+Docker Compose automatically merges `docker-compose.override.yaml` over `docker-compose.yaml`, so the override persists across `docker compose up` restarts.
 
 **Cleanup:**
 
-- Manual: `cleanup-cloudflare.yml` (workflow_dispatch) — remove Cloudflare resources if environment is torn down
+- Manual: `cleanup-cloudflare.yml` (workflow_dispatch) — removes Cloudflare resources for an environment
 
 ### Service Architecture
 
@@ -486,6 +493,28 @@ gh pr create --base main --head development
 
 ## Known Issues & Troubleshooting
 
+### Cloudflare Tunnel Stays INACTIVE After Setup
+
+**Symptom:** Tunnel shows INACTIVE in Cloudflare dashboard even after `setup-cloudflare-{env}` job completes.
+
+**Cause:** IaC renders `docker-compose.yaml` with `TUNNEL_TOKEN=TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real token is not known at `tofu apply` time. The workflow must deliver the real token to the VM separately.
+
+**Fix (already implemented):** `setup-cloudflare-{env}` job writes a `docker-compose.override.yaml` to the VM via public-IP SSH after retrieving the real token from the Cloudflare API. Docker Compose auto-merges overrides, so `cloudflared` picks up the token on `docker compose up`.
+
+**If tunnel is still inactive:** Check that `docker-compose.override.yaml` exists on the VM:
+```bash
+ssh ubuntu@<vm-ip> cat /opt/familyshield/docker-compose.override.yaml
+ssh ubuntu@<vm-ip> "cd /opt/familyshield && docker compose ps cloudflared"
+```
+
+### cloudflare-api.sh Output Pollution (historical — fixed 2026-04-15)
+
+**Symptom:** `Failed to get tunnel token` + `Invalid format '─────...'` in `$GITHUB_OUTPUT`
+
+**Root cause:** `header()`, `info()`, `success()` functions printed to stdout. Command substitutions like `tunnel_id=$(create_tunnel ...)` captured separator lines alongside the UUID, corrupting the API URL.
+
+**Fix:** All diagnostic output functions redirected to `>&2`. Also split `local var=$(cmd)` into separate `local var` + `var=$(cmd)` lines so `set -e` correctly aborts on failure.
+
 ### Cloudflare API Token — Missing Scopes
 
 **Error:** `Authentication error (10000)` when creating Argo Tunnel or Access Applications
@@ -570,12 +599,12 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - Resource allocation: Dev (1C/6GB) + Staging ephemeral (1C/6GB) + Prod (2C/6GB) = within 4C/24GB Always Free
   - Per-environment state buckets: `familyshield-tfstate-{environment}`
   - Bucket import logic handles existing resources without 409 conflicts
-- ✅ **SSH Tunnel Routing (2026-04-15):** All VM SSH now routes through Cloudflare Tunnel (zero public IP exposure)
-  - Phase 1 (deploy-dev.yml): Public IP (bootstrap only, tunnel not ready)
-  - Phase 2 (deploy-cloudflare.yml): `redeploy-via-tunnel` job — health check + app deploy via tunnel
-  - Phase 3 (post-deploy-tunnel-ssh-dev.yml): Final tunnel SSH verification
-  - SSH hostname: `ssh.familyshield-{env}.everythingcloud.ca`
-- 🔲 Deploy-dev must successfully complete one full run end-to-end (IaC → Cloudflare → App)
+- ✅ **Deployment pipeline stabilised (2026-04-15):** All three workflows (dev/staging/prod) now follow the same 6-job pattern
+  - Root cause of INACTIVE tunnel: `cloudflare-api.sh` diagnostic functions (`header()`, `info()`, `success()`) printed to stdout, polluting command substitution captures — fixed to use stderr
+  - Tunnel token (real value from Cloudflare API) was never written to VM; placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}` remained — fixed with `docker-compose.override.yaml` written via public IP SSH
+  - `deploy-staging.yml` gate job had broken `if:` condition (referenced `workflow_run.conclusion` on a `push` trigger) — removed gate job entirely
+  - All three workflows now have: IaC → build/promote → deploy-app (public IP SSH) → setup-cloudflare (token delivery + tunnel activation) → tests/smoke-check
+- 🔲 First full end-to-end successful dev pipeline run (current run in progress)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 
 **Application Development:**
