@@ -3,7 +3,7 @@
 > **Who this is for:** Anyone setting up FamilyShield for the first time, including people with no prior Oracle Cloud experience.
 > **Time needed:** About 2 hours the first time.
 > **Cost:** $0 CAD/month — this guide uses Always Free tiers throughout.
-> **Last updated:** 2026-04-05
+> **Last updated:** 2026-04-14 — Added Step 7 compartment creation to bootstrap
 
 ---
 
@@ -343,17 +343,25 @@ Anthropic is only used when Groq is unavailable (rare).
 
 ---
 
-## Part 7 — Run the Bootstrap Script
+## Part 7 — Run the Bootstrap Script (11 Steps)
 
 You now have everything needed to run the bootstrap script. This script will:
 
-- Verify OCI CLI is working
-- Create a dedicated IAM user for GitHub Actions (`familyshield-github-actions`)
-- Generate an API key pair for that user and upload the public key to OCI
-- Create the Terraform state storage bucket (`familyshield-tfstate`)
-- Find the correct Ubuntu 22.04 ARM64 image OCID for Toronto
-- Generate an SSH key pair for VM access
-- Print all the GitHub Secret values you need
+1. Verify OCI CLI is working
+2. Optional: Enable Cloud Guard security monitoring
+3. Create a dedicated IAM user for GitHub Actions (`familyshield-github-actions`)
+4. Generate an API key pair for that user and upload the public key to OCI
+5. Create a dynamic group for GitHub Actions OIDC identities
+6. Grant bootstrap IAM policy to the GitHub Actions user (grants tenancy-level permissions)
+7. **Create three environment compartments** (`familyshield-dev`, `familyshield-staging`, `familyshield-prod`) — **REQUIRED by IaC**
+8. Create the Terraform state storage bucket — **single bucket `familyshield-tfstate` with environment-specific prefixes** (`dev/`, `staging/`, `prod/`)
+9. Find the correct Ubuntu 22.04 ARM64 image for Toronto (automatic — IaC queries dynamically)
+10. Generate an SSH key pair for VM access
+11. Print all the GitHub Secret values you need
+
+The compartments created in **Step 7 are critical** — the IaC (Terraform/OpenTofu) queries for these compartments and fails with a clear error if they don't exist.
+
+**Note on Step 9:** The script finds the Ubuntu 22.04 ARM image OCID but you no longer need to manually update it in the code. The IaC now queries for the image dynamically based on region and shape, so the OCID is never hardcoded. The bootstrap output is informational only.
 
 Open **Git Bash**, navigate to the repo root, and run:
 
@@ -388,6 +396,37 @@ Add these as GitHub Repository Secrets:
 
 ---
 
+## Part 7.1 — Generate AWS Credentials for Terraform Remote State
+
+The Terraform state (a record of all deployed resources) needs to be stored in OCI Object Storage and persist across GitHub Actions workflow runs. To do this securely, we generate AWS-style credentials for the GitHub Actions user.
+
+Open **Git Bash** and run:
+
+```bash
+# Replace <OCI_USER_OCID> with the OCI_USER_OCID from the bootstrap output above
+oci iam customer-secret-key create \
+  --user-id <OCI_USER_OCID> \
+  --display-name "familyshield-github-terraform" \
+  --query 'data.{access_key: key, secret_key: secret}' \
+  --output table
+```
+
+You will see output like this:
+
+```
++----------------------+----------------------------------------+
+| access_key           | secret_key                             |
++----------------------+----------------------------------------+
+| 1a2b3c4d5e6f7g8h9i0j | 1a2b3c4d5e6f7g8h9i0j1a2b3c4d5e6f7  |
++----------------------+----------------------------------------+
+```
+
+**Copy these two values into your text file — you will add them as GitHub secrets in the next step.**
+
+> These are NOT the OCI API key from bootstrap-oci.sh. These are "Customer Secret Keys" used specifically for S3-compatible access to Object Storage.
+
+---
+
 ## Part 8 — Add GitHub Secrets
 
 Secrets are stored encrypted in GitHub and injected into workflows at deploy time. They never appear in code.
@@ -409,6 +448,15 @@ Secrets are stored encrypted in GitHub and injected into workflows at deploy tim
 | `OCI_SSH_PRIVATE_KEY` | Open `~/.ssh/familyshield` in a text editor, copy the entire file contents including `-----BEGIN OPENSSH PRIVATE KEY-----` and `-----END OPENSSH PRIVATE KEY-----` |
 
 > To open these files in Git Bash: `cat ~/.oci/familyshield-github/private.pem` — then select all and copy.
+
+### Secrets from Part 7.1 (AWS Credentials for Terraform State)
+
+| Secret Name | Value |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | From Part 7.1 output — the `access_key` value |
+| `AWS_SECRET_ACCESS_KEY` | From Part 7.1 output — the `secret_key` value |
+
+> These enable GitHub Actions workflows to persist Terraform state in OCI Object Storage between runs.
 
 ### Secrets from your text file
 
@@ -435,20 +483,7 @@ The bootstrap script printed a line like:
 ✅ Ubuntu 22.04 ARM image OCID: ocid1.image.oc1.ca-toronto-1.aaaaaa...
 ```
 
-You need to put this value into the IaC code so OpenTofu knows which VM image to use.
-
-1. Open `iac/variables.tf` in VS Code
-2. Find the section:
-
-   ```hcl
-   variable "oci_ubuntu_arm_image_id" {
-     description = "Ubuntu 22.04 ARM64 image OCID for ca-toronto-1"
-     default     = "REPLACE_WITH_BOOTSTRAP_OUTPUT"
-   }
-   ```
-
-3. Replace `REPLACE_WITH_BOOTSTRAP_OUTPUT` with the OCID from the bootstrap output
-4. Save the file
+**Note:** The image OCID output from bootstrap is informational only. The IaC now automatically queries for the Ubuntu 22.04 ARM image compatible with your VM shape and region, so no manual update is needed. You can proceed directly to Part 10.
 
 ---
 
@@ -486,8 +521,9 @@ After it finishes, try to set up production protection:
 You now have everything set up. This step will create the actual cloud server (VM) and all the services that run on it.
 
 **What happens:**
-1. You create a change in GitHub that includes the ARM image ID we found earlier
-2. GitHub automatically checks the change (called `tofu plan`)
+
+1. You create a branch with a small change to trigger the deployment workflow
+2. GitHub automatically checks the infrastructure changes (called `tofu plan`)
 3. You review what will be created, then approve the change
 4. GitHub automatically deploys everything to your dev environment
 5. Within 5–10 minutes, your OCI cloud server is running
@@ -503,38 +539,32 @@ You now have everything set up. This step will create the actual cloud server (V
 3. Click **Create Branch** and name it: `feat/initial-setup`
    - Branch name doesn't matter — it's just for organizing your work
 
-4. In the file explorer on your laptop, open:
-   ```
-   C:\Users\mohit.kumar.goyal\OneDrive - Accenture\Github\FamilyShield\iac\variables.tf
+4. Create a simple change to trigger the workflow. Open `iac/environments/dev/terraform.tfvars` in VS Code and add a comment:
+
+   ```hcl
+   # Development environment configuration
+   # VM sizing: 1 OCPU / 6GB RAM
+   environment   = "dev"
    ```
 
-5. Find this line (around line 35):
-   ```
-   oci_ubuntu_arm_image_id = "ocid1.image.oc1.ca-toronto-1.aaaaaa...NOT_FOUND"
-   ```
+5. **Save the file** (Ctrl+S)
 
-6. Replace `NOT_FOUND` with the image ID from your bootstrap output:
-   ```
-   oci_ubuntu_arm_image_id = "ocid1.image.oc1.ca-toronto-1.aaaaaaaawzbmdqqvrcLW4cvhegvnbbxtoday4bxlkdpqeowc5kcbrhpit2a"
-   ```
-   (Use **YOUR** ID from the bootstrap output, not this example)
-
-7. **Save the file** (Ctrl+S)
-
-8. Go back to **GitHub Desktop**:
-   - It should show `iac/variables.tf` as changed
+6. Go back to **GitHub Desktop**:
+   - It should show `iac/environments/dev/terraform.tfvars` as changed (or another .tf file if you made a different change)
    - In the "Commit to" field at the bottom left, type:
+
      ```
-     Add OCI ARM image ID for first deploy
+     Add deployment trigger change
      ```
+
    - Click **Commit to feat/initial-setup**
 
-9. Click **Publish branch**
+7. Click **Publish branch**
 
-10. Click **Create Pull Request**
-    - GitHub will open the pull request in your browser
-    - Add a title: `Initial cloud deployment — add ARM image ID`
-    - Click **Create pull request**
+8. Click **Create Pull Request**
+   - GitHub will open the pull request in your browser
+   - Add a title: `Initial cloud deployment`
+   - Click **Create pull request**
 
 ### Step 11.2 — Wait for GitHub to Check Your Change
 
@@ -553,21 +583,44 @@ You now have everything set up. This step will create the actual cloud server (V
 
 2. Click **Confirm merge**
 
-3. GitHub will now automatically start the `deploy-dev` workflow:
+3. GitHub will now automatically start a **three-stage deployment**:
+
+   **Stage 1 — Infrastructure (IaC):** `deploy-dev` workflow
    - Go to the **Actions** tab
    - You'll see a workflow running that says `deploy-dev`
-   - **Wait 5–10 minutes** — it's creating your cloud server
+   - **Wait 5–10 minutes** — it's creating your cloud server, networks, and storage
+   - When finished, you'll see a green checkmark ✅
 
-4. When it finishes, you'll see a green checkmark ✅ on `deploy-dev`
+   **Stage 2 — Cloudflare Setup:** `deploy-cloudflare` workflow (automatic)
+   - After `deploy-dev` succeeds, the `deploy-cloudflare` workflow runs automatically
+   - This creates your Cloudflare tunnel, DNS records, and access applications
+   - **Wait 2–3 minutes** — should complete quickly
+   - When finished, you'll see a green checkmark ✅
 
-5. Open the workflow details and scroll to the bottom — you'll see:
+   **Stage 3 — App Deployment:** `build-and-push` and `deploy-app-dev` workflows
+   - Docker images are built and pushed to container registry
+   - App containers are deployed to your cloud VM
+   - **Wait 3–5 minutes** — services start
+   - Smoke tests verify everything is healthy
+
+4. **Total time:** 10–20 minutes for all three stages
+
+5. Open the **deploy-dev** workflow details and scroll to the bottom — you'll see:
    ```
    Outputs
    vm_public_ip = 152.67.xxx.xxx
    ```
    - **Copy this IP address** — you'll use it in Part 12
 
-**That's it!** Your cloud infrastructure is now live.
+> **What if deploy-cloudflare fails?**
+> 
+> The Cloudflare workflow can fail if:
+> - The API token is missing scopes (must have Zone DNS + Tunnel + Access scopes — see Part 3.3)
+> - The Cloudflare account ID or zone ID is wrong
+> 
+> To fix: Verify your credentials in GitHub Secrets, then re-run the `deploy-cloudflare` workflow manually from the Actions tab. No need to re-run the IaC stage.
+
+**That's it!** Your cloud infrastructure is now live, Cloudflare is configured, and your apps are running.
 
 ---
 
@@ -717,15 +770,54 @@ All admin URLs are behind Cloudflare Zero Trust — you log in with your Cloudfl
   - Statement: `Allow any-user to manage all-resources in tenancy where request.user.id = '<OCI_USER_OCID>'`
   - Replace `<OCI_USER_OCID>` with your OCI_USER_OCID GitHub secret value
 
-**Cloudflare Authentication error (10000) during tofu apply**
+**Cloudflare Authentication error (10000) during deploy-cloudflare workflow**
 → The API token is missing required scopes. The "Edit zone DNS" template is NOT sufficient.
-  FamilyShield requires three permissions:
-  - Zone → DNS → Edit (for CNAME records)
-  - Account → Cloudflare Tunnel → Edit (for Argo Tunnel creation)
-  - Account → Access: Apps and Policies → Edit (for Zero Trust access applications)
+  FamilyShield requires **three** permissions:
+  - **Zone → DNS → Edit** (for CNAME records)
+  - **Account → Cloudflare Tunnel → Edit** (for Argo Tunnel creation)
+  - **Account → Access: Apps and Policies → Edit** (for Zero Trust access applications)
+
+  **To fix:**
+  1. Log in to **dash.cloudflare.com/profile/api-tokens**
+  2. Delete the old `familyshield-deploy` token
+  3. Create a new **Custom Token** (NOT a template) with all three permissions
+  4. Copy the new token
+  5. Update the `CLOUDFLARE_API_TOKEN` GitHub secret with the new token
+  6. In GitHub Actions, re-run the `deploy-cloudflare` workflow manually
   
-  Re-create the token as a **Custom Token** with all three permissions (see Part 3.3 for steps).
-  Update the `CLOUDFLARE_API_TOKEN` GitHub secret, then re-run the workflow.
+  See Part 3.3 for detailed token creation steps.
+
+**deploy-cloudflare workflow never starts after deploy-dev succeeds**
+→ The workflow is triggered automatically only if the previous `deploy-dev` workflow completes successfully. Check:
+  1. Go to Actions tab → find the `deploy-dev` workflow that just ran
+  2. Click on it and scroll to bottom — look for green ✅ checkmark
+  3. If it shows ✅, wait 1–2 minutes and refresh the Actions page
+  4. The `deploy-cloudflare` workflow should appear
+  
+  If `deploy-dev` failed or was cancelled, manually trigger `deploy-cloudflare`:
+  1. Go to Actions tab → search for `Deploy → Cloudflare` workflow
+  2. Click **Run workflow** → select environment (dev) and action (setup)
+  3. Click **Run workflow**
+
+**deploy-cloudflare fails with "Tunnel not found" or "DNS record already exists"**
+→ This can happen if:
+  - A previous deployment partially completed
+  - Manual resources exist in Cloudflare
+  
+  **To fix:** Run the cleanup workflow first, then re-run deploy-cloudflare:
+  1. Go to Actions tab → search for `Cleanup → Cloudflare` workflow
+  2. Click **Run workflow** → select environment (dev)
+  3. Click **Run workflow** — wait for it to complete
+  4. Then re-run `deploy-cloudflare` as described above
+
+**Portal or admin URLs not accessible after deployment**
+→ Verify that the Cloudflare tunnel is running:
+  1. Log in to **dash.cloudflare.com**
+  2. Go to Tunnels (in the left sidebar under Access)
+  3. Look for `familyshield-dev` tunnel
+  4. Click it → should show **HEALTHY** status
+  5. If status is **DISCONNECTED**, the mitmproxy tunnel client hasn't connected yet (VM still booting)
+  6. Wait 2–3 minutes and refresh
 
 **Supabase project shows "Project is paused"**
 → Free tier projects pause after 7 days of inactivity. Log in to supabase.com and click **Restore project**. Takes about 1 minute.

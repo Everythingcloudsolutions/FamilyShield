@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-12
+> Last updated: 2026-04-15 (deployment pipeline fully documented — all 8 blockers resolved)
 
 ---
 
@@ -20,9 +20,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Intelligent parental control platform. Cloud-first, open source, IaC-driven.
 
-**GitHub repo:** https://github.com/Everythingcloudsolutions/FamilyShield (private)
-**Portal URL (dev):** https://familyshield-dev.everythingcloud.ca
-**Portal URL (prod):** https://familyshield.everythingcloud.ca
+**GitHub repo:** <https://github.com/Everythingcloudsolutions/FamilyShield> (private)
+**Portal URL (dev):** <https://familyshield-dev.everythingcloud.ca>
+**Portal URL (prod):** <https://familyshield.everythingcloud.ca>
 **Domain:** familyshield.everythingcloud.ca (subdomain of everythingcloud.ca — Cloudflare)
 
 ---
@@ -72,14 +72,84 @@ tofu plan -var="environment=dev" -var-file="environments/dev/terraform.tfvars"
 tofu apply -var="environment=dev" -var-file="environments/dev/terraform.tfvars" -auto-approve
 ```
 
-**Key note:** When `tofu apply` runs in workflows, it runs with `working_directory: iac/`, so var_file paths MUST be relative to iac/ (e.g., `environments/dev/terraform.tfvars`, NOT `iac/environments/dev/terraform.tfvars`)
+**Key notes:**
+
+- When `tofu apply` runs in workflows, it runs with `working_directory: iac/`, so var_file paths MUST be relative to iac/ (e.g., `environments/dev/terraform.tfvars`, NOT `iac/environments/dev/terraform.tfvars`)
+- Full `tofu apply` requires OCI account and credentials. Use `tofu plan` locally to validate HCL without applying.
 
 ### Bootstrap & Deployment Scripts
 
 ```bash
-bash scripts/bootstrap-oci.sh    # First-time OCI setup (10 steps)
-bash scripts/setup-github.sh     # Configure GitHub environments & branch protection
+bash scripts/bootstrap-oci.sh      # First-time OCI setup (11 steps) — creates compartments!
+bash scripts/setup-github.sh       # Configure GitHub environments & branch protection
+bash scripts/cloudflare-api.sh     # Cloudflare resource management (API-driven)
 ```
+
+**CRITICAL: Always run `bootstrap-oci.sh` first!** It creates the three environment compartments (dev, staging, prod) that IaC queries and uses.
+
+### Cloudflare API Management
+
+Cloudflare resources (tunnel, DNS records, access apps) are created and managed via the Cloudflare API, not Terraform. This is done in the `deploy-cloudflare.yml` workflow using `scripts/cloudflare-api.sh`:
+
+```bash
+# Manual setup (rarely needed)
+export CLOUDFLARE_API_TOKEN="..."
+export CLOUDFLARE_ACCOUNT_ID="..."
+export CLOUDFLARE_ZONE_ID="..."
+
+bash scripts/cloudflare-api.sh setup dev "<tunnel-secret>" "admin@example.com"
+bash scripts/cloudflare-api.sh cleanup dev
+```
+
+**Why separate from IaC?**
+
+- Terraform/OpenTofu struggles with state management when resources exist in cloud but not in state
+- Cloudflare API is simpler for tunnel + DNS + access apps
+- Decoupled architecture allows independent updates without triggering full IaC rebuild
+- Easy cleanup via API if needed (e.g., environment torn down)
+
+### Local Development (Without OCI)
+
+These components can be developed and tested locally before deploying to OCI:
+
+**API (Node.js):**
+
+```bash
+cd apps/api
+npm install
+npm run dev          # Watch mode on http://localhost:3001
+npm test             # Run Jest tests
+npm run lint         # Run ESLint
+```
+
+**mitmproxy addon (Python):**
+
+```bash
+cd apps/mitm
+pip install -r requirements.txt
+pytest -v            # Run all tests with verbose output
+pytest tests/test_addon.py::TestClass::test_method  # Run single test
+```
+
+**Portal (Next.js) — once scaffolded:**
+
+```bash
+cd apps/portal
+npm install
+npm run dev          # Dev server on http://localhost:3000
+npm test             # Run test suite
+```
+
+**IaC validation (OpenTofu):**
+
+```bash
+cd iac
+tofu fmt -check      # Check formatting
+tofu validate        # Validate HCL syntax
+tofu plan -var-file environments/dev/terraform.tfvars  # Review changes (requires OCI credentials)
+```
+
+**Note:** Full integration testing requires deployed infrastructure (OCI VM, Supabase, Cloudflare). Use GitHub Actions workflows for E2E testing.
 
 ---
 
@@ -130,10 +200,14 @@ FamilyShield/
 │       ├── cloud-init.yaml.tpl  ← VM bootstrap: UFW, fail2ban, Docker, systemd
 │       └── docker-compose.yaml.tpl ← All 10 services
 ├── apps/
-│   ├── portal/                  ← Next.js 14 parent portal [IN PROGRESS]
+│   ├── portal/                  ← Next.js 14 parent portal [SCAFFOLDED]
 │   ├── api/                     ← Node.js enrichment worker + Express health
 │   │   ├── src/
 │   │   │   ├── index.ts
+│   │   │   ├── types.ts             ← Shared TypeScript types (events, alerts, scores)
+│   │   │   ├── lib/redis.ts         ← Redis singleton client factory
+│   │   │   ├── lib/supabase.ts      ← Supabase singleton client factory
+│   │   │   ├── alerts/dispatcher.ts ← Alert dispatcher (Phase 1 placeholder)
 │   │   │   ├── worker/event-consumer.ts
 │   │   │   ├── llm/router.ts    ← Groq → Anthropic fallback
 │   │   │   └── enrichers/       ← youtube.ts, roblox.ts, twitch.ts, discord.ts
@@ -154,7 +228,7 @@ FamilyShield/
 │   ├── troubleshooting/README.md ← Developer + parent troubleshooting
 │   └── diagrams/                ← draw.io / Excalidraw source files
 └── scripts/
-    ├── bootstrap-oci.sh         ← First-time OCI setup (10 steps)
+    ├── bootstrap-oci.sh         ← First-time OCI setup (11 steps)
     └── setup-github.sh          ← GitHub environments + branch protection
 ```
 
@@ -164,24 +238,47 @@ FamilyShield/
 
 ### Deployment Flow
 
+Each environment follows the same 6-job pipeline (env = dev | staging | prod):
+
 ```
-PR opened → pr-check.yml runs → tofu plan posted as PR comment
-    ↓
-Merge to main (manual) → deploy-dev.yml → auto deploy to dev
-    ↓
-dev passes (health check) → deploy-staging.yml → auto deploy to staging
-    ↓
-Manual trigger → deploy-prod.yml → Mohit approves in GitHub UI → prod deploy
+deploy-infra-{env}          IaC only (OCI VM, network, storage)
+       ↓
+build-and-push / promote-images   Docker images → GHCR
+       ↓
+deploy-app-{env}            SSH to VM via public IP → docker compose up
+       ↓
+setup-cloudflare-{env}      Cloudflare tunnel + DNS + write token to VM → restart cloudflared
+       ↓
+integration-tests (staging) / smoke-test (dev + prod)
 ```
 
-**Environments in GitHub:**
-- `dev` — auto, no approval needed
-- `staging` — auto after dev passes
-- `prod` — **manual approval required** (Mohit must click Approve in GitHub UI)
+**Trigger by branch:**
+
+| Branch | Workflow | Behaviour |
+|---|---|---|
+| `development` | `deploy-dev.yml` | Auto — runs on every push |
+| `qa` | `deploy-staging.yml` | Auto — create qa from development to trigger |
+| `main` | `deploy-prod.yml` | Auto — GitHub Environment `prod` requires manual approval |
+| Any PR | `pr-check.yml` | Lint + `tofu plan` comment |
+
+**Cloudflare Tunnel Token Delivery (critical pattern):**
+
+IaC renders `docker-compose.yaml` with a placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real Cloudflare tunnel token is not known at `tofu apply` time. The `setup-cloudflare-{env}` job:
+1. Creates/verifies tunnel via `scripts/cloudflare-api.sh setup {env}` (gets real token from Cloudflare API)
+2. SSHes to the VM via **public IP** and writes `docker-compose.override.yaml` with the real `TUNNEL_TOKEN`
+3. Restarts cloudflared — the tunnel goes from INACTIVE → ACTIVE in the Cloudflare dashboard
+4. Waits up to 3 minutes for the portal URL to become reachable over HTTP
+
+Docker Compose automatically merges `docker-compose.override.yaml` over `docker-compose.yaml`, so the override persists across `docker compose up` restarts.
+
+**Cleanup:**
+
+- Manual: `cleanup-cloudflare.yml` (workflow_dispatch) — removes Cloudflare resources for an environment
 
 ### Service Architecture
 
 All backend services run on a single OCI Always Free ARM VM (4 OCPU / 24GB RAM) in `ca-toronto-1`. Services communicate via:
+
 - **Redis** (port 6379) — event queue between mitmproxy and API
 - **Supabase** — PostgreSQL + Realtime WebSocket
 - **Shared volumes** — config files mounted at /etc/familyshield/
@@ -227,29 +324,41 @@ All backend services run on a single OCI Always Free ARM VM (4 OCPU / 24GB RAM) 
 |---|---|
 | Tenancy region | ca-toronto-1 (Toronto, Canada) |
 | VM shape | VM.Standard.A1.Flex (Always Free) |
-| VM resources | 4 OCPU, 24GB RAM |
-| Boot volume | 50GB |
-| OS | Ubuntu 22.04 ARM64 |
-| Compartments | familyshield-dev, familyshield-staging, familyshield-prod |
-| State bucket | familyshield-tfstate (OCI Object Storage, versioned) |
+| Always Free limit | 4 OCPU / 24GB RAM total |
+| Boot volume | 50GB per VM |
+| OS | Ubuntu 22.04 ARM64 (dynamically queried — no hardcoding) |
+| Compartments | familyshield-dev, familyshield-staging, familyshield-prod (created by bootstrap Step 7) |
+| Storage bucket | Single bucket: `familyshield-tfstate` with environment prefixes (`dev/`, `staging/`, `prod/`) |
 | GitHub Actions auth | OCI IAM user + API key (no OIDC — simpler for Always Free) |
 
-### Critical: Bootstrap Script Steps
+### Resource Allocation Per Environment
+
+| Environment | Sizing | Notes |
+| --- | --- | --- |
+| **Dev** | 1 OCPU / 6GB RAM | Always on for development |
+| **Staging** | 1 OCPU / 6GB RAM | Ephemeral — spun up for QA testing, torn down after |
+| **Prod** | 2 OCPU / 6GB RAM | Always on for production |
+| **Total** | 4 OCPU / 18GB (baseline) + staging ephemeral | Stays within Always Free tier when staging not running |
+
+### Critical: Bootstrap Script Steps (11 steps)
 
 The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 
 1. **Verify OCI CLI** — check credentials configured
 2. **Cloud Guard** (optional) — security monitoring setup
-3. **Create GitHub Actions IAM user** — `familyshield-github-actions`
-4. **Generate API key** — uploaded to OCI, private key → GitHub secret
+3. **Create GitHub Actions IAM user** — `familyshield-github-actions` (asks for email)
+4. **Generate API key** — uploaded to OCI, private key → GitHub secret `OCI_PRIVATE_KEY`
 5. **Create dynamic group** — matches IAM user OCID
-6. **Grant bootstrap IAM policy** — grants `any-user to manage all-resources in tenancy where request.user.id = '<OCID>'` (CRITICAL for compartment/policy creation)
-7. **Create Terraform state bucket** — versioned Object Storage
-8. **Find Ubuntu 22.04 ARM image** — for VM provisioning
-9. **Generate SSH key** — for VS Code Remote SSH access
-10. **Summary** — output all GitHub secrets to configure
+6. **Grant bootstrap IAM policy** — grants `any-user to manage all-resources in tenancy where request.user.id = '<OCID>'` (CRITICAL for resource creation)
+7. **Create environment compartments** — creates `familyshield-dev`, `familyshield-staging`, `familyshield-prod` (REQUIRED by IaC)
+8. **Create Terraform state bucket** — single bucket `familyshield-tfstate` with environment-specific prefixes (`dev/`, `staging/`, `prod/`)
+9. **Find Ubuntu 22.04 ARM image** — queries OCI for latest Ubuntu 22.04 ARM image compatible with VM.Standard.A1.Flex (automatic in IaC, no manual update needed)
+10. **Generate SSH key** — for VS Code Remote SSH access
+11. **Summary** — output all GitHub secrets to configure
 
-**Critical Detail:** Step 6 creates a bootstrap IAM policy that allows the GitHub Actions user to create compartments and policies. This policy uses `Allow any-user where request.user.id = ...` syntax (NOT `dynamic-group`) because the setup uses APIKey auth. Without this step, `tofu apply` will fail with 404-NotAuthorizedOrNotFound errors.
+**Critical Detail:** Step 6 creates a bootstrap IAM policy that allows the GitHub Actions user to manage resources in the tenancy. Step 7 creates three compartments that IaC queries for and uses. Without these, `tofu apply` will fail with 404-NotAuthorizedOrNotFound errors. Step 8 creates a single shared bucket with prefixes (Option A architecture).
+
+**Idempotency:** The script is idempotent — re-running it will skip existing resources and only create missing ones. Safe to run multiple times.
 
 ---
 
@@ -267,14 +376,105 @@ The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 
 ---
 
+## Git Workflow
+
+**Full promotion process (4-branch + QA ephemeral):**
+
+```
+Feature/Fix Branch → PR to DEVELOPMENT → merge to development
+                                              ↓
+                              deploy-dev.yml (auto) → Test in dev
+                                              ↓
+                        Create qa branch from development
+                                              ↓
+                              deploy-staging.yml (auto) → Test in staging (ephemeral)
+                                              ↓
+                        Delete qa branch + PR development→main
+                                              ↓
+                              deploy-prod.yml (auto) → Test in prod (gated approval)
+```
+
+**When to use each branch:**
+
+- **main** — Production-ready code only. Auto-deploys to prod on merge using `deploy-prod.yml`.
+- **qa** — Ephemeral QA/staging environment. Created manually after dev passes, deleted after staging passes.
+- **development** — Integration branch. PRs merged here auto-deploy to dev using `deploy-dev.yml`.
+- **feature/fix/*** — Work branches. Always branch from `development`, never from `main`.
+
+**Workflow commands:**
+
+```bash
+# Step 1: Create feature branch from development
+git checkout development
+git pull origin development
+git checkout -b fix/description-of-change
+
+# Step 2: Push and create PR to development
+git push -u origin fix/description-of-change
+gh pr create --base development  # NOT main!
+
+# Step 3: Review & merge to development (auto-triggers deploy-dev.yml)
+# ... review, approve, merge ...
+
+# Step 4: After dev testing passes, create qa branch for staging
+git checkout development
+git pull origin development
+git checkout -b qa
+git push -u origin qa
+# This auto-triggers deploy-staging.yml (ephemeral environment)
+
+# Step 5: After staging testing passes, delete qa and promote to prod
+git push origin --delete qa
+
+# Step 6: Create PR from development to main
+gh pr create --base main --head development
+# This auto-triggers pr-check.yml for validation
+
+# Step 7: Review & merge to main (auto-triggers deploy-prod.yml with approval gate)
+# ... review, approve, merge ...
+```
+
+**Workflow Triggers:**
+
+| Branch | Event | Workflow | Behavior |
+|---|---|---|---|
+| `development` | Push | `deploy-dev.yml` | Immediate deploy to dev |
+| `qa` | Push | `deploy-staging.yml` | Immediate deploy to staging (ephemeral) |
+| `main` | Push | `deploy-prod.yml` | Immediate deploy to prod (requires environment approval) |
+| PR to dev/main | Open/Update | `pr-check.yml` | Lint, validate, plan (posted as comment) |
+
+**Approval Gates:**
+
+- **Dev → Staging:** Automatic after `deploy-dev.yml` passes (no manual approval needed)
+- **Staging → Prod:** Manual user approval via GitHub UI before merging PR to main
+- **Production Deployment:** Requires GitHub Environment `prod` approval (configured in repo settings)
+
+**PR Review & Merge Process:**
+
+1. Create feature branch and PR targeting `development` → `pr-check` runs automatically
+2. Review PR, check `tofu plan` comment and test results
+3. Merge to `development` → `deploy-dev.yml` triggers automatically
+4. Monitor dev deployment at `https://familyshield-dev.everythingcloud.ca`
+5. Once dev passes: create `qa` branch from `development` → `deploy-staging.yml` triggers
+6. Monitor staging deployment at `https://familyshield-staging.everythingcloud.ca`
+7. After staging passes: delete `qa` branch and create PR `development` → `main`
+8. Review final PR, check `tofu plan` for prod infrastructure changes
+9. Merge to `main` → `deploy-prod.yml` triggers with approval gate in GitHub UI
+
+
+---
+
 ## Coding Standards
 
 - **TypeScript:** strict mode, no `any`, Zod for runtime validation
 - **Python:** black formatter, flake8 lint, type hints required, docstrings on all classes
 - **Terraform/OpenTofu:** `tofu fmt` before commit, tflint clean, all resources tagged
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `iac:`, `docs:`, `chore:`)
-- **PRs:** one PR per feature, created on feature/fix branch, NEVER auto-merge to main
-- **Git workflow:** Create branch → commit → create PR → wait for user review/approval → merge to main
+- **PRs:**
+  - Create on feature/fix branch
+  - Target `development` (NOT main)
+  - Wait for user review before merging
+  - After testing in dev, create separate PR: `development` → `main`
 - **Secrets:** never in code, always via environment variables or GitHub Secrets
 - **Tests:** new feature = new tests, no merge without tests passing
 
@@ -293,11 +493,34 @@ The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 
 ## Known Issues & Troubleshooting
 
+### Cloudflare Tunnel Stays INACTIVE After Setup (historical — fixed 2026-04-15)
+
+**Root cause chain:** IaC renders `docker-compose.yaml` with `TUNNEL_TOKEN=TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real token is unknown at `tofu apply` time. If cloudflared were started via `docker compose`, it would use the placeholder and fail to authenticate.
+
+**Fix (current architecture):** cloudflared is started via `docker run --network host --token $TUNNEL_TOKEN` in the `setup-cloudflare-{env}` job. The `--token` flag downloads ingress configuration from Cloudflare's control plane — no local config file or docker-compose.yml needed. If tunnel is still INACTIVE after a deploy, check:
+
+```bash
+ssh ubuntu@<vm-ip> "docker logs familyshield-cloudflared --tail 20"
+# Healthy: "Registered tunnel connection connIndex=0"
+# Bad token: re-run the setup-cloudflare workflow job
+```
+
+Full details in `docs/troubleshooting/infrastructure.md` — Issues 3, 4, and 8.
+
+### cloudflare-api.sh Output Pollution (historical — fixed 2026-04-15)
+
+**Symptom:** `Failed to get tunnel token` + `Invalid format '─────...'` in `$GITHUB_OUTPUT`
+
+**Root cause:** `header()`, `info()`, `success()` functions printed to stdout. Command substitutions like `tunnel_id=$(create_tunnel ...)` captured separator lines alongside the UUID, corrupting the API URL.
+
+**Fix:** All diagnostic output functions redirected to `>&2`. Also split `local var=$(cmd)` into separate `local var` + `var=$(cmd)` lines so `set -e` correctly aborts on failure.
+
 ### Cloudflare API Token — Missing Scopes
 
 **Error:** `Authentication error (10000)` when creating Argo Tunnel or Access Applications
 
 **Cause:** The Cloudflare API token must have ALL THREE scopes:
+
 - Zone → DNS → Edit (for CNAME records)
 - Account → Cloudflare Tunnel → Edit (for Argo Tunnel)
 - Account → Access: Apps and Policies → Edit (for Zero Trust apps)
@@ -321,6 +544,7 @@ The "Edit zone DNS" template only grants the first scope — insufficient. Must 
 **Cause:** When `tofu apply` runs with `working_directory: iac/`, var_file paths must be relative to `iac/`, not the repo root.
 
 **Example:**
+
 - ❌ `var_file: iac/environments/dev/terraform.tfvars` → resolves to `iac/iac/environments/dev/` (wrong)
 - ✅ `var_file: environments/dev/terraform.tfvars` → resolves to `iac/environments/dev/` (correct)
 
@@ -335,6 +559,7 @@ When starting a new Claude Code session, just say:
 Claude Code will read this file and know exactly what's done and what's next.
 
 For specific tasks, say things like:
+
 - "Build `apps/api/src/types.ts` — the shared TypeScript types"
 - "Scaffold the Next.js 14 portal in `apps/portal/`"
 - "Build the ntfy alert dispatcher"
@@ -352,11 +577,57 @@ Infrastructure, CI/CD, IaC modules, mitmproxy addon (complete with 15 tests), AP
 
 Full architecture documentation, C4 model, user guide, troubleshooting, Claude Agent SDK agents, slash command skills.
 
-### 🔄 Phase 2: API & Portal (IN PROGRESS)
+### 🔄 Phase 2: Deployment & API/Portal (IN PROGRESS)
 
-- ✅ API structure defined, enrichers for all 4 platforms
-- 🔄 Cloudflare + OCI IAM fixes (PR #3, merged 2026-04-12)
-- 🔲 Remaining: Portal (Next.js 14), API types/types/libs, tests, Docker build workflow
+**Infrastructure & Deployment:**
+
+- ✅ OCI IAM bootstrap policy (Step 6) created and verified
+- ✅ Cloudflare API token — all 3 required scopes (DNS, Tunnel, Access)
+- ✅ GitHub Actions workflows configured with AWS credentials for S3 backend
+- ✅ **ARCHITECTURE CHANGE (2026-04-13):** Cloudflare resources now managed via API (separate workflow)
+  - Removed Cloudflare module from IaC (`iac/main.tf`)
+  - Created `deploy-cloudflare.yml` workflow (triggered after IaC succeeds)
+  - Created `cleanup-cloudflare.yml` workflow (manual trigger)
+  - Created `scripts/cloudflare-api.sh` helper for API operations
+  - Updated all workflows to remove Cloudflare variables from IaC
+  - Simplified `tofu-apply` action (no Cloudflare state conflict workarounds)
+- ✅ **ARCHITECTURE CHANGE (2026-04-14):** IaC module sequencing & compartment query logic
+  - Bootstrap script Step 7 now creates three compartments: `familyshield-dev`, `familyshield-staging`, `familyshield-prod`
+  - IaC compartments module changed from creation to data source queries (no duplicate compartments)
+  - Re-enabled compartments module in main.tf with proper dependency order
+  - Updated compute module to accept environment-specific sizing via tfvars
+  - Resource allocation: Dev (1C/6GB) + Staging ephemeral (1C/6GB) + Prod (2C/6GB) = within 4C/24GB Always Free
+  - Per-environment state buckets: `familyshield-tfstate-{environment}`
+  - Bucket import logic handles existing resources without 409 conflicts
+- ✅ **Deployment pipeline stabilised (2026-04-15):** All three workflows (dev/staging/prod) now follow the same 6-job pattern with all pipeline blockers resolved:
+  - `cloudflare-api.sh` output pollution (diagnostic functions to stdout) — fixed: all diagnostics redirect to `>&2`; `local var=$(cmd)` split into two statements
+  - Tunnel token never written to VM — fixed: cloudflared now starts via `docker run --network host --token` (zero docker-compose.yml dependency)
+  - SSH key `printf` missing trailing newline → `libcrypto` error — fixed: `echo "$KEY" | tr -d '\r'` in all three workflows
+  - Concurrent runs causing Terraform state lock conflicts — fixed: `concurrency:` groups on all three workflows (`cancel-in-progress: true` dev/staging, `false` prod)
+  - Race condition on new VM boot: deploy-app runs before cloud-init finishes writing docker-compose.yml — fixed: `sudo cloud-init status --wait || true` added to all deploy-app scripts
+  - `deploy-staging.yml` gate job broken `if:` condition (`workflow_run.conclusion` on a `push` trigger is always null) — fixed: gate job removed; staging triggers on `qa` branch push
+  - docker-compose.yml missing on VM (broken cloud-init) → api/portal not running → cloudflared returns 502 → smoke test fails — fixed: "Bootstrap VM" step in all setup-cloudflare jobs
+  - All 8 issues with root causes, investigation steps, and fixes documented in `docs/troubleshooting/infrastructure.md`
+- 🔲 First full end-to-end successful dev pipeline run (all 5 jobs green: infra → build → deploy-app → setup-cloudflare → smoke-test)
+- 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
+
+**Application Development:**
+
+- ✅ API structure defined, enrichers for all 4 platforms (YouTube, Roblox, Discord, Twitch) — fully implemented
+- ✅ mitmproxy addon complete with 15 tests
+- ✅ Portal: Next.js 14 fully built (`apps/portal/`)
+  - Pages: dashboard (server-side), /devices (client-side), /alerts (server-side + client filter)
+  - Components: NavBar, RiskBadge, DeviceCard, AlertFeed (Supabase Realtime), AlertTable (filter + sort)
+  - lib/supabase.ts (browser singleton), lib/types.ts (portal-specific types)
+  - Playwright E2E tests: `tests/e2e/` — dashboard (7 tests), alerts (8 tests), devices (9 tests)
+  - playwright.config.ts — Chromium + Firefox + Mobile Chrome, CI-aware retry/workers
+- ✅ API: types.ts extended (age_restricted, mature_flag, description, channel_name, player_count, viewer_count)
+- ✅ API: alerts/dispatcher.ts complete — ntfy push + Supabase INSERT + Redis 5-min dedup
+- ✅ API: jest.config.js + full test suite (6 test files: youtube, roblox, discord, twitch enrichers + dispatcher + LLM router)
+- 🔲 Deploy-dev must successfully complete one full run end-to-end (IaC → Cloudflare → App)
+- 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
+- 🔲 Docker build workflows for api and portal images (build-and-push matrix job missing)
+- 🔲 Supabase tables must be created: `content_events`, `alerts`, `devices` (schema migration needed)
 
 ### 📋 Phase 3: E2E Testing & Production Release
 

@@ -1,15 +1,35 @@
 {
   "folders": [
-    { "path": ".", "name": "FamilyShield (root)" },
-    { "path": "apps/portal", "name": "Portal (Next.js)" },
-    { "path": "apps/api", "name": "API Worker (Node.js)" },
-    { "path": "apps/mitm", "name": "mitmproxy Addon (Python)" },
-    { "path": "iac", "name": "Infrastructure (OpenTofu)" },
-    { "path": "docs", "name": "Documentation" }
+    {
+      "path": ".",
+      "name": "FamilyShield (root)"
+    },
+    {
+      "path": "apps/portal",
+      "name": "Portal (Next.js)"
+    },
+    {
+      "path": "apps/api",
+      "name": "API Worker (Node.js)"
+    },
+    {
+      "path": "apps/mitm",
+      "name": "mitmproxy Addon (Python)"
+    },
+    {
+      "path": "iac",
+      "name": "Infrastructure (OpenTofu)"
+    },
+    {
+      "path": "docs",
+      "name": "Documentation"
+    }
   ],
   "settings": {
     "editor.formatOnSave": true,
-    "editor.rulers": [100],
+    "editor.rulers": [
+      100
+    ],
     "files.exclude": {
       "**/node_modules": true,
       "**/.terraform": true,
@@ -28,7 +48,8 @@
     },
     "[terraform]": {
       "editor.defaultFormatter": "hashicorp.terraform"
-    }
+    },
+    "powershell.cwd": "FamilyShield (root)"
   },
   "extensions": {
     "recommendations": [

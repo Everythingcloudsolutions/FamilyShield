@@ -100,13 +100,37 @@ git push origin main  # GitHub Actions handles the rest
 
 ---
 
+## Deployment Architecture
+
+FamilyShield uses a **three-stage deployment pipeline** to ensure infrastructure stability and independent service management:
+
+```
+Merge to main
+    ↓
+[Stage 1] deploy-dev.yml
+└─ OCI Infrastructure (VM, networks, storage, database)
+   ↓ (on success)
+[Stage 2] deploy-cloudflare.yml (automatic)
+└─ Cloudflare resources (tunnel, DNS, Zero Trust access)
+   ↓ (parallel)
+[Stage 3] build-and-push + deploy-app-dev
+└─ Docker images & app containers
+```
+
+**Why three stages?**
+- **Stage 1 (IaC):** Creates cloud infrastructure independently — no state conflicts
+- **Stage 2 (Cloudflare API):** Manages DNS and public routing separately — decoupled from IaC
+- **Stage 3 (App):** Deploys application code after both infrastructure and networking are ready
+
+See [Architecture Docs](docs/architecture/README.md) for detailed flow diagrams.
+
 ## Deployment Environments
 
 | Environment | Trigger | Approval |
 |---|---|---|
-| `dev` | Auto on merge to `main` | None |
+| `dev` | Auto on merge to `development` | None |
 | `staging` | Auto after dev passes | None |
-| `prod` | Manual trigger | **Required — GitHub UI** |
+| `prod` | Manual workflow dispatch | **Required — GitHub UI** |
 
 ---
 

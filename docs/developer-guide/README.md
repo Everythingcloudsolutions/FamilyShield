@@ -59,7 +59,7 @@ bash scripts/setup-github.sh
 
 ---
 
-## 3. OCI Account Bootstrap
+## 3. OCI Account Bootstrap (11 Steps)
 
 Run **once** from your Windows laptop after OCI account is created:
 
@@ -71,14 +71,21 @@ chmod +x scripts/bootstrap-oci.sh
 bash scripts/bootstrap-oci.sh
 ```
 
-This script will:
-- Create a dedicated GitHub Actions IAM user
-- Generate an API key pair (private key goes into GitHub Secrets)
-- Create the dynamic group for GitHub Actions OIDC
-- Bootstrap the Terraform state Object Storage bucket
-- Find the correct Ubuntu 22.04 ARM image OCID for ca-toronto-1
-- Generate an SSH key pair for VM access
-- Print the exact values you need to add to GitHub Secrets
+This script performs 11 steps:
+
+1. Verify OCI CLI is configured
+2. Optional: Enable Cloud Guard security monitoring
+3. Create a dedicated GitHub Actions IAM user (`familyshield-github-actions`)
+4. Generate an API key pair (private key → GitHub Secret `OCI_PRIVATE_KEY`)
+5. Create the dynamic group for GitHub Actions OIDC identities
+6. Grant bootstrap IAM policy (grants tenancy-level permissions to the user)
+7. **Create three environment compartments** (`familyshield-dev`, `familyshield-staging`, `familyshield-prod`) — **REQUIRED by IaC**
+8. Bootstrap the Terraform state Object Storage bucket (`familyshield-tfstate` with environment prefixes)
+9. Find the correct Ubuntu 22.04 ARM image OCID for ca-toronto-1 (informational only — IaC queries this automatically)
+10. Generate an SSH key pair for VM access
+11. Print all the GitHub Secret values you need to add
+
+**Critical:** The compartments created in Step 7 are required by the IaC deployment. The Terraform/OpenTofu code queries for these compartments and will fail with a clear error if they don't exist.
 
 ---
 
@@ -150,23 +157,21 @@ Then in VS Code:
 ## 6. First Deploy
 
 ```bash
-# 1. Update the ARM image OCID in iac/variables.tf
-#    (value from bootstrap-oci.sh output)
-
-# 2. Commit and push to a feature branch
+# 1. Commit and push to a feature branch
+# Note: No manual updates needed for image OCID — IaC queries it automatically
 git checkout -b feat/phase-1-bootstrap
 git add .
 git commit -m "feat: initial IaC scaffold for Phase 1"
 git push origin feat/phase-1-bootstrap
 
-# 3. Open a Pull Request → GitHub Actions runs:
+# 2. Open a Pull Request → GitHub Actions runs:
 #    - Lint & Validate
 #    - tofu plan (posted as PR comment — review it!)
 #    - Security scan
 
-# 4. Merge PR → GitHub Actions auto-deploys to dev
+# 3. Merge PR → GitHub Actions auto-deploys to dev
 
-# 5. Check deploy at:
+# 4. Check deploy at:
 #    https://familyshield-dev.everythingcloud.ca
 ```
 

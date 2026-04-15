@@ -41,6 +41,68 @@ These must pass before every staging → prod promotion:
 
 ---
 
+## Ephemeral Staging Environment
+
+The **staging environment is ephemeral** — it spins up for QA testing, then tears down to conserve OCI Always Free tier resources.
+
+### Resource Allocation
+
+| Environment | Sizing | Duration |
+| --- | --- | --- |
+| **Dev** | 1 OCPU / 6GB RAM | Always on |
+| **Staging (QA)** | 1 OCPU / 6GB RAM | Spun up for testing, torn down after |
+| **Prod** | 2 OCPU / 6GB RAM | Always on |
+
+**Total:** Baseline 3 OCPU / 12GB (dev + prod) + staging ephemeral = 4 OCPU / 18GB (within Always Free 4C/24GB limit)
+
+### Ephemeral Staging Workflow
+
+#### Step 1: Spin Up Staging (QA Trigger)
+
+Manually trigger staging deployment when dev passes:
+
+```bash
+gh workflow run deploy-staging.yml
+gh run list --workflow deploy-staging.yml   # Monitor: takes ~5-10 minutes
+```
+
+#### Step 2: Run QA Tests
+
+E2E + smoke tests in staging environment. Run Playwright tests or manually test critical journeys:
+
+```bash
+cd apps/portal
+BASE_URL=https://familyshield-staging.everythingcloud.ca npx playwright test
+```
+
+Manual testing: Visit <https://familyshield-staging.everythingcloud.ca> and test:
+
+- Parent login
+- Block a domain
+- Receive alerts
+- Child portal access
+
+#### Step 3: Tear Down Staging (Manual)
+
+After QA completes, destroy staging to free Always Free tier resources:
+
+```bash
+cd iac
+tofu init -backend-config="key=staging/terraform.tfstate" -reconfigure
+tofu destroy -var-file="environments/staging/terraform.tfvars" -auto-approve
+```
+
+This destroys: familyshield-staging VM (1 OCPU / 6GB), buckets, networks. Frees 1 OCPU / 6GB for next staging run.
+
+#### Step 4: Manual Alternative (if tofu destroy fails)
+
+```bash
+oci compute instance terminate --instance-id <staging-vm-ocid> --force
+# Then clean up buckets, networks manually via OCI Console
+```
+
+---
+
 ## Running Tests Locally
 
 ```bash

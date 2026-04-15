@@ -1,17 +1,17 @@
 # .github/workflows/pr-check.yml
-# Runs on every Pull Request targeting main
+# Runs on every Pull Request targeting development or main
 # Does: lint → validate → tofu plan (posts as PR comment)
 name: PR Check
 
 on:
   pull_request:
-    branches: [main]
+    branches: [development, main]
     types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
-  pull-requests: write   # needed to post plan comments
-  id-token: write        # needed for OCI OIDC
+  pull-requests: write # needed to post plan comments
+  id-token: write # needed for OCI OIDC
 
 jobs:
   # ── Lint & Validate ─────────────────────────────────────────────────────────
@@ -84,30 +84,31 @@ jobs:
         uses: ./.github/actions/oci-login
         with:
           oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid:    ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint:  ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key:  ${{ secrets.OCI_PRIVATE_KEY }}
-          oci_region:       "ca-toronto-1"
+          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+          oci_region: "ca-toronto-1"
 
       - name: Plan dev
         uses: ./.github/actions/tofu-plan
         with:
-          environment:       dev
+          environment: dev
           working_directory: iac
-          var_file:          environments/dev/terraform.tfvars
-          github_token:      ${{ secrets.GITHUB_TOKEN }}
+          var_file: environments/dev/terraform.tfvars
+          github_token: ${{ secrets.GITHUB_TOKEN }}
         env:
-          TF_VAR_oci_tenancy_ocid:       ${{ secrets.OCI_TENANCY_OCID }}
-          TF_VAR_oci_namespace:          ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_ssh_public_key:         ${{ secrets.OCI_SSH_PUBLIC_KEY }}
-          TF_VAR_cloudflare_api_token:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          TF_VAR_cloudflare_zone_id:     ${{ secrets.CLOUDFLARE_ZONE_ID }}
-          TF_VAR_cloudflare_account_id:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_oci_namespace: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_ssh_public_key: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
+          # Cloudflare variables removed — now managed by separate deploy-cloudflare.yml workflow
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
-          TF_VAR_supabase_url:           ${{ secrets.SUPABASE_URL }}
-          TF_VAR_supabase_anon_key:      ${{ secrets.SUPABASE_ANON_KEY }}
-          TF_VAR_groq_api_key:           ${{ secrets.GROQ_API_KEY }}
-          TF_VAR_anthropic_api_key:      ${{ secrets.ANTHROPIC_API_KEY }}
+          TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL }}
+          TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY }}
+          TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # ── Security Scan ────────────────────────────────────────────────────────────
   security:
@@ -123,7 +124,7 @@ jobs:
           scan-type: "config"
           scan-ref: "iac/"
           format: "table"
-          exit-code: "0"   # Warn only on PRs, don't block
+          exit-code: "0" # Warn only on PRs, don't block
           severity: "CRITICAL,HIGH"
 
       - name: Run Checkov (Terraform security checks)
@@ -131,4 +132,4 @@ jobs:
         with:
           directory: iac/
           framework: terraform
-          soft_fail: true   # Warn only on PRs
+          soft_fail: true # Warn only on PRs

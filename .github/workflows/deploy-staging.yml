@@ -1,35 +1,32 @@
 # .github/workflows/deploy-staging.yml
-# Triggered automatically after deploy-dev succeeds
-# No manual approval needed — staging mirrors prod config
-name: Deploy → Staging
+# Triggered automatically on every push to the qa branch (ephemeral QA environment)
+# Workflow: create qa branch from development → staging deploys → delete qa branch → PR to main
+name: Deploy → Staging (QA Ephemeral)
 
 on:
-  workflow_run:
-    workflows: ["Deploy → Dev"]
-    types: [completed]
-    branches: [main]
+  push:
+    branches: [qa]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # needed to delete qa branch in auto-teardown
   id-token: write
   packages: write
 
-jobs:
-  gate:
-    name: Check dev passed
-    runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
-    steps:
-      - run: echo "Dev passed — proceeding to staging"
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: true
 
+jobs:
   deploy-infra-staging:
     name: "IaC → staging"
     runs-on: ubuntu-latest
-    needs: gate
+    timeout-minutes: 360
     environment:
       name: staging
       url: https://familyshield-staging.everythingcloud.ca
+    outputs:
+      vm_ip: ${{ steps.outputs.outputs.vm_ip }}
 
     steps:
       - uses: actions/checkout@v4
@@ -38,44 +35,299 @@ jobs:
         uses: ./.github/actions/oci-login
         with:
           oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid:    ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint:  ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key:  ${{ secrets.OCI_PRIVATE_KEY }}
+          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+
+      - name: Validate IAM Permissions
+        shell: bash
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+        run: bash scripts/validate-iam-permissions.sh
 
       - name: Apply IaC → staging
         uses: ./.github/actions/tofu-apply
         with:
-          environment:       staging
+          environment: staging
           working_directory: iac
-          var_file:          environments/staging/terraform.tfvars
+          var_file: environments/staging/terraform.tfvars
         env:
-          TF_VAR_oci_tenancy_ocid:       ${{ secrets.OCI_TENANCY_OCID }}
-          TF_VAR_oci_namespace:          ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_ssh_public_key:         ${{ secrets.OCI_SSH_PUBLIC_KEY }}
-          TF_VAR_cloudflare_api_token:   ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          TF_VAR_cloudflare_zone_id:     ${{ secrets.CLOUDFLARE_ZONE_ID }}
-          TF_VAR_cloudflare_account_id:  ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_oci_namespace: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_ssh_public_key: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
-          TF_VAR_supabase_url:           ${{ secrets.SUPABASE_URL_STAGING }}
-          TF_VAR_supabase_anon_key:      ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
-          TF_VAR_groq_api_key:           ${{ secrets.GROQ_API_KEY }}
-          TF_VAR_anthropic_api_key:      ${{ secrets.ANTHROPIC_API_KEY }}
+          TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_STAGING }}
+          TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: Promote images from dev → staging
+      - name: Capture IaC outputs
+        id: outputs
+        working-directory: iac
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
+          echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
+          if [ -n "$VM_IP" ]; then
+            echo "Staging VM IP: $VM_IP"
+          fi
+          echo ""
+          echo "📦 Infrastructure outputs:"
+          tofu output -no-color
+
+  promote-images:
+    name: "Promote images dev → staging"
+    runs-on: ubuntu-latest
+    needs: deploy-infra-staging
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote images
+        run: |
           for app in api portal; do
-            docker pull ghcr.io/everythingcloudsolutions/familyshield-$app:${{ github.sha }}
-            docker tag  ghcr.io/everythingcloudsolutions/familyshield-$app:${{ github.sha }} \
-                        ghcr.io/everythingcloudsolutions/familyshield-$app:staging
+            # Try to pull by SHA first (same commit on qa branch), fall back to :dev
+            docker pull ghcr.io/everythingcloudsolutions/familyshield-$app:${{ github.sha }} || \
+              docker pull ghcr.io/everythingcloudsolutions/familyshield-$app:dev
+            docker tag ghcr.io/everythingcloudsolutions/familyshield-$app:${{ github.sha }} \
+                       ghcr.io/everythingcloudsolutions/familyshield-$app:staging 2>/dev/null || \
+              docker tag ghcr.io/everythingcloudsolutions/familyshield-$app:dev \
+                         ghcr.io/everythingcloudsolutions/familyshield-$app:staging
             docker push ghcr.io/everythingcloudsolutions/familyshield-$app:staging
           done
           echo "✅ Images promoted to staging"
 
+  deploy-app-staging:
+    name: "App deploy → staging VM (via public IP)"
+    runs-on: ubuntu-latest
+    needs: [deploy-infra-staging, promote-images]
+    if: needs.deploy-infra-staging.outputs.vm_ip != ''
+    steps:
+      - name: Deploy containers to staging VM
+        uses: appleboy/ssh-action@v1
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        with:
+          host: ${{ needs.deploy-infra-staging.outputs.vm_ip }}
+          username: ubuntu
+          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          envs: GHCR_TOKEN,GHCR_USER
+          script: |
+            # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
+            sudo cloud-init status --wait 2>/dev/null || true
+            cd /opt/familyshield
+            # Authenticate with GHCR to pull private images
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            # Ensure Redis is running before API starts (API crashes if Redis unreachable)
+            docker compose up -d redis
+            sleep 5
+            # Pull and restart API + portal
+            docker compose pull api portal
+            docker compose up -d --remove-orphans api portal
+            sleep 10
+            docker compose ps
+            echo "✅ Staging app deploy complete"
+
+  setup-cloudflare-staging:
+    name: "Cloudflare setup — staging"
+    runs-on: ubuntu-latest
+    needs: deploy-app-staging
+    if: needs.deploy-app-staging.result != 'skipped'
+    environment:
+      name: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: OCI Login
+        uses: ./.github/actions/oci-login
+        with:
+          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.6.x"
+
+      - name: Get tunnel secret and VM IP from IaC state
+        id: iac
+        working-directory: iac
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+        run: |
+          tofu init \
+            -backend-config="bucket=familyshield-tfstate" \
+            -backend-config="key=staging/terraform.tfstate" \
+            -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
+            -backend-config="region=ca-toronto-1" \
+            -backend-config="skip_region_validation=true" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="use_path_style=true" \
+            -reconfigure
+
+          TUNNEL_SECRET=$(tofu output -raw tunnel_secret 2>/dev/null || echo "")
+          if [ -z "$TUNNEL_SECRET" ]; then
+            echo "❌ Failed to get tunnel_secret — IaC not yet provisioned"
+            exit 1
+          fi
+          echo "::add-mask::$TUNNEL_SECRET"
+          echo "tunnel_secret=$TUNNEL_SECRET" >> $GITHUB_OUTPUT
+
+          VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
+          echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
+          echo "VM IP: $VM_IP"
+
+      - name: Setup Cloudflare (tunnel, DNS, access)
+        id: cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          bash scripts/cloudflare-api.sh setup staging \
+            "${{ steps.iac.outputs.tunnel_secret }}" \
+            "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+
+      - name: Bootstrap VM — copy docker-compose.yml if missing
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          VM_IP: ${{ steps.iac.outputs.vm_ip }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL_STAGING }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+          if [ -z "$VM_IP" ]; then
+            echo "❌ VM IP not available — cannot bootstrap VM"
+            exit 1
+          fi
+          # Check if docker-compose.yml already exists on VM
+          COMPOSE_EXISTS=$(ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 \
+            ubuntu@"$VM_IP" \
+            "test -f /opt/familyshield/docker-compose.yml && echo yes || echo no" 2>/dev/null || echo "no")
+          if [ "$COMPOSE_EXISTS" = "yes" ]; then
+            echo "✅ docker-compose.yml already exists on VM — skipping bootstrap"
+            exit 0
+          fi
+          echo "⚠️  docker-compose.yml missing — rendering template and copying to VM"
+          # Render Terraform template vars; un-escape $${...} → ${...} for Docker runtime env vars
+          sed \
+            -e "s|\${environment}|staging|g" \
+            -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_staging|g" \
+            -e "s|\${supabase_url}|$SUPABASE_URL|g" \
+            -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
+            -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
+            -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
+            -e 's|\$\${|\${|g' \
+            iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
+          scp -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            /tmp/docker-compose.yml \
+            ubuntu@"$VM_IP":/opt/familyshield/docker-compose.yml
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 \
+            ubuntu@"$VM_IP" bash -s <<ENDSSH
+          set -euo pipefail
+          cd /opt/familyshield
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+          docker compose up -d redis
+          sleep 5
+          docker compose pull api portal 2>&1 | tail -5
+          docker compose up -d --remove-orphans api portal
+          sleep 10
+          docker compose ps
+          echo "✅ VM bootstrap complete — api and portal started"
+          ENDSSH
+
+      - name: Write tunnel token to VM and activate cloudflared
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          VM_IP: ${{ steps.iac.outputs.vm_ip }}
+          TUNNEL_TOKEN: ${{ steps.cloudflare.outputs.TUNNEL_TOKEN }}
+        run: |
+          echo "::add-mask::$TUNNEL_TOKEN"
+          if [ -z "$VM_IP" ]; then
+            echo "❌ VM IP not available — cannot write tunnel token"
+            exit 1
+          fi
+          if [ -z "$TUNNEL_TOKEN" ]; then
+            echo "❌ Tunnel token not available from cloudflare-api.sh output"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+
+          # Start cloudflared via docker run (no docker-compose.yml dependency).
+          # --network host lets cloudflared reach services on localhost:3000/3001.
+          # The token downloads ingress config from Cloudflare's control plane.
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 \
+            ubuntu@"$VM_IP" \
+            "docker stop familyshield-cloudflared 2>/dev/null || true; \
+             docker rm familyshield-cloudflared 2>/dev/null || true; \
+             docker run -d \
+               --name familyshield-cloudflared \
+               --restart unless-stopped \
+               --network host \
+               cloudflare/cloudflared:latest \
+               tunnel --no-autoupdate run --token $TUNNEL_TOKEN && \
+             sleep 3 && \
+             docker inspect familyshield-cloudflared --format '{{.State.Status}}' && \
+             echo '✅ cloudflared started with tunnel token'"
+
+      - name: Wait for tunnel to become active (up to 3 min)
+        run: |
+          PORTAL_URL="https://familyshield-staging.everythingcloud.ca"
+          echo "Waiting for Cloudflare tunnel to route traffic: $PORTAL_URL"
+          for attempt in {1..18}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$PORTAL_URL" || echo "000")
+            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
+              echo "✅ Tunnel active — portal reachable (HTTP $STATUS, attempt $attempt)"
+              exit 0
+            fi
+            echo "   Attempt $attempt/18 — HTTP $STATUS, waiting 10s..."
+            sleep 10
+          done
+          echo "⚠️  Tunnel HTTP not confirmed after 3 min — integration tests will re-verify"
+
   integration-tests:
     name: "Integration tests — staging"
     runs-on: ubuntu-latest
-    needs: deploy-infra-staging
+    needs: setup-cloudflare-staging
+    if: needs.setup-cloudflare-staging.result != 'skipped'
     steps:
       - uses: actions/checkout@v4
 
@@ -85,12 +337,188 @@ jobs:
           node-version: "20"
 
       - name: Run Playwright E2E tests
+        id: playwright
         run: |
           cd apps/portal
           npm ci --prefer-offline
           npx playwright install --with-deps chromium
-          npx playwright test --reporter=github
+          npx playwright test --reporter=html,github
         env:
           BASE_URL: https://familyshield-staging.everythingcloud.ca
           TEST_PARENT_EMAIL: ${{ secrets.TEST_PARENT_EMAIL }}
           TEST_PARENT_PASSWORD: ${{ secrets.TEST_PARENT_PASSWORD }}
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-staging-${{ github.run_id }}
+          path: apps/portal/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  smoke-test:
+    name: "Smoke test — staging"
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    if: needs.integration-tests.result != 'skipped'
+    steps:
+      - name: Verify staging is healthy
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID_STAGING }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET_STAGING }}
+        run: |
+          BASE_URL="https://familyshield-staging.everythingcloud.ca"
+          CF_HEADERS=()
+          if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
+            CF_HEADERS=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+          fi
+          PASSED=false
+          for i in {1..10}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$BASE_URL" || echo "000")
+            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
+              echo "✅ Staging portal healthy (HTTP $STATUS)"
+              PASSED=true
+              break
+            elif [[ "$STATUS" =~ ^5 ]]; then
+              echo "❌ Server error $STATUS — failing"
+              exit 1
+            fi
+            echo "Attempt $i: $STATUS — waiting 15s..."
+            sleep 15
+          done
+          $PASSED || { echo "❌ Staging not reachable after 10 attempts (last: $STATUS)"; exit 1; }
+          echo "✅ Staging smoke test passed"
+
+  # ── Auto-teardown ────────────────────────────────────────────────────────
+  # Runs ALWAYS after testing (pass or fail) — staging is ephemeral.
+  # Publishes test summary → destroys OCI + Cloudflare → deletes qa branch.
+  auto-teardown:
+    name: "Publish results + teardown staging (always)"
+    runs-on: ubuntu-latest
+    needs: [smoke-test, integration-tests]
+    if: always()
+    environment:
+      name: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish QA results summary
+        run: |
+          TESTS="${{ needs.integration-tests.result }}"
+          SMOKE="${{ needs.smoke-test.result }}"
+          if [ "$TESTS" = "success" ] && [ "$SMOKE" = "success" ]; then
+            OVERALL="✅ PASSED"
+          else
+            OVERALL="❌ FAILED"
+          fi
+          echo "## QA Results — Staging Run #${{ github.run_number }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Check | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Playwright E2E tests | ${{ needs.integration-tests.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Smoke test | ${{ needs.smoke-test.result }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Overall** | **${OVERALL}** |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Playwright report:** [Download artifact](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "---" >> "$GITHUB_STEP_SUMMARY"
+          echo "*Staging environment is ephemeral — infrastructure will now be torn down.*" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: OCI Login
+        uses: ./.github/actions/oci-login
+        with:
+          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.6.x"
+
+      - name: Read VM IP from IaC state
+        id: iac
+        working-directory: iac
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+        run: |
+          tofu init \
+            -backend-config="bucket=familyshield-tfstate" \
+            -backend-config="key=staging/terraform.tfstate" \
+            -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
+            -backend-config="region=ca-toronto-1" \
+            -backend-config="skip_region_validation=true" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="use_path_style=true" \
+            -reconfigure
+          VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
+          echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
+          echo "VM IP: ${VM_IP:-<not found>}"
+
+      - name: Stop all containers on staging VM
+        if: steps.iac.outputs.vm_ip != ''
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          VM_IP: ${{ steps.iac.outputs.vm_ip }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 \
+            ubuntu@"$VM_IP" \
+            "cd /opt/familyshield 2>/dev/null && \
+             docker stop familyshield-cloudflared 2>/dev/null || true && \
+             docker rm familyshield-cloudflared 2>/dev/null || true && \
+             docker compose down --remove-orphans 2>/dev/null || true && \
+             echo '✅ All containers stopped'" \
+            || echo "⚠️  SSH unreachable — VM may already be gone, continuing"
+
+      - name: Cleanup Cloudflare resources (tunnel, DNS, access)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          bash scripts/cloudflare-api.sh cleanup staging || true
+          echo "✅ Cloudflare cleanup complete"
+
+      - name: tofu destroy — staging
+        working-directory: iac
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          TF_VAR_oci_namespace: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_ssh_public_key: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
+          TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
+          TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_STAGING }}
+          TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
+          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          tofu destroy \
+            -var="environment=staging" \
+            -var-file="environments/staging/terraform.tfvars" \
+            -auto-approve \
+            -no-color
+          echo "✅ Staging OCI infrastructure destroyed (Always Free quota released)"
+
+      - name: Delete qa branch
+        if: github.ref == 'refs/heads/qa'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X DELETE /repos/${{ github.repository }}/git/refs/heads/qa \
+            && echo "✅ qa branch deleted" \
+            || echo "⚠️  qa branch already deleted or not found"

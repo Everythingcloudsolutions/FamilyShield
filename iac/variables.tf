@@ -27,18 +27,11 @@ variable "oci_auth_type" {
   default     = "APIKey"
 }
 
-variable "oci_ubuntu_arm_image_id" {
-  description = "OCI ARM Ubuntu 22.04 image OCID for ca-toronto-1"
-  type        = string
-  # Find via: oci compute image list --compartment-id <tenancy-ocid> --operating-system "Canonical Ubuntu" --shape VM.Standard.A1.Flex
-  # Current ca-toronto-1 Ubuntu 22.04 ARM image (update periodically):
-  default = "ocid1.image.oc1.ca-toronto-1.aaaaaaaawzbmdqqvrcLW4cvhegvnbbxtoday4bxlkdpqeowc5kcbrhplit2a"
-}
-
 variable "ssh_public_key" {
   description = "SSH public key to install on OCI VMs for VS Code Remote SSH"
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 # ── Network ───────────────────────────────────────────────────────────────────
@@ -47,6 +40,20 @@ variable "vcn_cidr" {
   description = "CIDR block for the VCN"
   type        = string
   default     = "10.0.0.0/16"
+}
+
+# ── Compute ───────────────────────────────────────────────────────────────────
+
+variable "instance_ocpus" {
+  description = "Number of OCPUs for compute instance (environment-specific)"
+  type        = number
+  default     = 1
+}
+
+variable "instance_memory" {
+  description = "Memory in GB for compute instance (environment-specific)"
+  type        = number
+  default     = 6
 }
 
 # ── Environment ───────────────────────────────────────────────────────────────
@@ -58,24 +65,6 @@ variable "environment" {
     condition     = contains(["dev", "staging", "prod"], var.environment)
     error_message = "Environment must be dev, staging, or prod."
   }
-}
-
-# ── Cloudflare ────────────────────────────────────────────────────────────────
-
-variable "cloudflare_api_token" {
-  description = "Cloudflare API token with Zone:DNS:Edit and Tunnel permissions"
-  type        = string
-  sensitive   = true
-}
-
-variable "cloudflare_zone_id" {
-  description = "Cloudflare Zone ID for everythingcloud.ca"
-  type        = string
-}
-
-variable "cloudflare_account_id" {
-  description = "Cloudflare Account ID"
-  type        = string
 }
 
 # ── Application Secrets ───────────────────────────────────────────────────────

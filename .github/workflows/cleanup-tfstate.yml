@@ -1,0 +1,90 @@
+# .github/workflows/cleanup-tfstate.yml
+# One-time cleanup workflow to remove orphaned cloudflare resources from Terraform state
+# Run this once to fix the state after removing cloudflare module from IaC
+name: Cleanup Terraform State
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to cleanup"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  cleanup-state:
+    name: "Remove orphaned cloudflare resources from state"
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: OCI Login
+        uses: ./.github/actions/oci-login
+        with:
+          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          oci_user_ocid:    ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint:  ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key:  ${{ secrets.OCI_PRIVATE_KEY }}
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: "1.6.x"
+
+      - name: Initialize Terraform
+        working-directory: iac
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ca-toronto-1
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+        run: |
+          tofu init \
+            -backend-config="bucket=familyshield-tfstate" \
+            -backend-config="key=${{ inputs.environment }}/terraform.tfstate" \
+            -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
+            -backend-config="region=ca-toronto-1" \
+            -backend-config="skip_region_validation=true" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="use_path_style=true" \
+            -reconfigure
+          echo "✅ tofu init complete"
+
+      - name: Remove orphaned cloudflare resources from state
+        working-directory: iac
+        shell: bash
+        run: |
+          echo "Removing cloudflare module resources from state..."
+
+          # List current state resources
+          echo ""
+          echo "📋 Current state resources:"
+          tofu state list 2>/dev/null || echo "No resources in state yet"
+
+          # Remove cloudflare module if it exists in state
+          echo ""
+          echo "🗑️  Removing module.cloudflare and related resources..."
+
+          tofu state rm module.cloudflare.cloudflare_tunnel.main 2>/dev/null && echo "✅ Removed cloudflare_tunnel.main" || echo "ℹ️  cloudflare_tunnel.main not in state"
+          tofu state rm module.cloudflare.cloudflare_tunnel_config.main 2>/dev/null && echo "✅ Removed cloudflare_tunnel_config.main" || echo "ℹ️  cloudflare_tunnel_config.main not in state"
+          tofu state rm module.cloudflare 2>/dev/null && echo "✅ Removed cloudflare module" || echo "ℹ️  cloudflare module not in state"
+
+          echo ""
+          echo "📋 State after cleanup:"
+          tofu state list 2>/dev/null || echo "State is now empty"
+
+          echo ""
+          echo "✅ State cleanup complete for ${{ inputs.environment }}"

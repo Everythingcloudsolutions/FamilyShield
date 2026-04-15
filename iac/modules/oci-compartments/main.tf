@@ -1,27 +1,49 @@
 ###############################################################################
 # Module: oci-compartments
-# Creates the FamilyShield compartment for a given environment
+# Queries existing FamilyShield compartment (created by bootstrap-oci.sh)
+# Bootstrap script Step 7 creates: familyshield-dev, familyshield-staging, familyshield-prod
+# IaC queries for existing compartments and fails with clear error if not found
 ###############################################################################
 
-resource "oci_identity_compartment" "familyshield" {
+# Data source to query the existing compartment created by bootstrap-oci.sh
+data "oci_identity_compartments" "familyshield" {
   compartment_id = var.tenancy_ocid
-  name           = "familyshield-${var.environment}"
-  description    = var.compartment_description
-  enable_delete  = true
-
-  freeform_tags = var.tags
+  filter {
+    name   = "name"
+    values = ["familyshield-${var.environment}"]
+  }
 }
 
-# IAM Policy — allow GitHub Actions dynamic group to manage resources in this compartment
-resource "oci_identity_policy" "github_actions" {
-  compartment_id = var.tenancy_ocid
-  name           = "familyshield-${var.environment}-github-actions-policy"
-  description    = "Allows GitHub Actions OIDC identity to manage FamilyShield ${var.environment} resources"
+# Extract compartment ID with validation
+locals {
+  compartment_id = try(data.oci_identity_compartments.familyshield.compartments[0].id, null)
 
-  statements = [
-    "Allow dynamic-group familyshield-github-actions to manage all-resources in compartment familyshield-${var.environment}",
-    "Allow dynamic-group familyshield-github-actions to read objectstorage-namespaces in tenancy",
-  ]
-
-  freeform_tags = var.tags
+  # Validation check
+  compartment_exists = local.compartment_id != null ? true : false
 }
+
+# Trigger an error if compartment not found (clear instruction to user)
+resource "null_resource" "compartment_validation" {
+  lifecycle {
+    precondition {
+      condition     = local.compartment_exists
+      error_message = <<-EOT
+        ❌ FamilyShield compartment 'familyshield-${var.environment}' not found in OCI.
+
+        This compartment must be created by the bootstrap script BEFORE running tofu apply.
+
+        FIX: Run the bootstrap script from your local machine:
+          bash scripts/bootstrap-oci.sh
+
+        This script creates three compartments:
+          - familyshield-dev
+          - familyshield-staging
+          - familyshield-prod
+
+        After bootstrap completes, re-run: tofu apply
+      EOT
+    }
+  }
+}
+
+

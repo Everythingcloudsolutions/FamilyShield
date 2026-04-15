@@ -1,9 +1,10 @@
 ###############################################################################
 # FamilyShield — Root IaC Orchestration
-# Provider: Oracle Cloud (OCI) + Cloudflare + Supabase
+# Provider: Oracle Cloud (OCI)
 # Region:   ca-toronto-1
 # Author:   Everythingcloudsolutions
 # Year:     2026
+# Note: Cloudflare resources are now managed by deploy-cloudflare.yml workflow
 ###############################################################################
 
 terraform {
@@ -14,28 +15,23 @@ terraform {
       source  = "oracle/oci"
       version = "~> 5.0"
     }
-    cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 4.0"
-    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.0"
     }
   }
 
-  # Note: Using local backend for initial setup
-  # TODO: Migrate to OCI Object Storage backend after first deployment
-  # backend "s3" {
-  #   bucket                      = "familyshield-tfstate"
-  #   key                         = "root/terraform.tfstate"
-  #   region                      = "ca-toronto-1"
-  #   endpoint                    = "https://<namespace>.compat.objectstorage.ca-toronto-1.oraclecloud.com"
-  #   skip_region_validation      = true
-  #   skip_credentials_validation = true
-  #   skip_metadata_api_check     = true
-  #   use_path_style              = true
-  # }
+  backend "s3" {
+    bucket = "familyshield-tfstate"
+    key    = "root/terraform.tfstate"
+    region = "ca-toronto-1"
+    # endpoint is passed via -backend-config flag in GitHub Actions workflow
+    # (requires dynamic OCI_NAMESPACE value from environment)
+    skip_region_validation      = true
+    skip_credentials_validation = true
+    skip_metadata_api_check     = true
+    use_path_style              = true
+  }
 }
 
 ###############################################################################
@@ -50,12 +46,10 @@ provider "oci" {
   auth = var.oci_auth_type # "InstancePrincipal" in CI, "APIKey" locally
 }
 
-provider "cloudflare" {
-  api_token = var.cloudflare_api_token
-}
-
 ###############################################################################
-# Compartments
+# Compartments — Bootstrap-driven (Phase 2)
+# Bootstrap script Step 7 creates: familyshield-dev, familyshield-staging, familyshield-prod
+# IaC queries for existing compartments (no creation here)
 ###############################################################################
 
 module "compartments" {
@@ -68,7 +62,7 @@ module "compartments" {
 }
 
 ###############################################################################
-# Networking
+# Networking — Depends on: Compartments
 ###############################################################################
 
 module "network" {
@@ -82,33 +76,37 @@ module "network" {
 }
 
 ###############################################################################
-# Object Storage (state + backups)
+# Object Storage (state + backups) — Depends on: Compartments
 ###############################################################################
 
 module "storage" {
   source = "./modules/oci-storage"
 
-  compartment_id = module.compartments.compartment_id
-  namespace      = var.oci_namespace
-  environment    = var.environment
-  tags           = local.common_tags
+  namespace = var.oci_namespace # bucket is read-only; created once by bootstrap-oci.sh
 }
 
 ###############################################################################
-# Compute — ARM VM (Always Free: 4 OCPU / 24GB)
+# Compute — Environment-specific VM sizing
+# Depends on: Compartments, Network, Storage
+# Resource allocation per environment:
+#   - dev:     1 OCPU / 6GB RAM (always on)
+#   - staging: 1 OCPU / 6GB RAM (ephemeral, torn down after QA)
+#   - prod:    2 OCPU / 6GB RAM (always on)
+# Total within OCI Always Free: 4 OCPU / 24GB RAM max
 ###############################################################################
 
 module "compute" {
   source = "./modules/oci-compute"
 
   compartment_id = module.compartments.compartment_id
+  tenancy_ocid   = var.oci_tenancy_ocid
   subnet_id      = module.network.public_subnet_id
   environment    = var.environment
   ssh_public_key = var.ssh_public_key
   instance_shape = "VM.Standard.A1.Flex"
-  ocpus          = 4
-  memory_in_gbs  = 24
-  image_id       = var.oci_ubuntu_arm_image_id
+  ocpus          = var.instance_ocpus
+  memory_in_gbs  = var.instance_memory
+  # image_id intentionally NOT set — compute module dynamically queries for Ubuntu 22.04 ARM image
   cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
     environment = var.environment
     docker_compose_b64 = base64encode(templatefile(
@@ -121,20 +119,23 @@ module "compute" {
 
 ###############################################################################
 # Cloudflare DNS + Tunnel + Zero Trust
+# NOTE: Cloudflare resources are now managed via separate deploy-cloudflare.yml
+# workflow using the Cloudflare API directly (not Terraform).
+# This avoids state management conflicts and allows for independent updates.
 ###############################################################################
 
-module "cloudflare" {
-  source = "./modules/cloudflare-dns"
-
-  cloudflare_zone_id    = var.cloudflare_zone_id
-  cloudflare_account_id = var.cloudflare_account_id
-  subdomain             = "familyshield-${var.environment}"
-  root_domain           = "everythingcloud.ca"
-  tunnel_secret         = random_password.tunnel_secret.result
-  environment           = var.environment
-  vm_public_ip          = module.compute.public_ip
-  admin_emails          = var.admin_emails
-}
+# module "cloudflare" {
+#   source = "./modules/cloudflare-dns"
+#
+#   cloudflare_zone_id    = var.cloudflare_zone_id
+#   cloudflare_account_id = var.cloudflare_account_id
+#   subdomain             = "familyshield-${var.environment}"
+#   root_domain           = "everythingcloud.ca"
+#   tunnel_secret         = random_password.tunnel_secret.result
+#   environment           = var.environment
+#   vm_public_ip          = module.compute.public_ip
+#   admin_emails          = var.admin_emails
+# }
 
 ###############################################################################
 # Helpers
@@ -155,9 +156,11 @@ locals {
   }
 
   docker_compose_vars = {
-    environment       = var.environment
-    adguard_password  = var.adguard_admin_password
-    tunnel_token      = module.cloudflare.tunnel_token
+    environment      = var.environment
+    adguard_password = var.adguard_admin_password
+    # tunnel_token is set by deploy-cloudflare.yml workflow via SSM Parameter or Object Storage
+    # It's not available at IaC time, so we use a placeholder here
+    tunnel_token      = "TUNNEL_TOKEN_PLACEHOLDER_${var.environment}"
     headscale_domain  = "vpn.familyshield-${var.environment}.everythingcloud.ca"
     supabase_url      = var.supabase_url
     supabase_anon_key = var.supabase_anon_key

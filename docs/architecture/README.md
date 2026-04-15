@@ -1,5 +1,6 @@
 # FamilyShield — Architecture
 
+> Last updated: 2026-04-14 — Added ADR-001b for resource allocation strategy (Dev/Staging/Prod sizing)
 > All diagrams render natively in GitHub. For editable source files see `docs/diagrams/`.
 > Editable draw.io files: `docs/diagrams/*.drawio` — open at diagrams.net or VS Code draw.io extension.
 > Editable Excalidraw files: `docs/diagrams/*.excalidraw` — open at excalidraw.com or VS Code Excalidraw extension.
@@ -48,6 +49,41 @@ Each ADR captures *what* was decided, *why*, and *what was rejected*.
 | Hetzner CAX21 | ~$10 | German data centre, not Canadian residency |
 
 **Decision:** OCI ca-toronto-1. Always Free ARM VM with 4 OCPU / 24GB RAM. Canadian data residency satisfies PIPEDA.
+
+---
+
+### ADR-001b: Resource Allocation — Three Environments, One Always Free Tier
+
+**Status:** Accepted  
+**Date:** 2026-04  
+**Context:** FamilyShield uses three environments (dev, staging, prod) but only one Always Free tier (4 OCPU / 24GB RAM max). How to allocate resources fairly while keeping staging ephemeral for cost optimization?
+
+**Rejected Options:**
+
+- Single shared VM for all three environments (risk: dev crashes take out prod)
+- Single prod-only VM, no dev/staging (risk: cannot test safely before prod)
+- Lease additional VMs (violates cost constraint)
+
+**Decision:** Three separate VMs with environment-specific sizing:
+
+| Environment | Sizing | Duration | Use Case |
+| --- | --- | --- | --- |
+| **Dev** | 1 OCPU / 6GB RAM | Always on | Daily development, testing |
+| **Staging** | 1 OCPU / 6GB RAM | Ephemeral | Spun up for QA testing only, torn down after |
+| **Prod** | 2 OCPU / 6GB RAM | Always on | Live families, higher throughput |
+
+**Resource math:**
+
+- Baseline (dev + prod always on): 3 OCPU / 12GB RAM
+- Staging when active: +1 OCPU / 6GB RAM = 4 OCPU / 18GB total (within 4C/24GB Always Free)
+- Staging when destroyed: 3 OCPU / 12GB (frees 1C/6GB for growth/buffer)
+
+**Enforcement:**
+
+- Bootstrap script (`scripts/bootstrap-oci.sh`) creates three compartments: `familyshield-dev`, `familyshield-staging`, `familyshield-prod`
+- Environment tfvars files (`iac/environments/{dev,staging,prod}/terraform.tfvars`) specify OCPU/memory per environment
+- IaC module sequencing ensures compartments exist before resources are created
+- Ephemeral staging is documented in `docs/qa-framework/README.md` with spinup/test/teardown procedures
 
 ---
 
@@ -279,15 +315,35 @@ C4Component
 
 ---
 
-## Deployment Diagram
+## Deployment Diagram — Three-Stage Pipeline
+
+FamilyShield uses a three-stage deployment approach to manage infrastructure, networking, and applications independently:
 
 ```mermaid
 flowchart TB
   subgraph github["GitHub (Private Repo)"]
     code["Source code"]
-    actions["GitHub Actions"]
     secrets["Repository Secrets"]
     ghcr["GHCR — Docker images"]
+  end
+
+  subgraph stage1["STAGE 1 — Infrastructure (IaC)"]
+    deploy_dev["deploy-dev.yml"]
+    deploy_stg["deploy-staging.yml"]
+    deploy_prod["deploy-prod.yml"]
+  end
+
+  subgraph stage2["STAGE 2 — Cloudflare (API)"]
+    cf_dev["deploy-cloudflare.yml"]
+    cf_stg["deploy-cloudflare.yml"]
+    cf_prod["deploy-cloudflare.yml"]
+  end
+
+  subgraph stage3["STAGE 3 — App Deployment"]
+    build["build-and-push<br/>(Docker images)"]
+    app_dev["deploy-app-dev.yml"]
+    app_stg["deploy-app-staging.yml"]
+    app_prod["deploy-app-prod.yml"]
   end
 
   subgraph oci["OCI Toronto — ca-toronto-1"]
@@ -303,37 +359,213 @@ flowchart TB
     end
   end
 
-  subgraph cloudflare["Cloudflare"]
-    dns["DNS — everythingcloud.ca"]
-    tunnel_dev["Tunnel → dev"]
-    tunnel_stg["Tunnel → staging"]
-    tunnel_prd["Tunnel → prod"]
-    zt["Zero Trust"]
+  subgraph cloudflare["Cloudflare API"]
+    dns["DNS records<br/>everythingcloud.ca"]
+    tunnel_dev["Tunnel: familyshield-dev"]
+    tunnel_stg["Tunnel: familyshield-staging"]
+    tunnel_prod["Tunnel: familyshield-prod"]
+    zt["Zero Trust<br/>Access Apps"]
   end
 
   subgraph external["External Services"]
-    supabase["Supabase"]
-    groq["Groq"]
-    anthropic["Anthropic"]
+    supabase["Supabase<br/>(PostgreSQL)"]
+    groq["Groq LLM<br/>(primary)"]
+    anthropic["Anthropic<br/>(fallback)"]
   end
 
-  code --> actions
-  secrets --> actions
-  actions -->|"tofu apply (auto)"| dev_comp
-  actions -->|"tofu apply (auto)"| stg_comp
-  actions -->|"tofu apply (manual approve)"| prd_comp
-  actions --> ghcr
-  ghcr -->|"docker pull"| dev_vm
-  ghcr -->|"docker pull"| stg_vm
-  ghcr -->|"docker pull"| prd_vm
-  dev_vm --> tunnel_dev --> dns
-  stg_vm --> tunnel_stg --> dns
-  prd_vm --> tunnel_prd --> dns
+  code --> deploy_dev
+  code --> deploy_stg
+  code --> deploy_prod
+  secrets --> deploy_dev
+  secrets --> cf_dev
+  secrets --> build
+
+  deploy_dev -->|"tofu apply<br/>(auto)"| dev_comp
+  deploy_stg -->|"tofu apply<br/>(auto after dev)"| stg_comp
+  deploy_prod -->|"tofu apply<br/>(manual approve)"| prd_comp
+
+  dev_comp -->|"success"| cf_dev
+  stg_comp -->|"success"| cf_stg
+  prd_comp -->|"success"| cf_prod
+
+  cf_dev -->|"creates"| tunnel_dev
+  cf_stg -->|"creates"| tunnel_stg
+  cf_prod -->|"creates"| tunnel_prod
+
+  tunnel_dev --> dns
+  tunnel_stg --> dns
+  tunnel_prod --> dns
   dns --> zt
+
+  deploy_dev -->|"parallel"| build
+  build --> ghcr
+
+  ghcr -->|"pull"| app_dev
+  ghcr -->|"pull"| app_stg
+  ghcr -->|"pull"| app_prod
+
+  cf_dev -->|"tunnel ready"| app_dev
+  cf_stg -->|"tunnel ready"| app_stg
+  cf_prod -->|"tunnel ready"| app_prod
+
+  app_dev -->|"deploy"| dev_vm
+  app_stg -->|"deploy"| stg_vm
+  app_prod -->|"deploy"| prd_vm
+
   dev_vm --> supabase
   dev_vm --> groq
   dev_vm --> anthropic
 ```
+
+**Key characteristics:**
+
+- **Stage 1 (IaC):** Creates OCI infrastructure independently — no state conflicts, runs first
+- **Stage 2 (Cloudflare):** Triggered after IaC succeeds — creates tunnel, DNS, access apps via API (not Terraform)
+- **Stage 3 (App):** Parallel Docker build + deployment after Stage 2 completes
+
+---
+
+## Cloudflare Tunnel Configuration
+
+FamilyShield uses Cloudflare Tunnel to expose backend services without opening inbound ports on the OCI VM. The tunnel creates an outbound-only connection to Cloudflare, eliminating attack surface and simplifying firewall management.
+
+### Tunnel Ingress Routes
+
+Each environment has a separate tunnel with the following routes:
+
+| Hostname | Service | Port | Type | Purpose |
+|---|---|---|---|---|
+| `familyshield-{env}.everythingcloud.ca` | Portal | 3000 | HTTP/HTTPS | Parent dashboard (Next.js) |
+| `api-{env}.everythingcloud.ca` | API | 3001 | HTTP/HTTPS | Content enrichment worker (Node.js) |
+| `adguard-{env}.everythingcloud.ca` | AdGuard Home | 3080 | HTTP/HTTPS | DNS management UI (Zero Trust access) |
+| `mitmproxy-{env}.everythingcloud.ca` | mitmproxy | 8080 | HTTP/HTTPS | SSL proxy inspection UI |
+| `vpn.familyshield-{env}.everythingcloud.ca` | Headscale | 8080 | HTTP/HTTPS | VPN control plane |
+| `grafana-{env}.everythingcloud.ca` | Grafana | 3000 | HTTP/HTTPS | Metrics dashboards (Zero Trust access) |
+| `nodered-{env}.everythingcloud.ca` | Node-RED | 1880 | HTTP/HTTPS | Automation/rules engine |
+| `ssh.familyshield-{env}.everythingcloud.ca` | SSH | 22 | **TCP** | **Administrative SSH access (zero public IP exposure)** |
+
+**Note:** 
+- Zero Trust access policies are applied to admin UIs (`adguard-*`, `grafana-*`) requiring email-based authentication. Public-facing services (Portal, API) bypass Zero Trust.
+- **SSH route uses TCP tunneling** (not HTTP) — allows `ssh ubuntu@ssh.familyshield-{env}.everythingcloud.ca` with full security benefits of Cloudflare Tunnel.
+- **Public IP (inbound):** ❌ Closed — no SSH access directly to instance IP
+- **Tunnel SSH:** ✅ Enabled — all management access routes through secure outbound tunnel
+
+### Deployment Sequence (with SSH Tunnel Routing)
+
+**Phase 1: IaC Deployment (deploy-dev.yml)**
+- OCI VM is created in `familyshield-dev` compartment
+- `tunnel_secret` is generated as a random password by Terraform
+- VM is configured with `cloud-init` script
+- **SSH in this phase:** Public IP only (tunnel not created yet)
+- Docker images built for api and portal
+- Services deployed via SSH to public IP (temporary, app containers ready)
+
+**Phase 2: Cloudflare Tunnel Setup (deploy-cloudflare.yml — auto-triggered after Phase 1)**
+- Triggered automatically after deploy-dev.yml succeeds
+- Retrieves `tunnel_secret` from IaC outputs (Terraform state)
+- Calls Cloudflare API to create tunnel:
+  - Tunnel name: `familyshield-{env}`
+  - Tunnel secret (base64 encoded)
+  - **SSH route:** `ssh.familyshield-{env}.everythingcloud.ca` → `localhost:22` on VM (TCP tunneling)
+  - HTTP ingress routes for portal, API, admin UIs
+- Creates DNS CNAME records pointing to tunnel (including SSH hostname)
+- Creates Access Application policies for admin UIs
+- **Result:** Tunnel is ready, SSH hostname is now resolvable and routed through Cloudflare
+
+**Phase 3: SSH Tunnel Verification (post-deploy-tunnel-ssh-dev.yml — auto-triggered after Phase 2)**
+- Polls Cloudflare API to verify tunnel exists
+- **Tests SSH access via tunnel hostname:** `ssh ubuntu@ssh.familyshield-{env}.everythingcloud.ca`
+- Verifies OS is accessible via tunnel (uname, hostname)
+- **Confirms:** All future SSH management goes through Cloudflare Tunnel (zero public IP exposure)
+- **Result:** Tunnel-based SSH is operational
+
+### SSH Access Transition
+
+| Phase | Timing | SSH Method | IP Exposure |
+|---|---|---|---|
+| Phase 1 (IaC) | deploy-dev.yml running | Public IP (direct) | ⚠️ Temporary (instance bootstrap only) |
+| Phase 2 (Tunnel setup) | deploy-cloudflare.yml running | Tunnel (DNS + routing) | ✅ Ready |
+| **Phase 3+ (Production)** | **After tunnel verified** | **Tunnel hostname** | **✅ Zero public exposure** |
+
+**From Phase 3 onward:**
+- All SSH to the VM uses: `ssh ubuntu@ssh.familyshield-{env}.everythingcloud.ca`
+- Public IP is unreachable for SSH (can block with OCI security list if desired)
+- All management traffic routes through Cloudflare Tunnel outbound connection
+- **Attack surface:** Reduced to zero — no exposed SSH port on public IP
+
+### Cloudflare API Integration
+
+The `scripts/cloudflare-api.sh` script is responsible for all Cloudflare operations:
+
+```bash
+# Setup all Cloudflare resources for an environment
+bash scripts/cloudflare-api.sh setup dev "$tunnel_secret" "admin@example.com"
+
+# Cleanup (removes tunnel, DNS, access apps)
+bash scripts/cloudflare-api.sh cleanup dev
+```
+
+**Required secrets (GitHub):**
+
+- `CLOUDFLARE_API_TOKEN` — Custom token with scopes: DNS Edit, Tunnel Edit, Access Apps Edit
+- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account ID
+- `CLOUDFLARE_ZONE_ID` — Cloudflare zone ID for `everythingcloud.ca`
+
+### Why Not Terraform for Cloudflare?
+
+Terraform/OpenTofu struggles with Cloudflare state management when:
+
+- Resources are created outside Terraform (e.g., manual Cloudflare dashboard)
+- State gets out of sync with live resources
+- Re-running `tofu apply` tries to recreate already-existing resources (409 conflicts)
+
+**Solution:** Cloudflare resources are managed via API (`deploy-cloudflare.yml` workflow) entirely separately from IaC. This decoupling allows:
+
+- Independent updates without triggering full IaC rebuilds
+- Easy cleanup via API without state conflicts
+- Idempotent operations (rerunning setup skips existing resources)
+
+### Workflow Automation Sequence (SSH Zero-Exposure Architecture)
+
+The deployment is automated across three coordinated workflows:
+
+```mermaid
+graph TD
+    A["deploy-dev.yml (Phase 1: IaC)"] -->|Success| B["deploy-cloudflare.yml (Phase 2: Tunnel)"]
+    B -->|Success| C["post-deploy-tunnel-ssh-dev.yml (Phase 3: Verify)"]
+    
+    A1["• OCI VM creation<br/>• Docker build + push<br/>• SSH: Public IP (temp)"] -.-> A
+    B1["• Cloudflare tunnel creation<br/>• DNS records (8 routes)<br/>• SSH hostname registered"] -.-> B
+    C1["• SSH via tunnel: Test<br/>• OS health check: OK<br/>• Result: Zero-exposure verified"] -.-> C
+    
+    C -->|Confirmed| D["🔐 All SSH now via tunnel<br/>Public IP: ❌ Closed<br/>Tunnel SSH: ✅ Active"]
+```
+
+**Automation Trigger Chain:**
+1. Developer: `git push origin feature-branch` + PR merge to `development`
+2. GitHub: `deploy-dev.yml` runs (IaC + app deployment via public IP)
+3. GitHub: `deploy-cloudflare.yml` triggers **automatically** (workflow_run on success)
+4. GitHub: `post-deploy-tunnel-ssh-dev.yml` triggers **automatically** (workflow_run on success)
+5. **Result:** Tunnel is ready, SSH verified, zero public exposure confirmed
+
+**Status:** ✅ Fully automated — no manual steps required after merge
+
+### Optional: Hardening Public IP (Security Hardening)
+
+After Phase 3 completes and tunnel SSH is verified, you can **optionally** lock down the public IP further:
+
+**Option 1: Block SSH on public IP (OCI Security List)**
+```bash
+# Deny incoming SSH to public IP
+# Keep: HTTPS (443) for Cloudflare tunnel agent heartbeat
+# Block: SSH (22) — all management now via tunnel
+```
+
+**Option 2: Keep public IP for emergency access**
+- Leave SSH open but document in runbook as "emergency access only"
+- Normally use tunnel SSH; only use direct IP if tunnel is down
+
+**Current state:** Public IP is open but not advertised. Tunnel SSH is the documented (and automated) path.
 
 ---
 
