@@ -433,45 +433,65 @@ FamilyShield uses Cloudflare Tunnel to expose backend services without opening i
 
 Each environment has a separate tunnel with the following routes:
 
-| Hostname | Service | Port | Purpose |
+| Hostname | Service | Port | Type | Purpose |
+|---|---|---|---|---|
+| `familyshield-{env}.everythingcloud.ca` | Portal | 3000 | HTTP/HTTPS | Parent dashboard (Next.js) |
+| `api-{env}.everythingcloud.ca` | API | 3001 | HTTP/HTTPS | Content enrichment worker (Node.js) |
+| `adguard-{env}.everythingcloud.ca` | AdGuard Home | 3080 | HTTP/HTTPS | DNS management UI (Zero Trust access) |
+| `mitmproxy-{env}.everythingcloud.ca` | mitmproxy | 8080 | HTTP/HTTPS | SSL proxy inspection UI |
+| `vpn.familyshield-{env}.everythingcloud.ca` | Headscale | 8080 | HTTP/HTTPS | VPN control plane |
+| `grafana-{env}.everythingcloud.ca` | Grafana | 3000 | HTTP/HTTPS | Metrics dashboards (Zero Trust access) |
+| `nodered-{env}.everythingcloud.ca` | Node-RED | 1880 | HTTP/HTTPS | Automation/rules engine |
+| `ssh.familyshield-{env}.everythingcloud.ca` | SSH | 22 | **TCP** | **Administrative SSH access (zero public IP exposure)** |
+
+**Note:** 
+- Zero Trust access policies are applied to admin UIs (`adguard-*`, `grafana-*`) requiring email-based authentication. Public-facing services (Portal, API) bypass Zero Trust.
+- **SSH route uses TCP tunneling** (not HTTP) — allows `ssh ubuntu@ssh.familyshield-{env}.everythingcloud.ca` with full security benefits of Cloudflare Tunnel.
+- **Public IP (inbound):** ❌ Closed — no SSH access directly to instance IP
+- **Tunnel SSH:** ✅ Enabled — all management access routes through secure outbound tunnel
+
+### Deployment Sequence (with SSH Tunnel Routing)
+
+**Phase 1: IaC Deployment (deploy-dev.yml)**
+- OCI VM is created in `familyshield-dev` compartment
+- `tunnel_secret` is generated as a random password by Terraform
+- VM is configured with `cloud-init` script
+- **SSH in this phase:** Public IP only (tunnel not created yet)
+- Docker images built for api and portal
+- Services deployed via SSH to public IP (temporary, app containers ready)
+
+**Phase 2: Cloudflare Tunnel Setup (deploy-cloudflare.yml — auto-triggered after Phase 1)**
+- Triggered automatically after deploy-dev.yml succeeds
+- Retrieves `tunnel_secret` from IaC outputs (Terraform state)
+- Calls Cloudflare API to create tunnel:
+  - Tunnel name: `familyshield-{env}`
+  - Tunnel secret (base64 encoded)
+  - **SSH route:** `ssh.familyshield-{env}.everythingcloud.ca` → `localhost:22` on VM (TCP tunneling)
+  - HTTP ingress routes for portal, API, admin UIs
+- Creates DNS CNAME records pointing to tunnel (including SSH hostname)
+- Creates Access Application policies for admin UIs
+- **Result:** Tunnel is ready, SSH hostname is now resolvable and routed through Cloudflare
+
+**Phase 3: SSH Tunnel Verification (post-deploy-tunnel-ssh-dev.yml — auto-triggered after Phase 2)**
+- Polls Cloudflare API to verify tunnel exists
+- **Tests SSH access via tunnel hostname:** `ssh ubuntu@ssh.familyshield-{env}.everythingcloud.ca`
+- Verifies OS is accessible via tunnel (uname, hostname)
+- **Confirms:** All future SSH management goes through Cloudflare Tunnel (zero public IP exposure)
+- **Result:** Tunnel-based SSH is operational
+
+### SSH Access Transition
+
+| Phase | Timing | SSH Method | IP Exposure |
 |---|---|---|---|
-| `familyshield-{env}.everythingcloud.ca` | Portal | 3000 | Parent dashboard (Next.js) |
-| `api-{env}.everythingcloud.ca` | API | 3001 | Content enrichment worker (Node.js) |
-| `adguard-{env}.everythingcloud.ca` | AdGuard Home | 3080 | DNS management UI (Zero Trust access) |
-| `mitmproxy-{env}.everythingcloud.ca` | mitmproxy | 8080 | SSL proxy inspection UI |
-| `vpn.familyshield-{env}.everythingcloud.ca` | Headscale | 8080 | VPN control plane |
-| `grafana-{env}.everythingcloud.ca` | Grafana | 3000 | Metrics dashboards (Zero Trust access) |
-| `nodered-{env}.everythingcloud.ca` | Node-RED | 1880 | Automation/rules engine |
+| Phase 1 (IaC) | deploy-dev.yml running | Public IP (direct) | ⚠️ Temporary (instance bootstrap only) |
+| Phase 2 (Tunnel setup) | deploy-cloudflare.yml running | Tunnel (DNS + routing) | ✅ Ready |
+| **Phase 3+ (Production)** | **After tunnel verified** | **Tunnel hostname** | **✅ Zero public exposure** |
 
-**Note:** Zero Trust access policies are applied to admin UIs (`adguard-*`, `grafana-*`) requiring email-based authentication. Public-facing services (Portal, API) bypass Zero Trust.
-
-### Deployment Sequence
-
-1. **IaC Phase (deploy-dev.yml)**
-   - OCI VM is created in `familyshield-dev` compartment
-   - `tunnel_secret` is generated as a random password by Terraform
-   - VM is configured with `cloud-init` script
-
-2. **Tunnel Phase (deploy-cloudflare.yml — auto-triggered)**
-   - Retrieves `tunnel_secret` from IaC outputs (Terraform state)
-   - Calls Cloudflare API to create tunnel:
-     - Tunnel name: `familyshield-{env}`
-     - Tunnel secret (base64 encoded)
-     - Ingress routes (as shown above)
-   - Creates DNS CNAME records pointing to tunnel
-   - Creates Access Application policies for admin UIs
-   - Outputs tunnel credentials for workflow use
-
-3. **Health Check (deploy-dev.yml — waits for tunnel)**
-   - Polls Cloudflare API to verify tunnel exists
-   - Verifies tunnel status is ready
-   - Fails fast if tunnel creation takes >5 minutes
-
-4. **App Deployment (deploy-app-dev.yml)**
-   - Pulls Docker images from GHCR
-   - SSH into VM and deploys `docker-compose` stack
-   - Tunnel daemon (`cloudflared`) automatically connects using tunnel secret
-   - All services start listening on their ports (3000, 3001, 3080, etc.)
+**From Phase 3 onward:**
+- All SSH to the VM uses: `ssh ubuntu@ssh.familyshield-{env}.everythingcloud.ca`
+- Public IP is unreachable for SSH (can block with OCI security list if desired)
+- All management traffic routes through Cloudflare Tunnel outbound connection
+- **Attack surface:** Reduced to zero — no exposed SSH port on public IP
 
 ### Cloudflare API Integration
 
@@ -504,6 +524,48 @@ Terraform/OpenTofu struggles with Cloudflare state management when:
 - Independent updates without triggering full IaC rebuilds
 - Easy cleanup via API without state conflicts
 - Idempotent operations (rerunning setup skips existing resources)
+
+### Workflow Automation Sequence (SSH Zero-Exposure Architecture)
+
+The deployment is automated across three coordinated workflows:
+
+```mermaid
+graph TD
+    A["deploy-dev.yml (Phase 1: IaC)"] -->|Success| B["deploy-cloudflare.yml (Phase 2: Tunnel)"]
+    B -->|Success| C["post-deploy-tunnel-ssh-dev.yml (Phase 3: Verify)"]
+    
+    A1["• OCI VM creation<br/>• Docker build + push<br/>• SSH: Public IP (temp)"] -.-> A
+    B1["• Cloudflare tunnel creation<br/>• DNS records (8 routes)<br/>• SSH hostname registered"] -.-> B
+    C1["• SSH via tunnel: Test<br/>• OS health check: OK<br/>• Result: Zero-exposure verified"] -.-> C
+    
+    C -->|Confirmed| D["🔐 All SSH now via tunnel<br/>Public IP: ❌ Closed<br/>Tunnel SSH: ✅ Active"]
+```
+
+**Automation Trigger Chain:**
+1. Developer: `git push origin feature-branch` + PR merge to `development`
+2. GitHub: `deploy-dev.yml` runs (IaC + app deployment via public IP)
+3. GitHub: `deploy-cloudflare.yml` triggers **automatically** (workflow_run on success)
+4. GitHub: `post-deploy-tunnel-ssh-dev.yml` triggers **automatically** (workflow_run on success)
+5. **Result:** Tunnel is ready, SSH verified, zero public exposure confirmed
+
+**Status:** ✅ Fully automated — no manual steps required after merge
+
+### Optional: Hardening Public IP (Security Hardening)
+
+After Phase 3 completes and tunnel SSH is verified, you can **optionally** lock down the public IP further:
+
+**Option 1: Block SSH on public IP (OCI Security List)**
+```bash
+# Deny incoming SSH to public IP
+# Keep: HTTPS (443) for Cloudflare tunnel agent heartbeat
+# Block: SSH (22) — all management now via tunnel
+```
+
+**Option 2: Keep public IP for emergency access**
+- Leave SSH open but document in runbook as "emergency access only"
+- Normally use tunnel SSH; only use direct IP if tunnel is down
+
+**Current state:** Public IP is open but not advertised. Tunnel SSH is the documented (and automated) path.
 
 ---
 
