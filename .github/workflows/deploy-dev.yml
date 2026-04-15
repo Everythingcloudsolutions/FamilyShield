@@ -223,7 +223,7 @@ jobs:
         with:
           tofu_version: "1.6.x"
 
-      - name: Get tunnel secret from IaC state
+      - name: Get tunnel secret and VM IP from IaC state
         id: iac
         working-directory: iac
         env:
@@ -250,7 +250,12 @@ jobs:
           echo "::add-mask::$TUNNEL_SECRET"
           echo "tunnel_secret=$TUNNEL_SECRET" >> $GITHUB_OUTPUT
 
+          VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
+          echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
+          echo "VM IP: $VM_IP"
+
       - name: Setup Cloudflare (tunnel, DNS, access)
+        id: cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -260,52 +265,55 @@ jobs:
             "${{ steps.iac.outputs.tunnel_secret }}" \
             "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
 
-      - name: Wait for tunnel SSH (up to 5 min)
+      - name: Write tunnel token to VM and activate cloudflared
         shell: bash
         env:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          VM_IP: ${{ steps.iac.outputs.vm_ip }}
+          TUNNEL_TOKEN: ${{ steps.cloudflare.outputs.TUNNEL_TOKEN }}
         run: |
+          echo "::add-mask::$TUNNEL_TOKEN"
+          if [ -z "$VM_IP" ]; then
+            echo "❌ VM IP not available — cannot write tunnel token"
+            exit 1
+          fi
+          if [ -z "$TUNNEL_TOKEN" ]; then
+            echo "❌ Tunnel token not available from cloudflare-api.sh output"
+            exit 1
+          fi
           mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/familyshield
+          printf '%s' "$SSH_KEY" > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
-          TUNNEL_HOST="ssh.familyshield-dev.everythingcloud.ca"
-          echo "Waiting for tunnel SSH: $TUNNEL_HOST"
-          for attempt in {1..30}; do
-            if timeout 10 ssh -i ~/.ssh/familyshield \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=8 \
-              ubuntu@"$TUNNEL_HOST" "true" 2>/dev/null; then
-              echo "✅ Tunnel SSH available (attempt $attempt)"
-              break
-            fi
-            if [ $attempt -eq 30 ]; then
-              echo "❌ Tunnel SSH not available after 5 minutes"
-              exit 1
-            fi
-            echo "   Attempt $attempt/30 — waiting 10s..."
-            sleep 10
-          done
 
-      - name: Redeploy and verify via tunnel SSH
-        shell: bash
-        env:
-          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          TUNNEL_HOST="ssh.familyshield-dev.everythingcloud.ca"
+          # Write a docker-compose.override.yaml to inject the real token,
+          # overriding the TUNNEL_TOKEN_PLACEHOLDER_dev set during IaC render.
+          # Then restart cloudflared to connect to Cloudflare's edge.
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=10 \
-            ubuntu@"$TUNNEL_HOST" \
-            "cd /opt/familyshield && \
-             echo '$GHCR_TOKEN' | docker login ghcr.io -u github --password-stdin 2>/dev/null && \
-             docker compose pull api portal 2>/dev/null || true && \
-             docker compose up -d --no-deps --remove-orphans api portal && \
-             sleep 8 && docker compose ps && \
-             uname -a && echo '✅ All running via Cloudflare Tunnel (no public IP)'"
+            -o ConnectTimeout=15 \
+            ubuntu@"$VM_IP" \
+            "printf 'services:\n  cloudflared:\n    environment:\n      - TUNNEL_TOKEN=%s\n' \"$TUNNEL_TOKEN\" \
+               > /opt/familyshield/docker-compose.override.yaml && \
+             cd /opt/familyshield && \
+             docker compose up -d --no-deps cloudflared && \
+             docker compose ps cloudflared && \
+             echo '✅ cloudflared started with tunnel token'"
+
+      - name: Wait for tunnel to become active (up to 3 min)
+        run: |
+          PORTAL_URL="https://familyshield-dev.everythingcloud.ca"
+          echo "Waiting for Cloudflare tunnel to route traffic: $PORTAL_URL"
+          for attempt in {1..18}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$PORTAL_URL" || echo "000")
+            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
+              echo "✅ Tunnel active — portal reachable (HTTP $STATUS, attempt $attempt)"
+              exit 0
+            fi
+            echo "   Attempt $attempt/18 — HTTP $STATUS, waiting 10s..."
+            sleep 10
+          done
+          echo "⚠️  Tunnel HTTP not confirmed after 3 min — smoke test will re-verify"
 
   smoke-test:
     name: "Smoke test — dev (Phase 2)"
