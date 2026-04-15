@@ -9,7 +9,10 @@
     "start": "next start",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:report": "playwright show-report"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -28,7 +31,8 @@
     "@typescript-eslint/parser": "^6.13.1",
     "autoprefixer": "^10.4.16",
     "postcss": "^8.4.31",
-    "tailwindcss": "^3.3.6"
+    "tailwindcss": "^3.3.6",
+    "@playwright/test": "^1.40.0"
   },
   "engines": {
     "node": ">=18.0.0"

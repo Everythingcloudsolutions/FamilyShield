@@ -580,11 +580,21 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
 
 **Application Development:**
 
-- ✅ API structure defined, enrichers for all 4 platforms (YouTube, Roblox, Discord, Twitch)
+- ✅ API structure defined, enrichers for all 4 platforms (YouTube, Roblox, Discord, Twitch) — fully implemented
 - ✅ mitmproxy addon complete with 15 tests
-- ✅ Portal: Next.js 14 scaffold complete (`apps/portal/` — package.json, Dockerfile, tsconfig.json)
-- ✅ API: TypeScript types, Redis/Supabase client factories, alert dispatcher (`src/types.ts`, `src/lib/`, `src/alerts/`)
-- ✅ CI/CD: Docker build workflows for api and portal (`build-and-push` matrix job in deploy-dev.yml)
+- ✅ Portal: Next.js 14 fully built (`apps/portal/`)
+  - Pages: dashboard (server-side), /devices (client-side), /alerts (server-side + client filter)
+  - Components: NavBar, RiskBadge, DeviceCard, AlertFeed (Supabase Realtime), AlertTable (filter + sort)
+  - lib/supabase.ts (browser singleton), lib/types.ts (portal-specific types)
+  - Playwright E2E tests: `tests/e2e/` — dashboard (7 tests), alerts (8 tests), devices (9 tests)
+  - playwright.config.ts — Chromium + Firefox + Mobile Chrome, CI-aware retry/workers
+- ✅ API: types.ts extended (age_restricted, mature_flag, description, channel_name, player_count, viewer_count)
+- ✅ API: alerts/dispatcher.ts complete — ntfy push + Supabase INSERT + Redis 5-min dedup
+- ✅ API: jest.config.js + full test suite (6 test files: youtube, roblox, discord, twitch enrichers + dispatcher + LLM router)
+- 🔲 Deploy-dev must successfully complete one full run end-to-end (IaC → Cloudflare → App)
+- 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
+- 🔲 Docker build workflows for api and portal images (build-and-push matrix job missing)
+- 🔲 Supabase tables must be created: `content_events`, `alerts`, `devices` (schema migration needed)
 
 ### 📋 Phase 3: E2E Testing & Production Release
 

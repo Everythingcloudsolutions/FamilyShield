@@ -21,18 +21,33 @@ export interface RawContentEvent {
  * Result of calling platform APIs (YouTube Data, Roblox, Discord, Twitch).
  */
 export interface EnrichedEvent extends RawContentEvent {
+  // Core metadata
   title?: string;
+  description?: string;
   category?: string;
   creator?: string;
+  channel_name?: string;   // YouTube channel, Roblox creator, Twitch username
+  thumbnail_url?: string;
+
+  // Content classification
+  age_restricted?: boolean; // YouTube age gate, Roblox 17+
+  mature_flag?: boolean;    // Twitch is_mature, Discord nsfw flag
+  language?: string;
+  tags?: string[];
+
+  // Engagement metrics
   duration_seconds?: number;
   view_count?: number;
   like_count?: number;
-  maturity_rating?: 'G' | 'PG' | 'PG-13' | 'R' | 'NC-17' | 'restricted' | 'unknown';
-  nsfw_probability?: number; // 0-1
-  language?: string;
-  tags?: string[];
+  player_count?: number;   // Roblox: game.playing
+  viewer_count?: number;   // Twitch: stream.viewer_count
   is_live?: boolean;
   upload_date?: string;
+
+  // Legacy — kept for backwards compat
+  maturity_rating?: 'G' | 'PG' | 'PG-13' | 'R' | 'NC-17' | 'restricted' | 'unknown';
+  nsfw_probability?: number; // 0-1
+
   // AI risk scoring (added by event consumer after enrichment)
   risk_level?: 'low' | 'medium' | 'high' | 'critical';
   risk_categories?: string[];

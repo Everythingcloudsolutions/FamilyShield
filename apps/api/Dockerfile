@@ -6,9 +6,9 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Install dependencies
+# Install ALL dependencies (dev needed for tsc)
 COPY package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci && npm cache clean --force
 
 # Copy source
 COPY src/ ./src/
@@ -24,10 +24,10 @@ WORKDIR /app
 # Install dumb-init for proper signal handling
 RUN apk add --no-cache dumb-init
 
-# Copy built dependencies from builder
-COPY --from=builder /app/node_modules ./node_modules
+# Copy built artifacts and install production-only deps
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Non-root user
 RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
