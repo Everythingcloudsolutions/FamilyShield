@@ -137,18 +137,18 @@ runs:
         # ── Capacity retry ────────────────────────────────────────────────────
         # OCI Always Free ARM instances are in high demand. When capacity is
         # unavailable the API returns 500-InternalError "Out of host capacity".
-        # Retry only the compute module every 5 minutes for up to 4 hours,
+        # Retry only the compute module every 15 minutes for up to 4 hours,
         # mirroring the approach in github.com/sam-bee/oracle-cloud-repeater.
         # Any other failure exits immediately without retrying.
         # ──────────────────────────────────────────────────────────────────────
         if grep -q "Out of host capacity" /tmp/apply_out.txt; then
           echo ""
-          echo "⚠️  OCI ARM capacity unavailable. Will retry compute every 5 min for up to 4 hours."
+          echo "⚠️  OCI ARM capacity unavailable. Will retry compute every 15 min for up to 4 hours."
           echo "   (Approach: github.com/sam-bee/oracle-cloud-repeater — adapted for GitHub Actions)"
           echo ""
 
-          MAX_ATTEMPTS=48   # 48 × 5 min = 4 hours
-          INTERVAL=300      # seconds
+          MAX_ATTEMPTS=16   # 16 × 15 min = 4 hours
+          INTERVAL=900      # seconds
 
           for attempt in $(seq 1 $MAX_ATTEMPTS); do
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -174,7 +174,7 @@ runs:
             fi
 
             if [ $attempt -lt $MAX_ATTEMPTS ]; then
-              echo "   Still no capacity. Next attempt in 5 minutes..."
+              echo "   Still no capacity. Next attempt in 15 minutes..."
               sleep $INTERVAL
             fi
           done
