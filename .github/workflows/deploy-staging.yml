@@ -352,6 +352,7 @@ jobs:
         with:
           name: playwright-report-staging-${{ github.run_id }}
           path: apps/portal/playwright-report/
+          if-no-files-found: ignore
           retention-days: 14
 
   smoke-test:
