@@ -271,6 +271,62 @@ jobs:
             "${{ steps.iac.outputs.tunnel_secret }}" \
             "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
 
+      - name: Bootstrap VM — copy docker-compose.yml if missing
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          VM_IP: ${{ steps.iac.outputs.vm_ip }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+          if [ -z "$VM_IP" ]; then
+            echo "❌ VM IP not available — cannot bootstrap VM"
+            exit 1
+          fi
+          # Check if docker-compose.yml already exists on VM
+          COMPOSE_EXISTS=$(ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 \
+            ubuntu@"$VM_IP" \
+            "test -f /opt/familyshield/docker-compose.yml && echo yes || echo no" 2>/dev/null || echo "no")
+          if [ "$COMPOSE_EXISTS" = "yes" ]; then
+            echo "✅ docker-compose.yml already exists on VM — skipping bootstrap"
+            exit 0
+          fi
+          echo "⚠️  docker-compose.yml missing — rendering template and copying to VM"
+          # Render Terraform template vars; un-escape $${...} → ${...} for Docker runtime env vars
+          sed \
+            -e "s|\${environment}|dev|g" \
+            -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_dev|g" \
+            -e "s|\${supabase_url}|$SUPABASE_URL|g" \
+            -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
+            -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
+            -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
+            -e 's|\$\${|\${|g' \
+            iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
+          scp -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            /tmp/docker-compose.yml \
+            ubuntu@"$VM_IP":/opt/familyshield/docker-compose.yml
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 \
+            ubuntu@"$VM_IP" \
+            "cd /opt/familyshield && \
+             docker compose pull api portal 2>&1 | tail -5 && \
+             docker compose up -d --remove-orphans api portal && \
+             sleep 10 && \
+             docker compose ps && \
+             echo '✅ VM bootstrap complete — api and portal started'"
+
       - name: Write tunnel token to VM and activate cloudflared
         shell: bash
         env:
