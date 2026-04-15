@@ -28,6 +28,7 @@ jobs:
   pre-teardown:
     name: "Stop containers + cleanup Cloudflare → prod"
     runs-on: ubuntu-latest
+    environment: prod
     if: github.event.inputs.confirm == 'prod'
     outputs:
       vm_ip: ${{ steps.iac.outputs.vm_ip }}
