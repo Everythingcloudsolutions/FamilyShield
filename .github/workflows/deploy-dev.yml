@@ -1,159 +1,156 @@
 # .github/workflows/deploy-dev.yml
-# Triggered automatically on every push to development
-# Phase 1: Deploys infrastructure (compartments, network, storage only)
-# Phase 2: App deployment via public IP (Phase 1 bootstrap)
-name: Deploy → Dev
+# Triggered on apps/** changes to development branch, or manually,
+# or after infra-dev.yml completes (to restart containers on fresh VM).
+#
+# Uses Cloudflare Tunnel SSH exclusively — never touches public IP.
+# Works regardless of NSG state (0.0.0.0/0 or tightened to admin IP).
+#
+# Mixed commit handling (iac/ + apps/ changed in same push):
+#   Both infra-dev.yml and deploy-dev.yml trigger. The wait-for-infra job
+#   polls GitHub API and waits up to 10 min for infra-dev.yml to finish.
+name: "FamilyShield — Deploy Dev"
 
 on:
   push:
     branches: [development]
-  workflow_dispatch: # Allow manual trigger
+    paths:
+      - "apps/**"
+      - "scripts/**"
+      - ".github/workflows/deploy-dev.yml"
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["FamilyShield — Infrastructure Dev"]
+    types: [completed]
+    branches: [development]
 
 permissions:
   contents: read
   id-token: write
   packages: write
+  actions: read # Needed to poll workflow runs for wait-for-infra
 
 concurrency:
   group: deploy-dev
   cancel-in-progress: true
 
 jobs:
-  deploy-infra-dev:
-    name: "IaC → dev (Phase 1: Infrastructure Only)"
+  wait-for-infra:
+    name: "Wait for infra-dev if running"
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # up to 4h capacity retry loop + buffer
-    environment:
-      name: dev
-      url: https://familyshield-dev.everythingcloud.ca
+    # Only poll when triggered by a direct push — workflow_run already waits for infra
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     outputs:
-      vm_ip: ${{ steps.outputs.outputs.vm_ip }}
-      nsg_vm_id: ${{ steps.outputs.outputs.nsg_vm_id }}
-
+      infra_conclusion: ${{ steps.poll.outputs.infra_conclusion }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: OCI Login
-        uses: ./.github/actions/oci-login
-        with:
-          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
-
-      - name: Validate IAM Permissions
-        shell: bash
+      - name: Poll for running infra-dev workflow
+        id: poll
         env:
-          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
-        run: bash scripts/validate-iam-permissions.sh
-
-      - name: Verify bootstrap was completed
-        shell: bash
-        env:
-          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
         run: |
-          echo "🔍 Verifying bootstrap setup exists in OCI..."
+          echo "Checking if infra-dev.yml is running for this commit..."
+          MAX_WAIT=600  # 10 minutes
+          INTERVAL=30
+          ELAPSED=0
 
-          # Check 1: Bootstrap policy exists
-          echo "   Checking for bootstrap IAM policy..."
-          POLICY=$(oci iam policy list \
-            --compartment-id "$OCI_TENANCY_OCID" \
-            --all \
-            --query "data[?name=='familyshield-bootstrap-policy'] | [0].name" \
-            --raw-output 2>/dev/null || echo "")
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            # Find infra-dev runs triggered by the same commit
+            RUN=$(gh api \
+              "repos/$REPO/actions/workflows/infra-dev.yml/runs?branch=development&per_page=5" \
+              --jq '.workflow_runs[] | select(.head_sha == env.SHA) | {status: .status, conclusion: .conclusion, id: .id}' \
+              2>/dev/null | head -1 || echo "")
 
-          if [ -z "$POLICY" ] || [ "$POLICY" = "None" ]; then
-            echo "❌ Bootstrap policy not found!"
-            echo ""
-            echo "BOOTSTRAP REQUIRED: Run this locally FIRST:"
-            echo "  bash scripts/bootstrap-oci.sh"
-            echo ""
-            echo "Then verify with: bash scripts/verify-phase1.sh"
-            exit 1
-          fi
-          echo "   ✅ Bootstrap policy found"
+            if [ -z "$RUN" ]; then
+              echo "ℹ️  No infra-dev run found for this commit — proceeding"
+              echo "infra_conclusion=none" >> $GITHUB_OUTPUT
+              exit 0
+            fi
 
-          # Check 2: State bucket exists
-          echo "   Checking for Terraform state bucket..."
-          NAMESPACE=${{ secrets.OCI_NAMESPACE }}
-          BUCKET=$(oci os bucket get \
-            --namespace-name "$NAMESPACE" \
-            --bucket-name "familyshield-tfstate" \
-            --query "data.name" \
-            --raw-output 2>/dev/null || echo "")
+            STATUS=$(echo "$RUN" | jq -r '.status')
+            CONCLUSION=$(echo "$RUN" | jq -r '.conclusion')
 
-          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
-            echo "❌ State bucket not found!"
-            exit 1
-          fi
-          echo "   ✅ State bucket found"
+            if [ "$STATUS" = "completed" ]; then
+              echo "✅ infra-dev completed with conclusion: $CONCLUSION"
+              echo "infra_conclusion=$CONCLUSION" >> $GITHUB_OUTPUT
+              exit 0
+            fi
 
-          # Check 3: Dynamic group exists
-          echo "   Checking for dynamic group..."
-          DG=$(oci iam dynamic-group list \
-            --all \
-            --query "data[?name=='familyshield-github-actions'] | [0].name" \
-            --raw-output 2>/dev/null || echo "")
+            echo "   infra-dev status: $STATUS — waiting ${INTERVAL}s... (${ELAPSED}s elapsed)"
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
 
-          if [ -z "$DG" ] || [ "$DG" = "None" ]; then
-            echo "⚠️  Dynamic group not found (non-critical, may be created by bootstrap)"
-          else
-            echo "   ✅ Dynamic group found"
-          fi
+          echo "⚠️  Timed out waiting for infra-dev — proceeding anyway"
+          echo "infra_conclusion=timeout" >> $GITHUB_OUTPUT
 
-          echo ""
-          echo "✅ Bootstrap verification passed"
-
-      - name: Apply IaC → dev
-        uses: ./.github/actions/tofu-apply
-        with:
-          environment: dev
-          working_directory: iac
-          var_file: environments/dev/terraform.tfvars
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          TF_VAR_oci_namespace: ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_ssh_public_key: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
-          # Cloudflare variables removed — now managed by separate deploy-cloudflare.yml workflow
-          TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
-          TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL }}
-          TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY }}
-          TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-
-      - name: Capture IaC outputs
-        id: outputs
-        working-directory: iac
-        continue-on-error: true
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  verify-tunnel:
+    name: "Verify Cloudflare tunnel SSH is reachable"
+    runs-on: ubuntu-latest
+    needs: wait-for-infra
+    if: |
+      always() &&
+      (needs.wait-for-infra.result == 'success' || needs.wait-for-infra.result == 'skipped')
+    steps:
+      - name: Install cloudflared
         run: |
-          # Phase 1: VM is not yet provisioned, so output may not exist
-          VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
-          echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o /usr/local/bin/cloudflared
+          chmod +x /usr/local/bin/cloudflared
+          cloudflared version
 
-          NSG_ID=$(tofu output -raw nsg_vm_id 2>/dev/null || echo "")
-          echo "nsg_vm_id=$NSG_ID" >> $GITHUB_OUTPUT
+      - name: Verify SSH tunnel reachable
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          SSH_HOST="ssh-dev.everythingcloud.ca"
+          echo "Checking tunnel reachability: $SSH_HOST"
 
-          if [ -z "$VM_IP" ]; then
-            echo "ℹ️  Phase 1 complete: Infrastructure deployed (no VM yet — Phase 2 will add compute)"
-          else
-            echo "Dev VM IP: $VM_IP"
-          fi
+          # Try up to 5 times (tunnel may need a moment after infra run)
+          for attempt in {1..5}; do
+            if cloudflared access ssh --hostname "$SSH_HOST" --url "ssh://$SSH_HOST:22" \
+                --service-token-id "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" \
+                --service-token-secret "${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+                2>&1 | grep -q "connection refused\|connected\|handshake\|tunnel"; then
+              echo "✅ Tunnel is reachable (attempt $attempt)"
+              exit 0
+            fi
 
-          # Show all outputs that do exist
-          echo ""
-          echo "📦 Infrastructure outputs:"
-          tofu output -no-color
+            # Simpler check — cloudflared returns 0 if tunnel is routable
+            timeout 10 cloudflared access ssh \
+              --hostname "$SSH_HOST" \
+              -- echo "tunnel-ok" 2>/dev/null && {
+              echo "✅ Tunnel is reachable"
+              exit 0
+            } || true
+
+            echo "   Attempt $attempt/5 — waiting 15s..."
+            sleep 15
+          done
+
+          # Non-fatal — proceed with portal HTTP check as fallback
+          echo "ℹ️  SSH tunnel pre-check inconclusive — will verify via portal health check"
+
+      - name: Portal health check via tunnel
+        run: |
+          PORTAL_URL="https://familyshield-dev.everythingcloud.ca"
+          for attempt in {1..6}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$PORTAL_URL" || echo "000")
+            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
+              echo "✅ Tunnel active — portal reachable (HTTP $STATUS)"
+              exit 0
+            fi
+            echo "   Attempt $attempt/6 — HTTP $STATUS, waiting 10s..."
+            sleep 10
+          done
+          echo "❌ Tunnel not reachable — infra may be down or tunnel not yet active"
+          echo "   Run infra-dev.yml first, then retry this workflow"
+          exit 1
 
   build-and-push:
     name: "Build & Push Docker images"
     runs-on: ubuntu-latest
-    needs: deploy-infra-dev
+    needs: verify-tunnel
     strategy:
       matrix:
         app: [api, portal]
@@ -183,353 +180,102 @@ jobs:
           platforms: linux/arm64 # OCI Always Free ARM
 
   deploy-app-dev:
-    name: "App deploy → dev VM (Phase 1 — via public IP)"
+    name: "App deploy → dev VM (via Cloudflare tunnel SSH)"
     runs-on: ubuntu-latest
-    needs: [deploy-infra-dev, build-and-push]
-    if: needs.deploy-infra-dev.outputs.vm_ip != '' # Only run if VM exists
+    needs: build-and-push
     environment:
       name: dev
+      url: https://familyshield-dev.everythingcloud.ca
     steps:
       - uses: actions/checkout@v4
 
-      - name: OCI Login
-        uses: ./.github/actions/oci-login
-        with:
-          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+      - name: Install cloudflared
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o /usr/local/bin/cloudflared
+          chmod +x /usr/local/bin/cloudflared
 
-      - name: Sync VM docker-compose.yml from template
-        shell: bash
+      - name: Prepare SSH key
         env:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          VM_IP: ${{ needs.deploy-infra-dev.outputs.vm_ip }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
-          if [ -z "$VM_IP" ]; then
-            echo "❌ VM IP not available — cannot bootstrap VM"
-            exit 1
-          fi
-          echo "Syncing docker-compose.yml from template"
-          # Render Terraform template vars; un-escape $${...} → ${...} for Docker runtime env vars
-          sed \
-            -e "s|\${environment}|dev|g" \
-            -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_dev|g" \
-            -e "s|\${supabase_url}|$SUPABASE_URL|g" \
-            -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
-            -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
-            -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
-            -e 's|\$\${|\${|g' \
-            iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
-          scp -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            /tmp/docker-compose.yml \
-            ubuntu@"$VM_IP":/opt/familyshield/docker-compose.yml
-          echo "✅ docker-compose.yml synced to VM"
 
-      - name: Sync runtime assets (config + mitm addon)
-        shell: bash
-        env:
-          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          VM_IP: ${{ needs.deploy-infra-dev.outputs.vm_ip }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
-          chmod 600 ~/.ssh/familyshield
-          tar -czf /tmp/familyshield-runtime-assets.tgz apps/mitm apps/platform-config
-          scp -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            /tmp/familyshield-runtime-assets.tgz \
-            ubuntu@"$VM_IP":/tmp/familyshield-runtime-assets.tgz
-          ssh -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=20 \
-            ubuntu@"$VM_IP" \
-            "mkdir -p /opt/familyshield && tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
-
-      - name: Deploy updated containers to dev VM
-        env:
-          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          VM_IP: ${{ needs.deploy-infra-dev.outputs.vm_ip }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Write SSH key to file (strip carriage returns)
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
-          chmod 600 ~/.ssh/familyshield
-
-          # SSH to VM and deploy
-          ssh -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=30 \
-            ubuntu@"$VM_IP" bash -s <<ENDSSH
-          set -euo pipefail
-
-          cd /opt/familyshield
-
-          # Authenticate with GHCR to pull private images
-          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-
-          # Ensure Redis is running before API starts (API crashes if Redis unreachable)
-          docker compose up -d redis
-          sleep 5
-
-          # Pull and restart API + portal
-          docker compose pull api portal
-          docker compose up -d --remove-orphans api portal
-
-          # Health check
-          sleep 10
-          docker compose ps
-          echo "✅ Deploy complete (apps now available via Cloudflare Tunnel)"
-          ENDSSH
-
-  setup-cloudflare-dev:
-    name: "Cloudflare setup — dev"
-    runs-on: ubuntu-latest
-    needs: deploy-app-dev
-    if: needs.deploy-app-dev.result != 'skipped'
-    environment:
-      name: dev
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: OCI Login
-        uses: ./.github/actions/oci-login
-        with:
-          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
-
-      - name: Setup OpenTofu
-        uses: opentofu/setup-opentofu@v1
-        with:
-          tofu_version: "1.6.x"
-
-      - name: Get tunnel secret and VM IP from IaC state
-        id: iac
-        working-directory: iac
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
-        run: |
-          tofu init \
-            -backend-config="bucket=familyshield-tfstate" \
-            -backend-config="key=dev/terraform.tfstate" \
-            -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
-            -backend-config="region=ca-toronto-1" \
-            -backend-config="skip_region_validation=true" \
-            -backend-config="skip_credentials_validation=true" \
-            -backend-config="skip_metadata_api_check=true" \
-            -backend-config="use_path_style=true" \
-            -reconfigure
-
-          TUNNEL_SECRET=$(tofu output -raw tunnel_secret 2>/dev/null || echo "")
-          if [ -z "$TUNNEL_SECRET" ]; then
-            echo "❌ Failed to get tunnel_secret — IaC not yet provisioned"
-            exit 1
-          fi
-          echo "::add-mask::$TUNNEL_SECRET"
-          echo "tunnel_secret=$TUNNEL_SECRET" >> $GITHUB_OUTPUT
-
-          VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
-          echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
-          echo "VM IP: $VM_IP"
-
-      - name: Setup Cloudflare (tunnel, DNS, access)
-        id: cloudflare
+      - name: Sync runtime assets to VM
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
         run: |
-          bash scripts/cloudflare-api.sh setup dev \
-            "${{ steps.iac.outputs.tunnel_secret }}" \
-            "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+          SSH_HOST="ssh-dev.everythingcloud.ca"
 
-      - name: Bootstrap VM — copy docker-compose.yml if missing
-        shell: bash
-        env:
-          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          VM_IP: ${{ steps.iac.outputs.vm_ip }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
-        run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
-          chmod 600 ~/.ssh/familyshield
-          if [ -z "$VM_IP" ]; then
-            echo "❌ VM IP not available — cannot bootstrap VM"
-            exit 1
-          fi
-          # Check if docker-compose.yml already exists on VM
-          COMPOSE_EXISTS=$(ssh -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" \
-            "test -f /opt/familyshield/docker-compose.yml && echo yes || echo no" 2>/dev/null || echo "no")
-          if [ "$COMPOSE_EXISTS" = "yes" ]; then
-            echo "✅ docker-compose.yml already exists on VM — skipping bootstrap"
-            exit 0
-          fi
-          echo "⚠️  docker-compose.yml missing — rendering template and copying to VM"
-          # Render Terraform template vars; un-escape $${...} → ${...} for Docker runtime env vars
-          sed \
-            -e "s|\${environment}|dev|g" \
-            -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_dev|g" \
-            -e "s|\${supabase_url}|$SUPABASE_URL|g" \
-            -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
-            -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
-            -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
-            -e 's|\$\${|\${|g' \
-            iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
+          tar -czf /tmp/familyshield-runtime-assets.tgz apps/mitm apps/platform-config
+
+          # SCP through Cloudflare tunnel
           scp -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            /tmp/docker-compose.yml \
-            ubuntu@"$VM_IP":/opt/familyshield/docker-compose.yml
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST}" \
+            /tmp/familyshield-runtime-assets.tgz \
+            ubuntu@"${SSH_HOST}":/tmp/familyshield-runtime-assets.tgz
+
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" bash -s <<ENDSSH
-          set -euo pipefail
-          cd /opt/familyshield
-          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-          docker compose up -d redis
-          sleep 5
-          docker compose pull api portal
-          docker compose up -d --remove-orphans api portal
-          sleep 10
-          docker compose ps
-          echo "✅ VM bootstrap complete — api and portal started"
-          ENDSSH
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST}" \
+            ubuntu@"${SSH_HOST}" \
+            "mkdir -p /opt/familyshield && tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
 
-      - name: Write tunnel token to VM and activate cloudflared
-        shell: bash
+          echo "✅ Runtime assets synced"
+
+      - name: Deploy containers via tunnel SSH
         env:
-          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          VM_IP: ${{ steps.iac.outputs.vm_ip }}
-          TUNNEL_TOKEN: ${{ steps.cloudflare.outputs.TUNNEL_TOKEN }}
-        run: |
-          echo "::add-mask::$TUNNEL_TOKEN"
-          if [ -z "$VM_IP" ]; then
-            echo "❌ VM IP not available — cannot write tunnel token"
-            exit 1
-          fi
-          if [ -z "$TUNNEL_TOKEN" ]; then
-            echo "❌ Tunnel token not available from cloudflare-api.sh output"
-            exit 1
-          fi
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
-          chmod 600 ~/.ssh/familyshield
-
-          # Start cloudflared via docker run (no docker-compose.yml dependency).
-          # --network host lets cloudflared reach services on localhost:3000/3001.
-          # The token downloads ingress config from Cloudflare's control plane.
-          ssh -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" \
-            "docker stop familyshield-cloudflared 2>/dev/null || true; \
-             docker rm familyshield-cloudflared 2>/dev/null || true; \
-             docker run -d \
-               --name familyshield-cloudflared \
-               --restart unless-stopped \
-               --network host \
-               cloudflare/cloudflared:latest \
-               tunnel --no-autoupdate run --token $TUNNEL_TOKEN && \
-             sleep 3 && \
-             docker inspect familyshield-cloudflared --format '{{.State.Status}}' && \
-             echo '✅ cloudflared started with tunnel token'"
-
-      - name: Wait for tunnel to become active (up to 3 min)
-        run: |
-          PORTAL_URL="https://familyshield-dev.everythingcloud.ca"
-          echo "Waiting for Cloudflare tunnel to route traffic: $PORTAL_URL"
-          for attempt in {1..18}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$PORTAL_URL" || echo "000")
-            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
-              echo "✅ Tunnel active — portal reachable (HTTP $STATUS, attempt $attempt)"
-              exit 0
-            fi
-            echo "   Attempt $attempt/18 — HTTP $STATUS, waiting 10s..."
-            sleep 10
-          done
-          echo "⚠️  Tunnel HTTP not confirmed after 3 min — smoke test will re-verify"
-
-      - name: Verify SSH via Cloudflare Tunnel (Phase B)
-        id: tunnel_ssh
-        continue-on-error: true
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TUNNEL_ID: ${{ steps.cloudflare.outputs.TUNNEL_ID }}
-        shell: bash
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           SSH_HOST="ssh-dev.everythingcloud.ca"
-          echo "### 🔐 SSH Access via Cloudflare Tunnel" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Tunnel SSH is now configured at \`$SSH_HOST\`." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Connect via Cloudflare Tunnel:**" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "# Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" >> $GITHUB_STEP_SUMMARY
-          echo "ssh -o ProxyCommand='cloudflared access ssh --hostname $SSH_HOST' ubuntu@$SSH_HOST" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Fallback (admin IP only):** Contact administrator for SSH access to public IP" >> $GITHUB_STEP_SUMMARY
+
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST}" \
+            ubuntu@"${SSH_HOST}" bash -s <<ENDSSH
+          set -euo pipefail
+          cd /opt/familyshield
+
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+          # Ensure Redis is up before API starts
+          docker compose up -d redis
+          sleep 5
+
+          docker compose pull api portal
+          docker compose up -d --remove-orphans api portal
+
+          sleep 10
+          docker compose ps
+          echo "✅ Deploy complete"
+          ENDSSH
 
   smoke-test:
-    name: "Smoke test — dev (Phase 2)"
+    name: "Smoke test — dev"
     runs-on: ubuntu-latest
-    needs: setup-cloudflare-dev
-    if: needs.setup-cloudflare-dev.result != 'skipped'
+    needs: deploy-app-dev
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Run smoke tests
+      - name: Check portal and API health
         env:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID_DEV }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET_DEV }}
         run: |
           BASE_URL="https://familyshield-dev.everythingcloud.ca"
 
-          # Build optional Cloudflare Access service token headers
           CF_HEADERS=()
           if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
             CF_HEADERS=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
-            echo "ℹ️  Using Cloudflare Access service token for health checks"
-          else
-            echo "ℹ️  No CF service token — accepting 403 (Cloudflare Access protecting service)"
           fi
 
-          # Portal reachability — 200 (authed/public) or 403 (CF Access protecting) both prove tunnel is up
-          echo "Checking portal reachability..."
+          echo "Checking portal..."
           PASSED=false
           for i in {1..10}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$BASE_URL" || echo "000")
@@ -538,7 +284,7 @@ jobs:
               PASSED=true
               break
             elif [[ "$STATUS" =~ ^5 ]]; then
-              echo "❌ Server error $STATUS — failing"
+              echo "❌ Server error $STATUS"
               exit 1
             fi
             echo "Attempt $i: $STATUS — waiting 15s..."
@@ -546,90 +292,17 @@ jobs:
           done
 
           if [ "$PASSED" = "false" ]; then
-            echo "❌ Portal not reachable after 10 attempts (last status: $STATUS)"
-            echo "   Check Cloudflare tunnel and VM health"
+            echo "❌ Portal not reachable after 10 attempts (last: $STATUS)"
             exit 1
           fi
 
-          # API health check
-          echo "Checking API health endpoint..."
+          echo "Checking API health..."
           API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$BASE_URL/api/health" || echo "000")
           if [[ "$API_STATUS" =~ ^(200|403)$ ]]; then
-            echo "✅ API endpoint reachable (HTTP $API_STATUS)"
+            echo "✅ API reachable (HTTP $API_STATUS)"
           else
             echo "❌ API health check failed (HTTP $API_STATUS)"
             exit 1
           fi
 
-          echo "✅ Smoke tests passed"
-
-  tighten-ssh-dev:
-    name: "Tighten SSH security → admin IP only"
-    runs-on: ubuntu-latest
-    needs: [deploy-infra-dev, smoke-test]
-    if: needs.deploy-infra-dev.outputs.vm_ip != ''
-    environment:
-      name: dev
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: OCI Login
-        uses: ./.github/actions/oci-login
-        with:
-          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
-
-      - name: Restrict SSH to admin IP only
-        env:
-          NSG_ID: ${{ needs.deploy-infra-dev.outputs.nsg_vm_id }}
-          ADMIN_IP: "173.33.214.49/32"
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ -z "$NSG_ID" ]; then
-            echo "⚠️  NSG_ID not available — SSH remains open"
-            exit 0
-          fi
-
-          echo "🔐 Phase A Security: Tightening SSH to admin IP only..."
-
-          # Get all current SSH ingress rules (port 22)
-          # Correct OCI CLI command: oci network nsg rule list
-          SSH_RULES=$(oci network nsg rule list \
-            --nsg-id "$NSG_ID" \
-            --output json 2>/dev/null || echo "[]")
-
-          # Validate JSON before processing with jq
-          if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
-            echo "⚠️  Failed to query NSG rules — skipping rule removal"
-            SSH_RULES="[]"
-          fi
-
-          RULE_COUNT=$(echo "$SSH_RULES" | jq 'length')
-          if [ "$RULE_COUNT" -gt 0 ]; then
-            echo "Found $RULE_COUNT SSH rule(s) — removing old rules..."
-            RULE_IDS=$(echo "$SSH_RULES" | jq -r '.[].id')
-            while IFS= read -r RULE_ID; do
-              if [ -n "$RULE_ID" ] && [ "$RULE_ID" != "null" ]; then
-                oci network nsg rule delete \
-                  --nsg-rule-id "$RULE_ID" \
-                  --force 2>/dev/null || true
-                echo "   Removed: $RULE_ID"
-              fi
-            done <<< "$RULE_IDS"
-          fi
-
-          # Add restricted SSH rule for admin IP only
-          echo "Adding SSH rule for $ADMIN_IP..."
-          oci network nsg rule create \
-            --nsg-id "$NSG_ID" \
-            --direction INGRESS \
-            --protocol 6 \
-            --source "$ADMIN_IP" \
-            --source-type CIDR_BLOCK \
-            --tcp-options "destinationPortRange={min:22,max:22}" || true
-
-          echo "✅ SSH tightened to admin IP only ($ADMIN_IP)"
+          echo "✅ All smoke tests passed"

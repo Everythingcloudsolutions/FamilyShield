@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (SSH security + heredoc fix + docker-compose bootstrap + jq JSON encoding + OCI CLI nsg rule syntax fix)
+> Last updated: 2026-04-16 (workflow split: infra-dev/prod separate from deploy-dev/prod; CF tunnel SSH for app deploys)
 
 ---
 
@@ -238,48 +238,71 @@ FamilyShield/
 
 ### Deployment Flow
 
-Each environment follows the same 7-job pipeline (env = dev | staging | prod):
+**Split pipeline architecture (2026-04-16):** IaC and app deployment are separate workflows, triggered by different path changes.
+
+#### Infra workflows (triggered by `iac/**` changes)
 
 ```
-deploy-infra-{env}          IaC only (OCI VM, network, storage)
-       ↓                     SSH: 0.0.0.0/0 (wide open during deploy)
-build-and-push / promote-images   Docker images → GHCR
-       ↓
-deploy-app-{env}            SSH to VM via public IP (always works) → docker compose up
-       ↓
-setup-cloudflare-{env}      Cloudflare tunnel + DNS + write token to VM → restart cloudflared
-       ↓
-integration-tests (staging) / smoke-test (dev + prod)
-       ↓
-tighten-ssh-{env}           Phase A: Remove 0.0.0.0/0, add admin IP only (173.33.214.49/32)
+infra-dev.yml (development branch)    infra-prod.yml (main branch)
+       ↓                                      ↓
+  tofu apply                           safety-check → tofu plan → tofu apply
+       ↓                                      ↓
+  setup-cloudflare-{env}               setup-cloudflare-prod
+  (SSH via public IP)                  (SSH via public IP)
+       ↓                                      ↓
+  smoke-infra-{env}                    smoke-infra-prod
+  (tunnel reachable check)             (tunnel reachable check)
+       ↓                                      ↓
+  tighten-ssh-{env}                    tighten-ssh-prod → create-release
+  (admin IP only)                      (admin IP only)
 ```
 
-**Key change (2026-04-16):** SSH deployed wide-open (0.0.0.0/0), tightened to admin IP AFTER tests pass.
+#### App workflows (triggered by `apps/**` changes)
 
-- Eliminates dynamic NSG punch/seal complexity during deployment
-- Guarantees SSH always works for all deployment jobs
-- Security applied at the END after system is verified healthy
-- No chicken-and-egg lockout risk
+```
+deploy-dev.yml (development branch)   deploy-prod.yml (main branch)
+       ↓                                      ↓
+  wait-for-infra                        safety-check → wait-for-infra
+  (poll if infra-dev also running)      (poll if infra-prod also running)
+       ↓                                      ↓
+  verify-tunnel                         verify-tunnel
+  (pre-check CF tunnel reachable)       (pre-check CF tunnel reachable)
+       ↓                                      ↓
+  build-and-push (arm64 to GHCR)        promote-images (dev SHA → prod tag)
+       ↓                                      ↓
+  deploy-app-dev                        deploy-app-prod
+  (SSH via CF tunnel)                   (SSH via CF tunnel)
+       ↓                                      ↓
+  smoke-test                            smoke-test → create-release
+```
 
-**Trigger by branch:**
+**SSH model:**
+- **Infra workflows:** public IP SSH (NSG wide-open during deploy, tightened after). Admin must open NSG before running infra refresh when NSG is already tightened.
+- **App workflows:** Cloudflare tunnel SSH exclusively (`ssh-dev.everythingcloud.ca` / `ssh-prod.everythingcloud.ca`). Works regardless of NSG state.
 
-| Branch | Workflow | Behaviour |
-|---|---|---|
-| `development` | `deploy-dev.yml` | Auto — runs on every push |
-| `qa` | `deploy-staging.yml` | Auto — create qa from development to trigger |
-| `main` | `deploy-prod.yml` | Auto — GitHub Environment `prod` requires manual approval |
-| Any PR | `pr-check.yml` | Lint + `tofu plan` comment |
+**Mixed commit handling (iac/ + apps/ changed in same push):**
+
+Both infra and app workflows trigger simultaneously. The `wait-for-infra` job in deploy-dev/prod polls the GitHub API and waits up to 10 minutes for the corresponding infra workflow to finish before proceeding.
+
+**Trigger summary:**
+
+| Branch | Paths | Workflow | Notes |
+|---|---|---|---|
+| `development` | `iac/**` | `infra-dev.yml` | Auto — IaC only |
+| `development` | `apps/**`, `scripts/**` | `deploy-dev.yml` | Auto — app only via CF tunnel |
+| `main` | `iac/**` | `infra-prod.yml` | Auto — IaC only, safety check |
+| `main` | `apps/**`, `scripts/**` | `deploy-prod.yml` | Auto — app only via CF tunnel |
+| `qa` | any | `deploy-staging.yml` | Auto — combined (ephemeral) |
+| Any PR | any | `pr-check.yml` | lint-iac + lint-apps + plan + security |
 
 **Cloudflare Tunnel Token Delivery (critical pattern):**
 
-IaC renders `docker-compose.yaml` with a placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real Cloudflare tunnel token is not known at `tofu apply` time. The `setup-cloudflare-{env}` job:
+IaC renders `docker-compose.yaml` with a placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real Cloudflare tunnel token is not known at `tofu apply` time. The `setup-cloudflare-{env}` job in the **infra workflow**:
 
 1. Creates/verifies tunnel via `scripts/cloudflare-api.sh setup {env}` (gets real token from Cloudflare API)
-2. SSHes to the VM via **public IP** and writes `docker-compose.override.yaml` with the real `TUNNEL_TOKEN`
-3. Restarts cloudflared — the tunnel goes from INACTIVE → ACTIVE in the Cloudflare dashboard
+2. SSHes to the VM via **public IP** and bootstraps docker-compose.yml if missing
+3. Starts cloudflared via `docker run --network host --token $TUNNEL_TOKEN`
 4. Waits up to 3 minutes for the portal URL to become reachable over HTTP
-
-Docker Compose automatically merges `docker-compose.override.yaml` over `docker-compose.yaml`, so the override persists across `docker compose up` restarts.
 
 **Cleanup:**
 
@@ -992,7 +1015,15 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - tighten-ssh removes 0.0.0.0/0 rules and adds admin IP only (173.33.214.49/32)
   - Phase B (tunnel SSH) unchanged — added at end after tunnel verified active
   - Eliminates chicken-and-egg lockout risk, guarantees SSH always works during deploy
-- 🔲 First full end-to-end successful dev pipeline run (all 7 jobs green: infra → build → deploy-app → setup-cloudflare → smoke-test → tighten-ssh)
+- ✅ **Workflow architecture split (2026-04-16):** Separated IaC workflows from app deployment workflows
+  - Created `infra-dev.yml` — triggered on `iac/**` changes to `development`; jobs: tofu apply → setup-cloudflare → smoke-infra → tighten-ssh
+  - Rewrote `deploy-dev.yml` — triggered on `apps/**` changes to `development`; uses Cloudflare tunnel SSH exclusively; jobs: wait-for-infra → verify-tunnel → build-and-push → deploy-app → smoke-test
+  - Created `infra-prod.yml` — triggered on `iac/**` changes to `main`; same as infra-dev + safety-check + create-release
+  - Rewrote `deploy-prod.yml` — triggered on `apps/**` changes to `main`; promote-images instead of build-and-push + CF tunnel SSH
+  - Updated `pr-check.yml` — split into `lint-iac` + `lint-apps` + path-filtered `plan-dev` / `plan-prod`
+  - App workflows never use public IP SSH — work regardless of NSG state (tightened or open)
+  - Mixed commit handling: `wait-for-infra` job polls GitHub API and waits up to 10 min for infra workflow to complete
+- 🔲 First full end-to-end successful dev pipeline run (infra-dev.yml: all 4 jobs green + deploy-dev.yml: all 5 jobs green)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 
 **Application Development:**
