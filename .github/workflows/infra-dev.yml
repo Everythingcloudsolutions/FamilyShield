@@ -224,7 +224,14 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             /tmp/docker-compose.yml \
-            ubuntu@"$VM_IP":/opt/familyshield/docker-compose.yml
+            ubuntu@"$VM_IP":/tmp/docker-compose.yml
+
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 \
+            ubuntu@"$VM_IP" \
+            "sudo mkdir -p /opt/familyshield && sudo mv /tmp/docker-compose.yml /opt/familyshield/docker-compose.yml && sudo chown ubuntu:ubuntu /opt/familyshield /opt/familyshield/docker-compose.yml"
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
