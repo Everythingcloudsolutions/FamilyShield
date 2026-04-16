@@ -587,7 +587,13 @@ The bootstrap pattern (check → render → copy) is idempotent and safe to run 
 
 **Root cause — Part 1 (JSON construction):** JSON payloads were being constructed using bash string concatenation and command substitution (`cat <<EOF` with `$(...)` expansions). When variables like `tunnel_secret` contain special characters or when command substitution produces unexpected output, the resulting JSON becomes malformed with unprintable control characters that Cloudflare's parser rejects.
 
-**Root cause — Part 2 (Whitespace in outputs):** When `tunnel_secret` is extracted from GitHub Actions workflow outputs (via `${{ steps.iac.outputs.tunnel_secret }}`), it may include trailing whitespace like carriage returns or newlines. These are control characters that break JSON when the value is embedded without proper escaping. The SSH logic update may have changed how GitHub Actions handles outputs, introducing carriage returns similar to the SSH key issue.
+**Root cause — Part 2 (base64 line wrapping):** The `base64` command by default wraps output at 76 characters and inserts literal newlines. When the tunnel_secret is 64+ characters, base64 splits it across multiple lines, producing output like `base64data\nmore_data`. This literal `\n` in the middle of the string breaks JSON:
+
+```json
+{"tunnel_secret": "base64data\nmore_data"}  // Invalid — unescaped newline
+```
+
+Cloudflare's JSON parser rejects this as a malformed string.
 
 **Solution — Part 1:** Replaced all JSON payload construction in `scripts/cloudflare-api.sh` with `jq -n` + `--arg` / `--argjson` flags. This ensures:
 
@@ -595,14 +601,21 @@ The bootstrap pattern (check → render → copy) is idempotent and safe to run 
 - Special characters don't corrupt the payload
 - JSON is guaranteed to be valid before transmission
 
-**Solution — Part 2:** Added defensive whitespace trimming in `create_tunnel()` and `setup_cloudflare()` functions:
+**Solution — Part 2:** Fixed base64 line wrapping in `create_tunnel()`:
+
+```bash
+# base64 -w 0 disables line wrapping (default wraps at 76 chars, inserting \n)
+local tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64 -w 0)
+```
+
+Also added defensive whitespace trimming in `setup_cloudflare()` function:
 
 ```bash
 # Strip leading/trailing whitespace (handles carriage returns, newlines, etc.)
 tunnel_secret=$(echo "$tunnel_secret" | tr -d '[:space:]')
 ```
 
-This prevents control characters from GitHub Actions workflow outputs from breaking the JSON payload.
+This ensures the base64-encoded tunnel_secret doesn't contain unwanted line breaks, and input parameters are clean.
 
 **Fixed in:**
 

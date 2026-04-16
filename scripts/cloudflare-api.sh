@@ -89,7 +89,8 @@ create_tunnel() {
   fi
 
   # Create tunnel (use jq for safe JSON construction)
-  local tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64)
+  # Note: base64 -w 0 disables line wrapping (default wraps at 76 chars, inserting \n)
+  local tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64 -w 0)
   local payload=$(jq -n \
     --arg name "familyshield-$environment" \
     --arg secret "$tunnel_secret_b64" \
