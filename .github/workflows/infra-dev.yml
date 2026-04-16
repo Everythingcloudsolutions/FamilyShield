@@ -140,17 +140,23 @@ jobs:
         with:
           tofu_version: "1.6.x"
 
-      - name: Get tunnel secret from IaC state
-        id: iac
-        working-directory: iac
+      - name: Apply Cloudflare IaC (tunnel, DNS, access, WAF)
+        id: cf_apply
+        working-directory: iac/cloudflare
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TF_VAR_cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          TF_VAR_environment: dev
         run: |
+          set -euo pipefail
+
           tofu init \
             -backend-config="bucket=familyshield-tfstate" \
-            -backend-config="key=dev/terraform.tfstate" \
+            -backend-config="key=cloudflare/dev/terraform.tfstate" \
             -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
             -backend-config="region=ca-toronto-1" \
             -backend-config="skip_region_validation=true" \
@@ -159,23 +165,43 @@ jobs:
             -backend-config="use_path_style=true" \
             -reconfigure
 
-          TUNNEL_SECRET=$(tofu output -raw tunnel_secret 2>/dev/null || echo "")
-          if [ -z "$TUNNEL_SECRET" ]; then
-            echo "❌ Failed to get tunnel_secret from IaC state"
-            exit 1
-          fi
-          echo "::add-mask::$TUNNEL_SECRET"
-          echo "tunnel_secret=$TUNNEL_SECRET" >> $GITHUB_OUTPUT
+          tofu apply \
+            -var-file="environments/dev/terraform.tfvars" \
+            -auto-approve \
+            -no-color
 
-      - name: Setup Cloudflare (tunnel, DNS, access)
-        id: cloudflare
+          echo "✅ Cloudflare IaC apply complete (tunnel + DNS + access + WAF)"
+
+      - name: Capture Cloudflare outputs
+        id: cf_outputs
+        working-directory: iac/cloudflare
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
         run: |
-          bash scripts/cloudflare-api.sh setup dev \
-            "${{ steps.iac.outputs.tunnel_secret }}"
+          TUNNEL_TOKEN=$(tofu output -raw tunnel_token 2>/dev/null)
+          CLIENT_ID=$(tofu output -raw service_token_client_id 2>/dev/null)
+          CLIENT_SECRET=$(tofu output -raw service_token_client_secret 2>/dev/null)
+
+          echo "::add-mask::$TUNNEL_TOKEN"
+          echo "::add-mask::$CLIENT_SECRET"
+
+          echo "tunnel_token=$TUNNEL_TOKEN"   >> $GITHUB_OUTPUT
+          echo "client_id=$CLIENT_ID"         >> $GITHUB_OUTPUT
+          echo "client_secret=$CLIENT_SECRET" >> $GITHUB_OUTPUT
+
+      - name: Update GitHub secrets with fresh service token
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ github.repository }}
+          CLIENT_ID: ${{ steps.cf_outputs.outputs.client_id }}
+          CLIENT_SECRET: ${{ steps.cf_outputs.outputs.client_secret }}
+        run: |
+          # Update repo secrets so deploy-dev.yml always has valid service token credentials
+          gh secret set CF_ACCESS_CLIENT_ID     --body "$CLIENT_ID"     --repo "$REPO"
+          gh secret set CF_ACCESS_CLIENT_SECRET --body "$CLIENT_SECRET" --repo "$REPO"
+          echo "✅ GitHub secrets updated: CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET"
 
       - name: Bootstrap VM — ensure docker-compose.yml exists
         shell: bash
@@ -254,11 +280,11 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
           VM_IP: ${{ needs.deploy-infra-dev.outputs.vm_ip }}
-          TUNNEL_TOKEN: ${{ steps.cloudflare.outputs.TUNNEL_TOKEN }}
+          TUNNEL_TOKEN: ${{ steps.cf_outputs.outputs.tunnel_token }}
         run: |
           echo "::add-mask::$TUNNEL_TOKEN"
           if [ -z "$TUNNEL_TOKEN" ]; then
-            echo "❌ Tunnel token not available from cloudflare-api.sh output"
+            echo "❌ Tunnel token not available from Cloudflare IaC outputs"
             exit 1
           fi
           mkdir -p ~/.ssh
