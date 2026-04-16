@@ -62,7 +62,7 @@ services:
       - "9090:9090"       # Metrics
     volumes:
       - headscale_data:/var/lib/headscale
-      - ./config/headscale.yaml:/etc/headscale/config.yaml:ro
+      - ./apps/platform-config/headscale/headscale.yaml:/etc/headscale/config.yaml:ro
     command: headscale serve
     environment:
       - TZ=America/Toronto
@@ -165,6 +165,8 @@ services:
     environment:
       - NODE_ENV=${environment}
       - TZ=America/Toronto
+      - NEXT_PUBLIC_SUPABASE_URL=${supabase_url}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${supabase_anon_key}
     depends_on:
       api:
         condition: service_healthy
@@ -185,7 +187,7 @@ services:
     ports:
       - "1880:1880"
     volumes:
-      - ./config/nodered:/data
+      - ./apps/platform-config/nodered:/data
     environment:
       - TZ=America/Toronto
       - NODE_RED_ENABLE_PROJECTS=true
@@ -231,7 +233,7 @@ services:
       - "3002:3000"       # Admin UI (via Cloudflare Tunnel → Zero Trust)
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./apps/platform-config/grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=$${GRAFANA_PASSWORD}
       - GF_SERVER_ROOT_URL=https://grafana-${environment}.everythingcloud.ca
@@ -259,7 +261,7 @@ services:
       - NTFY_AUTH_FILE=/var/lib/ntfy/user.db
       - NTFY_AUTH_DEFAULT_ACCESS=deny-all
     volumes:
-      - ./config/ntfy:/etc/ntfy:ro
+      - ./apps/platform-config/ntfy:/etc/ntfy:ro
 
   # ── 11. Cloudflare Tunnel daemon ──────────────────────────────────────────
   cloudflared:

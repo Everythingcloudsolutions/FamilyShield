@@ -176,7 +176,7 @@ jobs:
             docker push ghcr.io/everythingcloudsolutions/familyshield-$app:latest
           done
 
-      - name: Bootstrap VM — copy docker-compose.yml if missing
+      - name: Sync VM docker-compose.yml from template
         shell: bash
         env:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
@@ -193,18 +193,7 @@ jobs:
             echo "❌ VM IP not available — cannot bootstrap VM"
             exit 1
           fi
-          # Check if docker-compose.yml already exists on VM
-          COMPOSE_EXISTS=$(ssh -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" \
-            "test -f /opt/familyshield/docker-compose.yml && echo yes || echo no" 2>/dev/null || echo "no")
-          if [ "$COMPOSE_EXISTS" = "yes" ]; then
-            echo "✅ docker-compose.yml already exists on VM — skipping bootstrap"
-            exit 0
-          fi
-          echo "⚠️  docker-compose.yml missing — rendering template and copying to VM"
+          echo "Syncing docker-compose.yml from template"
           # Render Terraform template vars; un-escape $${...} → ${...} for Docker runtime env vars
           sed \
             -e "s|\${environment}|prod|g" \
@@ -220,7 +209,30 @@ jobs:
             -o UserKnownHostsFile=/dev/null \
             /tmp/docker-compose.yml \
             ubuntu@"$VM_IP":/opt/familyshield/docker-compose.yml
-          echo "✅ docker-compose.yml copied to VM"
+          echo "✅ docker-compose.yml synced to VM"
+
+      - name: Sync runtime assets (config + mitm addon)
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          VM_IP: ${{ needs.deploy-infra-prod.outputs.vm_ip }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+          tar -czf /tmp/familyshield-runtime-assets.tgz apps/mitm apps/platform-config
+          scp -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            /tmp/familyshield-runtime-assets.tgz \
+            ubuntu@"$VM_IP":/tmp/familyshield-runtime-assets.tgz
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=20 \
+            ubuntu@"$VM_IP" \
+            "mkdir -p /opt/familyshield && tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
 
       - name: Deploy containers to prod VM
         env:

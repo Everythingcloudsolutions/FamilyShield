@@ -1,0 +1,6 @@
+base-url: https://notify-placeholder.everythingcloud.ca
+listen-http: ":80"
+behind-proxy: true
+cache-file: /var/cache/ntfy/cache.db
+auth-file: /var/lib/ntfy/user.db
+auth-default-access: deny-all
