@@ -279,6 +279,7 @@ jobs:
             -o ConnectTimeout=15 \
             ubuntu@"$VM_IP" bash -s <<ENDSSH
           set -euo pipefail
+          sudo cloud-init status --wait || true
           cd /opt/familyshield
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
           docker compose up -d redis
