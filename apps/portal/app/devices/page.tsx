@@ -6,8 +6,9 @@ export const dynamic = 'force-dynamic'
  * Devices Page — device enrollment + management
  */
 import { useState } from 'react'
+import { useEffect } from 'react'
 import { DeviceCard } from '../../components/DeviceCard'
-import { getSupabase } from '../../lib/supabase'
+import { getSupabase, isSupabaseConfigured } from '../../lib/supabase'
 import type { Device, DeviceProfile } from '../../lib/types'
 
 interface EnrolFormData {
@@ -38,6 +39,12 @@ function EnrolModal({
   const [error, setError] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
+    if (!isSupabaseConfigured()) {
+      setError('Supabase is inactive. Activate Supabase before enrolling devices.')
+      setSubmitting(false)
+      return
+    }
+
     e.preventDefault()
     setSubmitting(true)
     setError(null)
@@ -175,7 +182,74 @@ function EnrolModal({
 
 export default function DevicesPage() {
   const [devices, setDevices] = useState<Device[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
+
+  useEffect(() => {
+    let isMounted = true
+
+    if (!isSupabaseConfigured()) {
+      setLoadError('Supabase is inactive or not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.')
+      setLoading(false)
+      return
+    }
+
+    async function loadDevices() {
+      setLoading(true)
+      setLoadError(null)
+
+      const { data, error } = await getSupabase()
+        .from('devices')
+        .select('*')
+        .order('enrolled_at', { ascending: false })
+
+      if (!isMounted) return
+
+      if (error) {
+        setLoadError(error.message)
+      } else {
+        setDevices((data ?? []) as Device[])
+      }
+
+      setLoading(false)
+    }
+
+    void loadDevices()
+
+    const channel = getSupabase()
+      .channel('devices-feed')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'devices' },
+        (payload) => {
+          const incoming = payload.new as Device
+          setDevices((prev) => [incoming, ...prev.filter((d) => d.device_ip !== incoming.device_ip)])
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'devices' },
+        (payload) => {
+          const incoming = payload.new as Device
+          setDevices((prev) => prev.map((d) => (d.device_ip === incoming.device_ip ? incoming : d)))
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'devices' },
+        (payload) => {
+          const removed = payload.old as Pick<Device, 'device_ip'>
+          setDevices((prev) => prev.filter((d) => d.device_ip !== removed.device_ip))
+        },
+      )
+      .subscribe()
+
+    return () => {
+      isMounted = false
+      void getSupabase().removeChannel(channel)
+    }
+  }, [])
 
   return (
     <div className="space-y-5" data-testid="devices-page">
@@ -198,7 +272,21 @@ export default function DevicesPage() {
       </div>
 
       {/* Device grid */}
-      {devices.length === 0 ? (
+      {loading ? (
+        <div
+          className="rounded-xl border border-slate-700/60 bg-slate-800/40 py-16 text-center"
+          data-testid="loading-devices"
+        >
+          <p className="text-slate-400">Loading devices…</p>
+        </div>
+      ) : loadError ? (
+        <div
+          className="rounded-xl border border-red-500/30 bg-red-500/5 py-8 text-center"
+          data-testid="devices-load-error"
+        >
+          <p className="text-sm text-red-300">Failed to load devices: {loadError}</p>
+        </div>
+      ) : devices.length === 0 ? (
         <div
           className="rounded-xl border border-dashed border-slate-700 py-16 text-center"
           data-testid="empty-devices"

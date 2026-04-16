@@ -57,6 +57,14 @@ test.describe('Devices Page', () => {
     await expect(page.getByTestId('open-enrol-modal')).toBeVisible()
   })
 
+  test('renders existing devices from Supabase on initial load', async ({ page }) => {
+    await page.goto('/devices')
+
+    await expect(page.getByTestId('devices-grid')).toBeVisible()
+    await expect(page.getByTestId('devices-grid')).toContainText("Emma's iPad")
+    await expect(page.getByTestId('devices-grid')).toContainText("Noah's Laptop")
+  })
+
   test('opens enrollment modal on button click', async ({ page }) => {
     await page.goto('/devices')
 
