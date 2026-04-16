@@ -266,6 +266,7 @@ FamilyShield requires **three** Cloudflare permissions — do NOT use a template
 This is a **separate credential** from the API token above. GitHub Actions runners use it to connect to the OCI VM through the Cloudflare Zero Trust layer without browser-based authentication.
 
 > **Why is this different from the API token?**
+>
 > - The **API Token** (Part 3.3) calls the Cloudflare REST API to *create and manage* resources (tunnels, DNS, access apps).
 > - The **Tunnel Token** is what cloudflared uses on the VM to *run* the tunnel.
 > - The **Access Service Token** is what a *client* (CI runner) presents to pass *through* Cloudflare Zero Trust when SSH-ing to `ssh-dev.everythingcloud.ca` or `ssh-prod.everythingcloud.ca`. Without it, the runner hits the Cloudflare Access auth wall (which normally redirects to a browser) and silently fails.
@@ -650,18 +651,21 @@ You now have everything set up. This step will create the actual cloud server (V
 4. **Total time:** 10–20 minutes for all three stages
 
 5. Open the **deploy-dev** workflow details and scroll to the bottom — you'll see:
+
    ```
    Outputs
    vm_public_ip = 152.67.xxx.xxx
    ```
+
    - **Copy this IP address** — you'll use it in Part 12
 
 > **What if deploy-cloudflare fails?**
-> 
+>
 > The Cloudflare workflow can fail if:
+>
 > - The API token is missing scopes (must have Zone DNS + Tunnel + Access scopes — see Part 3.3)
 > - The Cloudflare account ID or zone ID is wrong
-> 
+>
 > To fix: Verify your credentials in GitHub Secrets, then re-run the `deploy-cloudflare` workflow manually from the Actions tab. No need to re-run the IaC stage.
 
 **That's it!** Your cloud infrastructure is now live, Cloudflare is configured, and your apps are running.
@@ -803,25 +807,30 @@ All admin URLs are behind Cloudflare Zero Trust — you log in with your Cloudfl
 
 **GitHub Actions tofu apply fails with "404-NotAuthorizedOrNotFound" on compartments or policies**
 → The GitHub Actions IAM user has no tenancy-level permissions. Re-run:
+
   ```bash
   bash scripts/bootstrap-oci.sh
   ```
+
   The script will skip existing resources (user, API key, bucket) and create only the missing
   bootstrap IAM policy (Step 6).
   
   **Manual alternative** in OCI Console: Identity → Policies → Create Policy (root compartment):
-  - Name: `familyshield-bootstrap-policy`
-  - Statement: `Allow any-user to manage all-resources in tenancy where request.user.id = '<OCI_USER_OCID>'`
-  - Replace `<OCI_USER_OCID>` with your OCI_USER_OCID GitHub secret value
+
+- Name: `familyshield-bootstrap-policy`
+- Statement: `Allow any-user to manage all-resources in tenancy where request.user.id = '<OCI_USER_OCID>'`
+- Replace `<OCI_USER_OCID>` with your OCI_USER_OCID GitHub secret value
 
 **Cloudflare Authentication error (10000) during deploy-cloudflare workflow**
 → The API token is missing required scopes. The "Edit zone DNS" template is NOT sufficient.
   FamilyShield requires **three** permissions:
-  - **Zone → DNS → Edit** (for CNAME records)
-  - **Account → Cloudflare Tunnel → Edit** (for Argo Tunnel creation)
-  - **Account → Access: Apps and Policies → Edit** (for Zero Trust access applications)
+
+- **Zone → DNS → Edit** (for CNAME records)
+- **Account → Cloudflare Tunnel → Edit** (for Argo Tunnel creation)
+- **Account → Access: Apps and Policies → Edit** (for Zero Trust access applications)
 
   **To fix:**
+
   1. Log in to **dash.cloudflare.com/profile/api-tokens**
   2. Delete the old `familyshield-deploy` token
   3. Create a new **Custom Token** (NOT a template) with all three permissions
@@ -833,22 +842,26 @@ All admin URLs are behind Cloudflare Zero Trust — you log in with your Cloudfl
 
 **deploy-cloudflare workflow never starts after deploy-dev succeeds**
 → The workflow is triggered automatically only if the previous `deploy-dev` workflow completes successfully. Check:
+
   1. Go to Actions tab → find the `deploy-dev` workflow that just ran
   2. Click on it and scroll to bottom — look for green ✅ checkmark
   3. If it shows ✅, wait 1–2 minutes and refresh the Actions page
   4. The `deploy-cloudflare` workflow should appear
   
   If `deploy-dev` failed or was cancelled, manually trigger `deploy-cloudflare`:
+
   1. Go to Actions tab → search for `Deploy → Cloudflare` workflow
   2. Click **Run workflow** → select environment (dev) and action (setup)
   3. Click **Run workflow**
 
 **deploy-cloudflare fails with "Tunnel not found" or "DNS record already exists"**
 → This can happen if:
-  - A previous deployment partially completed
-  - Manual resources exist in Cloudflare
+
+- A previous deployment partially completed
+- Manual resources exist in Cloudflare
   
   **To fix:** Run the cleanup workflow first, then re-run deploy-cloudflare:
+
   1. Go to Actions tab → search for `Cleanup → Cloudflare` workflow
   2. Click **Run workflow** → select environment (dev)
   3. Click **Run workflow** — wait for it to complete
@@ -856,6 +869,7 @@ All admin URLs are behind Cloudflare Zero Trust — you log in with your Cloudfl
 
 **Portal or admin URLs not accessible after deployment**
 → Verify that the Cloudflare tunnel is running:
+
   1. Log in to **dash.cloudflare.com**
   2. Go to Tunnels (in the left sidebar under Access)
   3. Look for `familyshield-dev` tunnel

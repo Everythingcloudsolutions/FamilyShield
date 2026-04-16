@@ -1267,6 +1267,7 @@ Attempt 18/18 — tunnel not ready, waiting 10s...
 **Root cause:** `cloudflared access ssh --hostname ssh-dev.everythingcloud.ca` requires Cloudflare Zero Trust authentication. Without a **service token**, the runner hits the Access auth wall (which normally redirects to a browser) and the connection silently fails.
 
 This is a separate credential from:
+
 - `CLOUDFLARE_API_TOKEN` — manages resources via the Cloudflare REST API
 - The tunnel token — what cloudflared on the VM uses to run the tunnel
 
