@@ -24,6 +24,7 @@ resource "oci_core_instance" "familyshield" {
     subnet_id        = var.subnet_id
     assign_public_ip = true
     display_name     = "familyshield-${var.environment}-vnic"
+    nsg_ids          = var.nsg_ids
   }
 
   metadata = var.ssh_public_key != "" ? {

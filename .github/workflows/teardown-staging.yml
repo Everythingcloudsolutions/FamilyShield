@@ -171,7 +171,7 @@ jobs:
             -var="environment=staging" \
             -var-file="environments/staging/terraform.tfvars" \
             -auto-approve \
-            -no-color
+            -no-color || { echo "❌ tofu destroy failed — check logs above"; exit 1; }
           echo "✅ Staging environment fully destroyed (Always Free quota released)"
           echo "ℹ️  The shared tfstate bucket and compartments (bootstrap) were NOT deleted"
 

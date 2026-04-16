@@ -42,6 +42,12 @@ variable "vcn_cidr" {
   default     = "10.0.0.0/16"
 }
 
+variable "admin_ssh_cidrs" {
+  description = "CIDRs allowed permanent SSH access to the VM public IP (admin IPs). GitHub Actions uses dynamic NSG rules."
+  type        = list(string)
+  default     = ["173.33.214.49/32"]
+}
+
 # ── Compute ───────────────────────────────────────────────────────────────────
 
 variable "instance_ocpus" {

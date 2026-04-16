@@ -11,3 +11,6 @@ vcn_cidr    = "10.1.0.0/16"
 # This is ephemeral and torn down after QA testing
 instance_ocpus  = 1
 instance_memory = 6
+
+# SSH access restricted to admin IP only. GitHub Actions uses dynamic NSG rules per run.
+admin_ssh_cidrs = ["173.33.214.49/32"]

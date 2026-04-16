@@ -10,3 +10,6 @@ vcn_cidr    = "10.2.0.0/16"
 # This is the largest allocation within Always Free tier limits
 instance_ocpus  = 2
 instance_memory = 6
+
+# SSH access restricted to admin IP only. GitHub Actions uses dynamic NSG rules per run.
+admin_ssh_cidrs = ["173.33.214.49/32"]

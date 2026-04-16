@@ -165,7 +165,7 @@ jobs:
             -var="environment=prod" \
             -var-file="environments/prod/terraform.tfvars" \
             -auto-approve \
-            -no-color
+            -no-color || { echo "❌ tofu destroy failed — check logs above"; exit 1; }
           echo "✅ Production environment fully destroyed"
           echo "ℹ️  The shared tfstate bucket and compartments (bootstrap) were NOT deleted"
           echo "ℹ️  Re-deploy by merging to main"

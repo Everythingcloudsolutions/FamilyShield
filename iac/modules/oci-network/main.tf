@@ -60,14 +60,17 @@ resource "oci_core_security_list" "main" {
     protocol    = "all"
   }
 
-  # SSH — restricted to GitHub Actions runner IPs + your IP
-  # Update var.allowed_ssh_cidrs with your home IP
-  ingress_security_rules {
-    protocol = "6"         # TCP
-    source   = "0.0.0.0/0" # Tighten this in prod via allowed_ssh_cidrs
-    tcp_options {
-      min = 22
-      max = 22
+  # SSH — restricted via admin_ssh_cidrs variable (static IPs in security list)
+  # Dynamic CI rules are managed via NSG in workflows
+  dynamic "ingress_security_rules" {
+    for_each = var.admin_ssh_cidrs
+    content {
+      protocol = "6"  # TCP
+      source   = ingress_security_rules.value
+      tcp_options {
+        min = 22
+        max = 22
+      }
     }
   }
 
@@ -101,4 +104,22 @@ resource "oci_core_network_security_group" "vm" {
   vcn_id         = oci_core_vcn.main.id
   display_name   = "familyshield-${var.environment}-nsg-vm"
   freeform_tags  = var.tags
+}
+
+# NSG Rules — SSH from admin IPs (static, permanent access)
+# Dynamic CI rules are added/removed per workflow run via OCI CLI
+resource "oci_core_network_security_group_security_rule" "ssh_admin" {
+  for_each                  = toset(var.admin_ssh_cidrs)
+  network_security_group_id = oci_core_network_security_group.vm.id
+  direction                 = "INGRESS"
+  protocol                  = "6"  # TCP
+  source                    = each.value
+  source_type               = "CIDR_BLOCK"
+  stateless                 = false
+  tcp_options {
+    destination_port_range {
+      min = 22
+      max = 22
+    }
+  }
 }

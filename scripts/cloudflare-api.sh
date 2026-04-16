@@ -143,6 +143,10 @@ configure_tunnel_routes() {
         "service": "http://localhost:1880"
       },
       {
+        "hostname": "ssh-ENVIRONMENT.everythingcloud.ca",
+        "service": "ssh://localhost:22"
+      },
+      {
         "service": "http_status:404"
       }
     ]
@@ -301,6 +305,42 @@ EOF
   echo "$app_id"
 }
 
+create_ssh_access_app() {
+  local environment=$1
+  local fqdn="ssh-$environment.$ROOT_DOMAIN"
+  local app_name="FamilyShield SSH $environment"
+
+  header "Creating SSH Access Application: $app_name"
+
+  # Check if already exists
+  local existing=$(cf_api GET "/zones/$ZONE_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
+
+  if [ -n "$existing" ]; then
+    info "SSH Access app already exists: $existing"
+    echo "$existing"
+    return 0
+  fi
+
+  local payload=$(cat <<EOF
+{
+  "name": "$app_name",
+  "domain": "$fqdn",
+  "type": "ssh",
+  "session_duration": "8h",
+  "tags": ["familyshield", "ssh"]
+}
+EOF
+)
+
+  local response=$(cf_api POST "/zones/$ZONE_ID/access/apps" "$payload")
+  local app_id=$(echo "$response" | jq -r '.result.id' 2>/dev/null || echo "")
+
+  [ -n "$app_id" ] || die "Failed to create SSH access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
+
+  success "SSH Access app created: $app_name ($app_id)"
+  echo "$app_id"
+}
+
 delete_access_application() {
   local app_name=$1
 
@@ -362,6 +402,8 @@ setup_cloudflare() {
     "FamilyShield Grafana $environment" \
     "grafana-$environment.$ROOT_DOMAIN"
 
+  create_ssh_access_app "$environment"
+
   # 6. Output for workflow
   echo "TUNNEL_ID=$tunnel_id" >> "$GITHUB_OUTPUT" 2>/dev/null || true
   echo "TUNNEL_TOKEN=$tunnel_token" >> "$GITHUB_OUTPUT" 2>/dev/null || true
@@ -370,8 +412,8 @@ setup_cloudflare() {
   echo ""
   echo "Tunnel ID:    $tunnel_id"
   echo "Tunnel Token: $(echo "$tunnel_token" | cut -c1-20)..."
-  echo "DNS Records:  7 CNAME records created"
-  echo "Access Apps:  AdGuard + Grafana (Zero Trust)"
+  echo "DNS Records:  8 CNAME records created"
+  echo "Access Apps:  AdGuard + Grafana + SSH (Zero Trust)"
   echo ""
   echo "Routes configured for:"
   echo "  - familyshield-$environment.everythingcloud.ca → Portal (port 3000)"
@@ -381,6 +423,7 @@ setup_cloudflare() {
   echo "  - vpn.familyshield-$environment.everythingcloud.ca → Headscale (port 8080)"
   echo "  - grafana-$environment.everythingcloud.ca → Grafana (port 3000)"
   echo "  - nodered-$environment.everythingcloud.ca → Node-RED (port 1880)"
+  echo "  - ssh-$environment.everythingcloud.ca → SSH (port 22)"
 }
 
 cleanup_cloudflare() {
@@ -400,6 +443,7 @@ cleanup_cloudflare() {
   fi
 
   # Delete DNS records
+  delete_dns_record "ssh.familyshield-$environment"
   delete_dns_record "familyshield-$environment"
   delete_dns_record "api-$environment"
   delete_dns_record "adguard-$environment"
@@ -411,6 +455,7 @@ cleanup_cloudflare() {
   # Delete Access Applications
   delete_access_application "FamilyShield AdGuard $environment"
   delete_access_application "FamilyShield Grafana $environment"
+  delete_access_application "FamilyShield SSH $environment"
 
   header "✅ CLOUDFLARE CLEANUP COMPLETE"
 }
