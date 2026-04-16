@@ -62,6 +62,7 @@ jobs:
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
           TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_STAGING }}
           TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          TF_VAR_supabase_service_role_key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -137,6 +138,7 @@ jobs:
           VM_IP: ${{ needs.deploy-infra-staging.outputs.vm_ip }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL_STAGING }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -154,6 +156,7 @@ jobs:
             -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_staging|g" \
             -e "s|\${supabase_url}|$SUPABASE_URL|g" \
             -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
+            -e "s|\${supabase_service_role_key}|$SUPABASE_SERVICE_ROLE_KEY|g" \
             -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
             -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
             -e 's|\$\${|\${|g' \
@@ -292,8 +295,7 @@ jobs:
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
         run: |
           bash scripts/cloudflare-api.sh setup staging \
-            "${{ steps.iac.outputs.tunnel_secret }}" \
-            "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+            "${{ steps.iac.outputs.tunnel_secret }}"
 
       - name: Bootstrap VM — copy docker-compose.yml if missing
         shell: bash
@@ -302,6 +304,7 @@ jobs:
           VM_IP: ${{ steps.iac.outputs.vm_ip }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL_STAGING }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -332,6 +335,7 @@ jobs:
             -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_staging|g" \
             -e "s|\${supabase_url}|$SUPABASE_URL|g" \
             -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
+            -e "s|\${supabase_service_role_key}|$SUPABASE_SERVICE_ROLE_KEY|g" \
             -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
             -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
             -e 's|\$\${|\${|g' \
@@ -536,20 +540,16 @@ jobs:
 
           # Get all current SSH ingress rules (port 22)
           # Correct OCI CLI command: oci network nsg rule list
-          SSH_RULES=$(oci network nsg rule list \
+          RAW=$(oci network nsg rule list \
             --nsg-id "$NSG_ID" \
-            --output json 2>/dev/null || echo "[]")
+            --output json 2>/dev/null || echo "")
 
-          # Validate JSON before processing with jq
-          if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
-            echo "⚠️  Failed to query NSG rules — skipping rule removal"
-            SSH_RULES="[]"
-          fi
+          # Normalize: OCI returns {"data":[...]}; fallback is empty string or bare array
+          SSH_RULES=$(echo "$RAW" | jq -e 'if type=="object" then (.data // []) else if type=="array" then . else [] end end' 2>/dev/null || echo "[]")
 
-          RULE_COUNT=$(echo "$SSH_RULES" | jq 'length')
+          RULE_COUNT=$(echo "$SSH_RULES" | jq '[.[] | select(.direction=="INGRESS" and .source=="0.0.0.0/0")] | length' 2>/dev/null || echo "0")
           if [ "$RULE_COUNT" -gt 0 ]; then
-            echo "Found $RULE_COUNT SSH rule(s) — removing old rules..."
-            RULE_IDS=$(echo "$SSH_RULES" | jq -r '.[].id')
+            echo "Found $RULE_COUNT broad SSH rule(s) — removing old rules..."
             while IFS= read -r RULE_ID; do
               if [ -n "$RULE_ID" ] && [ "$RULE_ID" != "null" ]; then
                 oci network nsg rule delete \
@@ -557,20 +557,27 @@ jobs:
                   --force 2>/dev/null || true
                 echo "   Removed: $RULE_ID"
               fi
-            done <<< "$RULE_IDS"
+            done < <(echo "$SSH_RULES" | jq -r '.[] | select(.direction=="INGRESS" and .source=="0.0.0.0/0") | .id' 2>/dev/null || true)
           fi
 
-          # Add restricted SSH rule for admin IP only
-          echo "Adding SSH rule for $ADMIN_IP..."
-          oci network nsg rule create \
-            --nsg-id "$NSG_ID" \
-            --direction INGRESS \
-            --protocol 6 \
-            --source "$ADMIN_IP" \
-            --source-type CIDR_BLOCK \
-            --tcp-options "destinationPortRange={min:22,max:22}" || true
+          # Check if admin IP rule already exists before adding
+          ADMIN_EXISTS=$(echo "$SSH_RULES" | jq -r --arg ip "$ADMIN_IP" \
+            '.[] | select(.direction=="INGRESS" and .source==$ip) | .id' 2>/dev/null | head -1 || echo "")
 
-          echo "✅ SSH tightened to admin IP only ($ADMIN_IP)"
+          if [ -z "$ADMIN_EXISTS" ]; then
+            # Add restricted SSH rule for admin IP only
+            echo "Adding SSH rule for $ADMIN_IP..."
+            oci network nsg rule create \
+              --nsg-id "$NSG_ID" \
+              --direction INGRESS \
+              --protocol 6 \
+              --source "$ADMIN_IP" \
+              --source-type CIDR_BLOCK \
+              --tcp-options "destinationPortRange={min:22,max:22}" || true
+            echo "✅ SSH tightened to admin IP only ($ADMIN_IP)"
+          else
+            echo "✅ Admin IP rule already present — no change needed"
+          fi
 
   # ── Auto-teardown ────────────────────────────────────────────────────────
   # Runs ALWAYS after testing (pass or fail) — staging is ephemeral.
@@ -686,6 +693,7 @@ jobs:
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
           TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_STAGING }}
           TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          TF_VAR_supabase_service_role_key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |

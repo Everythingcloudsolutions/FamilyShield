@@ -46,12 +46,15 @@ jobs:
                   if [ "$ENV" = "dev" ]; then
                     echo "supabase_url=${{ secrets.SUPABASE_URL }}" >> $GITHUB_OUTPUT
                     echo "supabase_anon_key=${{ secrets.SUPABASE_ANON_KEY }}" >> $GITHUB_OUTPUT
+                    echo "supabase_service_role_key=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" >> $GITHUB_OUTPUT
                   elif [ "$ENV" = "staging" ]; then
                     echo "supabase_url=${{ secrets.SUPABASE_URL_STAGING }}" >> $GITHUB_OUTPUT
                     echo "supabase_anon_key=${{ secrets.SUPABASE_ANON_KEY_STAGING }}" >> $GITHUB_OUTPUT
+                    echo "supabase_service_role_key=${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}" >> $GITHUB_OUTPUT
                   else
                     echo "supabase_url=${{ secrets.SUPABASE_URL_PROD }}" >> $GITHUB_OUTPUT
                     echo "supabase_anon_key=${{ secrets.SUPABASE_ANON_KEY_PROD }}" >> $GITHUB_OUTPUT
+                    echo "supabase_service_role_key=${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}" >> $GITHUB_OUTPUT
                   fi
 
                   echo "groq_api_key=${{ secrets.GROQ_API_KEY }}" >> $GITHUB_OUTPUT
@@ -103,6 +106,7 @@ jobs:
                   ENVIRONMENT: ${{ github.event.inputs.environment }}
                   SUPABASE_URL: ${{ steps.vars.outputs.supabase_url }}
                   SUPABASE_ANON_KEY: ${{ steps.vars.outputs.supabase_anon_key }}
+                  SUPABASE_SERVICE_ROLE_KEY: ${{ steps.vars.outputs.supabase_service_role_key }}
                   GROQ_API_KEY: ${{ steps.vars.outputs.groq_api_key }}
                   ANTHROPIC_API_KEY: ${{ steps.vars.outputs.anthropic_api_key }}
               run: |
@@ -126,6 +130,7 @@ jobs:
                     -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_${ENVIRONMENT}|g" \
                     -e "s|\${supabase_url}|$SUPABASE_URL|g" \
                     -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
+                    -e "s|\${supabase_service_role_key}|$SUPABASE_SERVICE_ROLE_KEY|g" \
                     -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
                     -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
                     -e 's|\$\${|\${|g' \

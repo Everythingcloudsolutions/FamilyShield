@@ -89,8 +89,9 @@ create_tunnel() {
   fi
 
   # Create tunnel (use jq for safe JSON construction)
-  # Note: base64 -w 0 disables line wrapping (default wraps at 76 chars, inserting \n)
-  local tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64 -w 0)
+  # Use base64 | tr -d '\n' for portability (base64 -w 0 is GNU-only and fails on macOS/BSD)
+  local tunnel_secret_b64
+  tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64 | tr -d '\n')
   local payload=$(jq -n \
     --arg name "familyshield-$environment" \
     --arg secret "$tunnel_secret_b64" \
@@ -393,12 +394,10 @@ delete_access_application() {
 setup_cloudflare() {
   local environment=$1
   local tunnel_secret=$2
-  local admin_emails=$3
 
   # Normalize inputs: strip whitespace that might be from GitHub Actions outputs
   tunnel_secret=$(echo "$tunnel_secret" | tr -d '[:space:]')
   environment=$(echo "$environment" | tr -d '[:space:]')
-  admin_emails=$(echo "$admin_emails" | tr -d '[:space:]')
 
   # Validate required inputs
   [ -n "$environment" ] || die "environment parameter is empty"
@@ -515,11 +514,11 @@ main() {
 Usage: $0 <command> [args]
 
 Commands:
-  setup <environment> <tunnel_secret> <admin_emails>    Create Cloudflare resources
+  setup <environment> <tunnel_secret>                    Create Cloudflare resources
   cleanup <environment>                                  Delete Cloudflare resources
 
 Examples:
-  $0 setup dev "my-secret-12345" "admin@example.com"
+  $0 setup dev "my-secret-12345"
   $0 cleanup dev
 
 Environment variables required:

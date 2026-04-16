@@ -87,7 +87,13 @@ variable "supabase_url" {
 }
 
 variable "supabase_anon_key" {
-  description = "Supabase anonymous key (public)"
+  description = "Supabase anonymous (publishable) key — safe for browser/NEXT_PUBLIC_ use"
+  type        = string
+  sensitive   = true
+}
+
+variable "supabase_service_role_key" {
+  description = "Supabase service role key — server-side only, never exposed to browser"
   type        = string
   sensitive   = true
 }

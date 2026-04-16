@@ -118,6 +118,7 @@ jobs:
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD_PROD }}
           TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_PROD }}
           TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_PROD }}
+          TF_VAR_supabase_service_role_key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -137,6 +138,7 @@ jobs:
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD_PROD }}
           TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_PROD }}
           TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_PROD }}
+          TF_VAR_supabase_service_role_key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -215,8 +217,7 @@ jobs:
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
         run: |
           bash scripts/cloudflare-api.sh setup prod \
-            "${{ steps.iac.outputs.tunnel_secret }}" \
-            "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+            "${{ steps.iac.outputs.tunnel_secret }}"
 
       - name: Bootstrap VM — ensure docker-compose.yml exists
         shell: bash
@@ -225,6 +226,7 @@ jobs:
           VM_IP: ${{ needs.deploy-infra-prod.outputs.vm_ip }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL_PROD }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_PROD }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_PROD }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -252,6 +254,7 @@ jobs:
             -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_prod|g" \
             -e "s|\${supabase_url}|$SUPABASE_URL|g" \
             -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
+            -e "s|\${supabase_service_role_key}|$SUPABASE_SERVICE_ROLE_KEY|g" \
             -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
             -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
             -e 's|\$\${|\${|g' \

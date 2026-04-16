@@ -162,11 +162,12 @@ locals {
     adguard_password = var.adguard_admin_password
     # tunnel_token is set by deploy-cloudflare.yml workflow via SSM Parameter or Object Storage
     # It's not available at IaC time, so we use a placeholder here
-    tunnel_token      = "TUNNEL_TOKEN_PLACEHOLDER_${var.environment}"
-    headscale_domain  = "vpn.familyshield-${var.environment}.everythingcloud.ca"
-    supabase_url      = var.supabase_url
-    supabase_anon_key = var.supabase_anon_key
-    groq_api_key      = var.groq_api_key
-    anthropic_api_key = var.anthropic_api_key
+    tunnel_token              = "TUNNEL_TOKEN_PLACEHOLDER_${var.environment}"
+    headscale_domain          = "vpn.familyshield-${var.environment}.everythingcloud.ca"
+    supabase_url              = var.supabase_url
+    supabase_anon_key         = var.supabase_anon_key
+    supabase_service_role_key = var.supabase_service_role_key
+    groq_api_key              = var.groq_api_key
+    anthropic_api_key         = var.anthropic_api_key
   }
 }
