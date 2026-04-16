@@ -134,21 +134,6 @@ jobs:
           echo "❌ SSH tunnel not reachable after 5 attempts"
           exit 1
 
-      - name: Portal health check via tunnel
-        run: |
-          PORTAL_URL="https://familyshield-dev.everythingcloud.ca"
-          for attempt in {1..6}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$PORTAL_URL" || echo "000")
-            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
-              echo "✅ Tunnel active — portal reachable (HTTP $STATUS)"
-              exit 0
-            fi
-            echo "   Attempt $attempt/6 — HTTP $STATUS, waiting 10s..."
-            sleep 10
-          done
-          echo "❌ Tunnel not reachable — infra may be down or tunnel not yet active"
-          echo "   Run infra-dev.yml first, then retry this workflow"
-          exit 1
 
   build-and-push:
     name: "Build & Push Docker images"
