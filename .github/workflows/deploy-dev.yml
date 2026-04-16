@@ -107,35 +107,28 @@ jobs:
         run: |
           SSH_HOST="ssh-dev.everythingcloud.ca"
 
-          echo "=== Secret check ==="
-          [ -z "$CF_ACCESS_CLIENT_ID" ]     && echo "❌ CF_ACCESS_CLIENT_ID empty"     || echo "✅ CF_ACCESS_CLIENT_ID set (len=${#CF_ACCESS_CLIENT_ID})"
-          [ -z "$CF_ACCESS_CLIENT_SECRET" ] && echo "❌ CF_ACCESS_CLIENT_SECRET empty" || echo "✅ CF_ACCESS_CLIENT_SECRET set (len=${#CF_ACCESS_CLIENT_SECRET})"
-
-          echo "=== HTTP check: unauthenticated (expect 302/403) ==="
-          curl -sI --max-time 10 "https://${SSH_HOST}" | head -5 || true
-
-          echo "=== HTTP check: with service token headers (expect 200/non-redirect) ==="
-          curl -sI --max-time 10 \
-            -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
-            -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
-            "https://${SSH_HOST}" | head -5 || true
-
-          echo "=== cloudflared access ssh --help ==="
-          cloudflared access ssh --help 2>&1 || true
-
           mkdir -p ~/.ssh
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
 
-          echo "=== SSH attempt (env-var auth, no flags) ==="
-          ssh -v -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 \
-            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST}" \
-            ubuntu@"${SSH_HOST}" echo "tunnel-ok" 2>&1 \
-            && echo "✅ SSH tunnel reachable" \
-            || echo "❌ SSH failed"
+          # cloudflared reads TUNNEL_SERVICE_TOKEN_ID / TUNNEL_SERVICE_TOKEN_SECRET
+          # CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are the HTTP header names — not cloudflared env vars
+          # Passing credentials explicitly via flags is the only reliable method
+          for attempt in {1..5}; do
+            echo "Checking SSH tunnel reachability: $SSH_HOST (attempt $attempt/5)"
+            if ssh -i ~/.ssh/familyshield \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=15 \
+              -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
+              ubuntu@"${SSH_HOST}" echo "tunnel-ok" 2>/dev/null; then
+              echo "✅ SSH tunnel reachable"
+              exit 0
+            fi
+            [ $attempt -lt 5 ] && sleep 15
+          done
+          echo "❌ SSH tunnel not reachable after 5 attempts — is cloudflared running on the VM?"
+          exit 1
 
       - name: Portal health check via tunnel
         run: |
