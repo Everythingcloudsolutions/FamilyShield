@@ -1,6 +1,6 @@
 # FamilyShield — Infrastructure Deployment Troubleshooting Log
 
-> Last updated: 2026-04-15
+> Last updated: 2026-04-16
 > Audience: Developers and new team members setting up or maintaining the FamilyShield deployment pipeline
 > Platform: FamilyShield v1 — OCI ca-toronto-1, GitHub Actions, Cloudflare Tunnel
 
@@ -25,15 +25,16 @@ Before reading the individual issues, understand the pipeline structure. Each en
 ```
 Job 1: deploy-infra-{env}
   → tofu init + tofu apply
-  → Provisions: OCI VM, VCN, security list, storage bucket
-  → Output: vm_ip (public IP of the VM)
+  → Provisions: OCI VM, VCN, security list (SSH: 0.0.0.0/0), NSG, storage bucket
+  → Output: vm_ip (public IP of the VM), nsg_vm_id (VM's Network Security Group)
+  → SSH is WIDE OPEN during deployment
 
 Job 2: build-and-push (dev) or promote-images (staging/prod)
   → Builds Docker images for api and portal
   → Pushes to GHCR (ghcr.io/everythingcloudsolutions/familyshield-*)
 
 Job 3: deploy-app-{env}
-  → SSHes to VM via public IP
+  → SSHes to VM via public IP (SSH: 0.0.0.0/0, always works)
   → Runs: docker compose pull api portal
   → Runs: docker compose up -d api portal
 
@@ -48,7 +49,16 @@ Job 5: smoke-test or integration-tests
   → Checks portal: curl with expected HTTP 200/302/403
   → Checks API health: curl /api/health expects HTTP 200/403
   → Fails on any 5xx response
+
+Job 6: tighten-ssh-{env}  (NEW as of 2026-04-16)
+  → Runs ONLY after smoke-test passes
+  → Queries NSG for all 0.0.0.0/0 SSH rules (used during deploy)
+  → Removes them
+  → Adds single restricted rule: 173.33.214.49/32 (admin IP only)
+  → Phase A security applied at END (after system verified healthy)
 ```
+
+**Key change (2026-04-16):** SSH is now deployed WIDE-OPEN (0.0.0.0/0) for all jobs, then tightened to admin IP only at the END via tighten-ssh job. This replaces the failed dynamic punch/seal approach (Issue 9).
 
 **Key files involved:**
 
@@ -850,6 +860,61 @@ docker exec familyshield-cloudflared env | grep TUNNEL_TOKEN
 # TUNNEL_TOKEN_PLACEHOLDER_dev = placeholder still there (problem)
 # eyJhIjoiN... = real token (correct)
 ```
+
+---
+
+## Issue 9: SSH Dynamic Punch/Seal Approach Failed — OCI CLI Exit Code 2 (REPLACED 2026-04-16)
+
+**Date discovered:** 2026-04-16
+**Affected jobs:** deploy-app-{env}
+**Status:** RESOLVED — Replaced with deploy-first, secure-last approach
+**Commit that replaced it:** `64e46b7`
+
+### What Happened (Old Approach)
+
+The deploy-app job tried to dynamically punch a temporary SSH hole:
+
+1. Get GitHub Actions runner IP via `curl https://api.ipify.org`
+2. Add a temporary NSG rule: `oci network nsg-rules add --nsg-id $NSG_ID --security-rules [{...}]`
+3. SSH to VM and deploy containers
+4. Remove the temporary rule: `oci network nsg-rules remove --nsg-id $NSG_ID --security-rule-ids [...]`
+
+The `oci network nsg-rules add` command would fail with **exit code 2**, halting the deploy.
+
+### Why It Failed
+
+The OCI CLI `nsg-rules add` command was rejecting the request. Possible causes:
+
+- Malformed JSON in the `--security-rules` parameter
+- Concurrent state conflicts (multiple runs trying to add rules simultaneously)
+- API rate limiting or temporary unavailability
+
+The added complexity of dynamic rule management during deployment created failure points that were hard to diagnose.
+
+### The Solution: Deploy-First, Secure-Last (2026-04-16)
+
+- **Deploy phase:** SSH deployed WIDE OPEN: `admin_ssh_cidrs = ["0.0.0.0/0"]` in all tfvars files
+- **During deploy:** All jobs (infra, build, deploy-app, setup-cloudflare, smoke-test) use public IP SSH — always works, no dynamic rules needed
+- **After deploy:** New `tighten-ssh-{env}` job runs at END (only if smoke-test passes):
+  1. Query NSG for all 0.0.0.0/0 SSH rules
+  2. Remove them
+  3. Add single restricted rule: `173.33.214.49/32` (admin IP only)
+
+**Benefits:**
+
+- ✅ No OCI CLI errors during deployment (no dynamic rules added during deploy)
+- ✅ SSH always available when needed (0.0.0.0/0 during deploy)
+- ✅ Security applied AFTER system verified healthy (via smoke-test)
+- ✅ Simpler, more reliable pipeline architecture
+- ✅ No chicken-and-egg lockout risk
+
+**Files changed:**
+
+- `iac/variables.tf`: default `admin_ssh_cidrs = ["0.0.0.0/0"]`
+- `iac/environments/{dev,staging,prod}/terraform.tfvars`: `admin_ssh_cidrs = ["0.0.0.0/0"]`
+- All three `.github/workflows/deploy-*.yml`: Removed punch/seal steps, added `tighten-ssh-*` job
+
+**Lesson:** Dynamic complexity during deployment is risky. Apply security measures AFTER you've confirmed the system works.
 
 ---
 
