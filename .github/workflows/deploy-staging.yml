@@ -27,6 +27,7 @@ jobs:
       url: https://familyshield-staging.everythingcloud.ca
     outputs:
       vm_ip: ${{ steps.outputs.outputs.vm_ip }}
+      nsg_vm_id: ${{ steps.outputs.outputs.nsg_vm_id }}
 
     steps:
       - uses: actions/checkout@v4
@@ -74,6 +75,10 @@ jobs:
         run: |
           VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
           echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
+
+          NSG_ID=$(tofu output -raw nsg_vm_id 2>/dev/null || echo "")
+          echo "nsg_vm_id=$NSG_ID" >> $GITHUB_OUTPUT
+
           if [ -n "$VM_IP" ]; then
             echo "Staging VM IP: $VM_IP"
           fi
@@ -112,7 +117,43 @@ jobs:
     runs-on: ubuntu-latest
     needs: [deploy-infra-staging, promote-images]
     if: needs.deploy-infra-staging.outputs.vm_ip != ''
+    environment:
+      name: staging
     steps:
+      - uses: actions/checkout@v4
+
+      - name: OCI Login
+        uses: ./.github/actions/oci-login
+        with:
+          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+
+      - name: Punch SSH hole for GitHub Actions runner
+        id: punch
+        env:
+          NSG_ID: ${{ needs.deploy-infra-staging.outputs.nsg_vm_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNNER_IP=$(curl -s https://api.ipify.org)
+          echo "Runner IP: $RUNNER_IP"
+          if [ -z "$NSG_ID" ]; then
+            echo "❌ NSG_ID not available — cannot punch SSH hole; failing job"
+            exit 1
+          fi
+          RESULT=$(oci network nsg-rules add \
+            --nsg-id "$NSG_ID" \
+            --security-rules "[{\"direction\":\"INGRESS\",\"protocol\":\"6\",\"source\":\"$RUNNER_IP/32\",\"sourceType\":\"CIDR_BLOCK\",\"isStateless\":false,\"tcpOptions\":{\"destinationPortRange\":{\"min\":22,\"max\":22}}}]")
+          RULE_ID=$(echo "$RESULT" | jq -r '.data["security-rules"][0].id // empty')
+          if [ -z "$RULE_ID" ]; then
+            echo "❌ Failed to add NSG rule or RULE_ID missing — cannot proceed with SSH"
+            exit 1
+          fi
+          echo "nsg_rule_id=$RULE_ID" >> $GITHUB_OUTPUT
+          echo "✅ SSH hole punched for $RUNNER_IP (rule: $RULE_ID)"
+
       - name: Deploy containers to staging VM
         uses: appleboy/ssh-action@v1
         env:
@@ -138,6 +179,30 @@ jobs:
             sleep 10
             docker compose ps
             echo "✅ Staging app deploy complete"
+
+      - name: Seal SSH hole for GitHub Actions runner
+        if: always()
+        env:
+          NSG_ID: ${{ needs.deploy-infra-staging.outputs.nsg_vm_id }}
+          RULE_ID: ${{ steps.punch.outputs.nsg_rule_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$NSG_ID" ]; then
+            echo "⚠️  NSG_ID not available — skipping NSG rule removal"
+            exit 0
+          fi
+
+          if [ -z "$RULE_ID" ]; then
+            echo "❌ RULE_ID is missing for NSG $NSG_ID — cannot safely remove the temporary SSH rule"
+            exit 1
+          fi
+
+          oci network nsg-rules remove \
+            --nsg-id "$NSG_ID" \
+            --security-rule-ids "[\"$RULE_ID\"]"
+          echo "✅ SSH hole sealed"
 
   setup-cloudflare-staging:
     name: "Cloudflare setup — staging"
@@ -322,6 +387,27 @@ jobs:
             sleep 10
           done
           echo "⚠️  Tunnel HTTP not confirmed after 3 min — integration tests will re-verify"
+
+      - name: Verify SSH via Cloudflare Tunnel (Phase B)
+        id: tunnel_ssh
+        continue-on-error: true
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TUNNEL_ID: ${{ steps.cloudflare.outputs.TUNNEL_ID }}
+        shell: bash
+        run: |
+          SSH_HOST="ssh-staging.everythingcloud.ca"
+          echo "### 🔐 SSH Access via Cloudflare Tunnel" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tunnel SSH is now configured at \`$SSH_HOST\`." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Connect via Cloudflare Tunnel:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" >> $GITHUB_STEP_SUMMARY
+          echo "ssh -o ProxyCommand='cloudflared access ssh --hostname $SSH_HOST' ubuntu@$SSH_HOST" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Fallback (admin IP only):** Contact administrator for SSH access to public IP" >> $GITHUB_STEP_SUMMARY
 
   integration-tests:
     name: "Integration tests — staging"
@@ -511,7 +597,7 @@ jobs:
             -var="environment=staging" \
             -var-file="environments/staging/terraform.tfvars" \
             -auto-approve \
-            -no-color
+            -no-color || { echo "❌ tofu destroy failed — check logs above"; exit 1; }
           echo "✅ Staging OCI infrastructure destroyed (Always Free quota released)"
 
       - name: Delete qa branch

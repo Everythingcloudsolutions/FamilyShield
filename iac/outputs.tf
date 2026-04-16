@@ -33,3 +33,8 @@ output "tunnel_secret" {
   value       = random_password.tunnel_secret.result
   sensitive   = true
 }
+
+output "nsg_vm_id" {
+  description = "OCID of the VM NSG — used by workflows for dynamic CI SSH hole-punch"
+  value       = module.network.nsg_vm_id
+}

@@ -68,11 +68,12 @@ module "compartments" {
 module "network" {
   source = "./modules/oci-network"
 
-  compartment_id = module.compartments.compartment_id
-  environment    = var.environment
-  region         = var.oci_region
-  vcn_cidr       = var.vcn_cidr
-  tags           = local.common_tags
+  compartment_id  = module.compartments.compartment_id
+  environment     = var.environment
+  region          = var.oci_region
+  vcn_cidr        = var.vcn_cidr
+  admin_ssh_cidrs = var.admin_ssh_cidrs
+  tags            = local.common_tags
 }
 
 ###############################################################################
@@ -106,6 +107,7 @@ module "compute" {
   instance_shape = "VM.Standard.A1.Flex"
   ocpus          = var.instance_ocpus
   memory_in_gbs  = var.instance_memory
+  nsg_ids        = [module.network.nsg_vm_id]
   # image_id intentionally NOT set — compute module dynamically queries for Ubuntu 22.04 ARM image
   cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
     environment = var.environment
