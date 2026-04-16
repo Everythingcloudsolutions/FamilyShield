@@ -43,9 +43,9 @@ variable "vcn_cidr" {
 }
 
 variable "admin_ssh_cidrs" {
-  description = "CIDRs allowed permanent SSH access to the VM public IP (admin IPs). GitHub Actions uses dynamic NSG rules."
+  description = "CIDRs allowed permanent SSH access to the VM public IP (admin IPs). During deploy: 0.0.0.0/0 for unrestricted access. After deploy: restricted to admin IPs via tighten-ssh job."
   type        = list(string)
-  default     = ["173.33.214.49/32"]
+  default     = ["0.0.0.0/0"]
 }
 
 # ── Compute ───────────────────────────────────────────────────────────────────
