@@ -214,13 +214,15 @@ jobs:
 
           tar -czf /tmp/familyshield-runtime-assets.tgz apps/mitm apps/platform-config
 
-          # SCP through Cloudflare tunnel
-          scp -i ~/.ssh/familyshield \
+          # Transfer via SSH stdin pipe — avoids SFTP protocol (scp uses SFTP by default
+          # on Ubuntu 22.04, which Cloudflare Access rejects with "websocket: bad handshake")
+          ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
-            /tmp/familyshield-runtime-assets.tgz \
-            ubuntu@"${SSH_HOST}":/tmp/familyshield-runtime-assets.tgz
+            ubuntu@"${SSH_HOST}" \
+            "cat > /tmp/familyshield-runtime-assets.tgz" \
+            < /tmp/familyshield-runtime-assets.tgz
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
