@@ -136,6 +136,7 @@ services:
       - TZ=America/Toronto
       - REDIS_URL=redis://redis:6379
       - SUPABASE_URL=${supabase_url}
+      - SUPABASE_ANON_KEY=${supabase_anon_key}
       - SUPABASE_SERVICE_ROLE_KEY=${supabase_service_role_key}
       - GROQ_API_KEY=${groq_api_key}
       - ANTHROPIC_API_KEY=${anthropic_api_key}
