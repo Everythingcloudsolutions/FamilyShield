@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (SSH security redesigned + heredoc variable expansion fix)
+> Last updated: 2026-04-16 (SSH security + heredoc fix + docker-compose bootstrap)
 
 ---
 
@@ -553,6 +553,33 @@ All three workflows (`deploy-{dev,staging,prod}.yml`) now use native SSH instead
 - `deploy-staging.yml`: Already correct (no change needed)
 
 **Pattern:** When using heredocs in GitHub Actions with SSH for remote script execution, use unquoted heredoc delimiters (`<<EOF`) if the remote script needs variable interpolation. The variables expand locally before SSH transmission, ensuring they're available on the remote shell.
+
+### docker-compose.yml Missing on Fresh VM — Bootstrap Before Deploy (2026-04-16)
+
+**Problem:** SSH deployment step failed with `no configuration file provided: not found` when trying to run `docker compose` commands on a fresh VM.
+
+**Root cause:** The `deploy-app-{env}` jobs tried to use docker-compose before the VM had `docker-compose.yml`. The file is created by IaC's cloud-init on first boot, but cloud-init may not have completed by the time deploy-app runs. Additionally, cloud-init's template rendering may fail silently, leaving the file unrendered.
+
+**Solution:** Added "Bootstrap VM — copy docker-compose.yml if missing" step to each `deploy-app-{env}` job that:
+
+1. SSHes to the VM and checks if `/opt/familyshield/docker-compose.yml` exists
+2. If missing, renders the Terraform template locally with environment-specific variables (`SUPABASE_URL`, `GROQ_API_KEY`, etc.)
+3. Copies the rendered file to the VM via `scp`
+4. Returns immediately if file already exists (idempotent)
+
+**Fixed in:**
+
+- `deploy-dev.yml`: Added bootstrap step
+- `deploy-staging.yml`: Added bootstrap step
+- `deploy-prod.yml`: Added bootstrap step
+
+**Pattern:** Always bootstrap required files before using them in deployment scripts, especially when cloud-init timing is uncertain on fresh VMs. This is particularly important for:
+
+- Configuration files (docker-compose.yml, env files)
+- Application directories that may not exist yet
+- Any file created during first-boot cloud-init that later deployment steps depend on
+
+The bootstrap pattern (check → render → copy) is idempotent and safe to run multiple times.
 
 ### SSH Key Carriage Returns — appleboy/ssh-action Failure (2026-04-16 — OBSOLETE)
 
