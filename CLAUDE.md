@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (SSH security redesigned — deploy-first, secure-last approach)
+> Last updated: 2026-04-16 (SSH security redesigned + key carriage return fix)
 
 ---
 
@@ -524,6 +524,20 @@ Earlier approach tried dynamic NSG punch/seal: open SSH for runner, deploy, seal
 - Cleaner, simpler architecture
 
 **Phase B (tunnel SSH)** still runs at the END after tunnel is confirmed active, providing additional access path.
+
+### SSH Key Carriage Returns — appleboy/ssh-action Failure (2026-04-16)
+
+**Problem:** `appleboy/ssh-action@v1` was failing with `no configuration file provided: not found` from drone-ssh.
+
+**Root cause:** GitHub Secrets containing SSH private keys may include carriage returns (`\r`) from Windows line endings. These corrupt the PEM key format that drone-ssh expects.
+
+**Solution:** Added explicit step before each SSH action to sanitize the key:
+
+```bash
+SSH_KEY_CLEAN=$(echo "$SSH_KEY" | tr -d '\r')
+```
+
+All three workflows (`deploy-{dev,staging,prod}.yml`) now include "Prepare SSH key" step that removes carriage returns before passing to appleboy/ssh-action.
 
 ### Cloudflare Tunnel Stays INACTIVE After Setup (historical — fixed 2026-04-15)
 
