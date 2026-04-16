@@ -864,6 +864,63 @@ docker exec familyshield-cloudflared env | grep TUNNEL_TOKEN
 
 ---
 
+## Issue 10: appleboy/ssh-action Broken Configuration — Replaced with Native SSH (2026-04-16)
+
+**Date discovered:** 2026-04-16
+**Affected jobs:** deploy-app-{dev,staging,prod}
+**Status:** RESOLVED — Replaced action with native SSH command
+**Commit that fixed it:** `f26786d`
+
+### What You See
+
+```
+Run appleboy/ssh-action@v1
+Downloading drone-ssh-1.8.2-linux-amd64
+status: error
+no configuration file provided: not found
+Process exited with status 1
+```
+
+### Why It Failed
+
+The `appleboy/ssh-action@v1` uses drone-ssh internally. When attempting to pass SSH keys via GitHub Actions outputs (multiline strings), the action fails to properly format the key for drone-ssh, resulting in `no configuration file provided` error. The root issue is not carriage returns, but the action's inability to handle multiline secret outputs correctly.
+
+### The Solution
+
+Replaced `appleboy/ssh-action@v1` with native SSH command:
+
+1. Write SSH key to file (`~/.ssh/familyshield`) with carriage returns stripped
+2. Use native `ssh -i` command with heredoc for deployment script
+3. No external action dependency — simpler and more reliable
+
+**Before (broken):**
+```yaml
+- name: Deploy containers to dev VM
+  uses: appleboy/ssh-action@v1
+  with:
+    host: ${{ vm_ip }}
+    key: ${{ secret }}
+    script: |
+      docker compose up -d
+```
+
+**After (working):**
+```bash
+mkdir -p ~/.ssh
+echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+chmod 600 ~/.ssh/familyshield
+
+ssh -i ~/.ssh/familyshield \
+  -o StrictHostKeyChecking=no \
+  ubuntu@"$VM_IP" bash -s <<'ENDSSH'
+docker compose up -d
+ENDSSH
+```
+
+**Applied to:** All three workflows (`deploy-{dev,staging,prod}.yml`)
+
+---
+
 ## Issue 9: SSH Dynamic Punch/Seal Approach Failed — OCI CLI Exit Code 2 (REPLACED 2026-04-16)
 
 **Date discovered:** 2026-04-16
