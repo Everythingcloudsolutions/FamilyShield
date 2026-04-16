@@ -143,7 +143,7 @@ configure_tunnel_routes() {
         "service": "http://localhost:1880"
       },
       {
-        "hostname": "ssh-ENVIRONMENT.everythingcloud.ca",
+        "hostname": "ssh.familyshield-ENVIRONMENT.everythingcloud.ca",
         "service": "ssh://localhost:22"
       },
       {
