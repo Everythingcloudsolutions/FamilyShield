@@ -221,7 +221,7 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 \
-            ubuntu@"$VM_IP" bash -s <<'ENDSSH'
+            ubuntu@"$VM_IP" bash -s <<ENDSSH
           set -euo pipefail
 
           # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
