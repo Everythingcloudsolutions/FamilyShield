@@ -643,39 +643,50 @@ local payload=$(jq -n \
 
 Use `--argjson` for boolean/numeric values, `--arg` for strings.
 
-### OCI CLI Query Syntax — jq parse error (2026-04-16)
+### OCI CLI Command Syntax — "nsg-rules" command doesn't exist (2026-04-16)
 
-**Problem:** The `tighten-ssh-{env}` job failed with `jq: parse error: Invalid numeric literal at line 1, column 6` when trying to parse OCI CLI output.
+**Problem:** The `tighten-ssh-{env}` jobs were trying to use `oci network nsg-rules` (list, remove, add) but the OCI CLI returned `Error: No such command 'nsg-rules'`.
 
-**Root cause:** The OCI CLI `--query` parameter with complex JMESPath syntax (`data[?direction=='INGRESS' && (tcp_options || protocol=='6')]`) was either failing silently or returning an error message instead of JSON. When `jq` tried to parse an error message as JSON, it failed.
+**Root cause:** The OCI CLI command structure for network security groups is different from what was used. The correct commands are:
 
-**Solution:** Simplified the OCI CLI command to fetch all rules without complex filtering:
+- List: `oci network security-group-rule list` (NOT `nsg-rules list`)
+- Delete: `oci network security-group-rule delete` (NOT `nsg-rules remove`)
+- Create: `oci network security-group-rule create` (NOT `nsg-rules add`)
+
+**Solution:** Use the correct OCI CLI command names:
 
 ```bash
-# ❌ Old — complex query that could fail silently
-SSH_RULES=$(oci network nsg-rules list \
-  --network-security-group-id "$NSG_ID" \
-  --query "data[?direction=='INGRESS' && (tcp_options || protocol=='6')]" \
-  --output json)
+# ❌ Old — incorrect command structure
+oci network nsg-rules list ...
+oci network nsg-rules remove ...
+oci network nsg-rules add ...
 
-# ✅ New — simple fetch, validate JSON, graceful fallback
-SSH_RULES=$(oci network nsg-rules list \
+# ✅ New — correct OCI CLI command structure
+oci network security-group-rule list \
   --network-security-group-id "$NSG_ID" \
-  --output json 2>/dev/null || echo "[]")
+  --output json
 
-# Validate JSON before processing
+oci network security-group-rule delete \
+  --security-group-rule-id "$RULE_ID" \
+  --force
+
+oci network security-group-rule create \
+  --network-security-group-id "$NSG_ID" \
+  --direction INGRESS \
+  --protocol 6 \
+  --source "$ADMIN_IP" \
+  --source-type CIDR_BLOCK \
+  --tcp-options "destinationPortRange={min:22,max:22}"
+```
+
+Also added JSON validation before parsing with `jq`:
+
+```bash
 if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
   echo "⚠️  Failed to query NSG rules — skipping rule removal"
   SSH_RULES="[]"
 fi
 ```
-
-**Key improvements:**
-
-- Removed complex `--query` parameter (simpler = more reliable)
-- Added JSON validation before passing to `jq` with `jq -e .`
-- Graceful fallback to `[]` if validation fails
-- Warning message explains why rules weren't removed
 
 **Fixed in:**
 
@@ -683,12 +694,17 @@ fi
 - `.github/workflows/deploy-staging.yml` — tighten-ssh-staging step
 - `.github/workflows/deploy-prod.yml` — tighten-ssh-prod step
 
-**Pattern:** Always validate JSON output before parsing with `jq`:
+**Pattern:** Always check OCI CLI command documentation for correct syntax, and validate JSON before parsing:
 
 ```bash
+# List OCI CLI commands
+oci --version              # Check version
+oci network --help         # List network commands
+oci network security-group-rule --help  # Command-specific help
+
+# Validate JSON
 if ! echo "$OUTPUT" | jq -e . >/dev/null 2>&1; then
   # Handle error — output is not valid JSON
-  # Use fallback or exit gracefully
 fi
 ```
 
