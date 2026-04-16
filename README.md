@@ -3,8 +3,7 @@
 > Intelligent Digital Safety for Every Child, Everywhere.
 
 **Cloud-First · Power-Resilient · Open Source · IaC-Driven**
-
-[![Deploy Dev](https://github.com/Everythingcloudsolutions/FamilyShield/actions/workflows/deploy-dev.yml/badge.svg)](https://github.com/Everythingcloudsolutions/FamilyShield/actions/workflows/deploy-dev.yml)
+[![Deploy → Dev](https://github.com/Everythingcloudsolutions/FamilyShield/actions/workflows/deploy-dev.yml/badge.svg?branch=development)](https://github.com/Everythingcloudsolutions/FamilyShield/actions/workflows/deploy-dev.yml)
 [![Deploy Staging](https://github.com/Everythingcloudsolutions/FamilyShield/actions/workflows/deploy-staging.yml/badge.svg)](https://github.com/Everythingcloudsolutions/FamilyShield/actions/workflows/deploy-staging.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-teal.svg)](LICENSE)
 
