@@ -143,7 +143,7 @@ configure_tunnel_routes() {
         "service": "http://localhost:1880"
       },
       {
-        "hostname": "ssh.familyshield-ENVIRONMENT.everythingcloud.ca",
+        "hostname": "ssh-ENVIRONMENT.everythingcloud.ca",
         "service": "ssh://localhost:22"
       },
       {
@@ -384,7 +384,7 @@ setup_cloudflare() {
   tunnel_token=$(get_tunnel_token "$tunnel_id")
 
   # 4. Create DNS records
-  create_dns_record "ssh.familyshield-$environment" "$tunnel_id"
+  create_dns_record "ssh-$environment" "$tunnel_id"
   create_dns_record "familyshield-$environment" "$tunnel_id"
   create_dns_record "api-$environment" "$tunnel_id"
   create_dns_record "adguard-$environment" "$tunnel_id"

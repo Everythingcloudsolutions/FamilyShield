@@ -159,22 +159,23 @@ jobs:
           NSG_ID: ${{ needs.deploy-infra-prod.outputs.nsg_vm_id }}
         shell: bash
         run: |
+          set -euo pipefail
           RUNNER_IP=$(curl -s https://api.ipify.org)
           echo "Runner IP: $RUNNER_IP"
           if [ -z "$NSG_ID" ]; then
-            echo "⚠️  NSG_ID not available — skipping dynamic SSH hole"
-            exit 0
+            echo "❌ NSG_ID not available — cannot punch SSH hole; failing job"
+            exit 1
           fi
           RESULT=$(oci network nsg-rules add \
             --nsg-id "$NSG_ID" \
             --security-rules "[{\"direction\":\"INGRESS\",\"protocol\":\"6\",\"source\":\"$RUNNER_IP/32\",\"sourceType\":\"CIDR_BLOCK\",\"isStateless\":false,\"tcpOptions\":{\"destinationPortRange\":{\"min\":22,\"max\":22}}}]")
           RULE_ID=$(echo "$RESULT" | jq -r '.data["security-rules"][0].id // empty')
-          if [ -n "$RULE_ID" ]; then
-            echo "nsg_rule_id=$RULE_ID" >> $GITHUB_OUTPUT
-            echo "✅ SSH hole punched for $RUNNER_IP (rule: $RULE_ID)"
-          else
-            echo "⚠️  Failed to add NSG rule or rule ID missing — continuing"
+          if [ -z "$RULE_ID" ]; then
+            echo "❌ Failed to add NSG rule or RULE_ID missing — cannot proceed with SSH"
+            exit 1
           fi
+          echo "nsg_rule_id=$RULE_ID" >> $GITHUB_OUTPUT
+          echo "✅ SSH hole punched for $RUNNER_IP (rule: $RULE_ID)"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -421,7 +422,7 @@ jobs:
           TUNNEL_ID: ${{ steps.cloudflare.outputs.TUNNEL_ID }}
         shell: bash
         run: |
-          SSH_HOST="ssh.everythingcloud.ca"
+          SSH_HOST="ssh-prod.everythingcloud.ca"
           echo "### 🔐 SSH Access via Cloudflare Tunnel" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Tunnel SSH is now configured at \`$SSH_HOST\`." >> $GITHUB_STEP_SUMMARY
