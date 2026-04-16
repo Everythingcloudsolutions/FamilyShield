@@ -540,9 +540,9 @@ jobs:
           echo "🔐 Phase A Security: Tightening SSH to admin IP only..."
 
           # Get all current SSH ingress rules (port 22)
-          # Note: OCI CLI command is "security-group-rule" not "nsg-rules"
-          SSH_RULES=$(oci network security-group-rule list \
-            --network-security-group-id "$NSG_ID" \
+          # Correct OCI CLI command: oci network nsg rule list
+          SSH_RULES=$(oci network nsg rule list \
+            --nsg-id "$NSG_ID" \
             --output json 2>/dev/null || echo "[]")
 
           # Validate JSON before processing with jq
@@ -557,8 +557,8 @@ jobs:
             RULE_IDS=$(echo "$SSH_RULES" | jq -r '.[].id')
             while IFS= read -r RULE_ID; do
               if [ -n "$RULE_ID" ] && [ "$RULE_ID" != "null" ]; then
-                oci network security-group-rule delete \
-                  --security-group-rule-id "$RULE_ID" \
+                oci network nsg rule delete \
+                  --nsg-rule-id "$RULE_ID" \
                   --force 2>/dev/null || true
                 echo "   Removed: $RULE_ID"
               fi
@@ -567,8 +567,8 @@ jobs:
 
           # Add restricted SSH rule for admin IP only
           echo "Adding SSH rule for $ADMIN_IP..."
-          oci network security-group-rule create \
-            --network-security-group-id "$NSG_ID" \
+          oci network nsg rule create \
+            --nsg-id "$NSG_ID" \
             --direction INGRESS \
             --protocol 6 \
             --source "$ADMIN_IP" \
