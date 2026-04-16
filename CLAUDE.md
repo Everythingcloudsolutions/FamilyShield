@@ -525,7 +525,20 @@ Earlier approach tried dynamic NSG punch/seal: open SSH for runner, deploy, seal
 
 **Phase B (tunnel SSH)** still runs at the END after tunnel is confirmed active, providing additional access path.
 
-### SSH Key Carriage Returns — appleboy/ssh-action Failure (2026-04-16)
+### SSH Action Broken — appleboy/ssh-action Replaced with Native SSH (2026-04-16)
+
+**Problem:** `appleboy/ssh-action@v1` was failing with `no configuration file provided: not found` from drone-ssh.
+
+**Root cause:** The action's drone-ssh binary cannot properly parse multiline SSH keys passed via GitHub Actions outputs. The issue is with the action itself, not the key format.
+
+**Solution:** Replaced `appleboy/ssh-action@v1` with native SSH command:
+- Write SSH key to file with carriage returns stripped
+- Use native `ssh -i ~/.ssh/familyshield` with heredoc for deployment script
+- No external action dependency — simpler and more reliable
+
+All three workflows (`deploy-{dev,staging,prod}.yml`) now use native SSH instead of the problematic action.
+
+### SSH Key Carriage Returns — appleboy/ssh-action Failure (2026-04-16 — OBSOLETE)
 
 **Problem:** `appleboy/ssh-action@v1` was failing with `no configuration file provided: not found` from drone-ssh.
 
