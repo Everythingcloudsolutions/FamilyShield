@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-15 (deployment pipeline fully documented — all 8 blockers resolved)
+> Last updated: 2026-04-16 (SSH security redesigned — deploy-first, secure-last approach)
 
 ---
 
@@ -238,19 +238,27 @@ FamilyShield/
 
 ### Deployment Flow
 
-Each environment follows the same 6-job pipeline (env = dev | staging | prod):
+Each environment follows the same 7-job pipeline (env = dev | staging | prod):
 
 ```
 deploy-infra-{env}          IaC only (OCI VM, network, storage)
-       ↓
+       ↓                     SSH: 0.0.0.0/0 (wide open during deploy)
 build-and-push / promote-images   Docker images → GHCR
        ↓
-deploy-app-{env}            SSH to VM via public IP → docker compose up
+deploy-app-{env}            SSH to VM via public IP (always works) → docker compose up
        ↓
 setup-cloudflare-{env}      Cloudflare tunnel + DNS + write token to VM → restart cloudflared
        ↓
 integration-tests (staging) / smoke-test (dev + prod)
+       ↓
+tighten-ssh-{env}           Phase A: Remove 0.0.0.0/0, add admin IP only (173.33.214.49/32)
 ```
+
+**Key change (2026-04-16):** SSH deployed wide-open (0.0.0.0/0), tightened to admin IP AFTER tests pass.
+- Eliminates dynamic NSG punch/seal complexity during deployment
+- Guarantees SSH always works for all deployment jobs
+- Security applied at the END after system is verified healthy
+- No chicken-and-egg lockout risk
 
 **Trigger by branch:**
 
@@ -493,6 +501,30 @@ gh pr create --base main --head development
 
 ## Known Issues & Troubleshooting
 
+### SSH Security — Deploy-First, Secure-Last (2026-04-16)
+
+**Why SSH deployed wide-open, then tightened?**
+
+Earlier approach tried dynamic NSG punch/seal: open SSH for runner, deploy, seal after. This failed with `oci network nsg-rules add` exit code 2 (OCI CLI error during rule creation).
+
+**New approach (current):**
+
+1. Deploy with `admin_ssh_cidrs = ["0.0.0.0/0"]` — SSH open to world during deploy
+2. All jobs (infra, build, deploy-app, setup-cloudflare, smoke-test) always succeed
+3. **tighten-ssh-{env}** job runs at END (after smoke tests pass):
+   - Queries NSG for all 0.0.0.0/0 SSH rules
+   - Removes them
+   - Adds single restricted rule: 173.33.214.49/32 (admin IP only)
+
+**Benefits:**
+
+- No OCI CLI errors during deployment
+- SSH always available when needed
+- Security applied after system verified healthy
+- Cleaner, simpler architecture
+
+**Phase B (tunnel SSH)** still runs at the END after tunnel is confirmed active, providing additional access path.
+
 ### Cloudflare Tunnel Stays INACTIVE After Setup (historical — fixed 2026-04-15)
 
 **Root cause chain:** IaC renders `docker-compose.yaml` with `TUNNEL_TOKEN=TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real token is unknown at `tofu apply` time. If cloudflared were started via `docker compose`, it would use the placeholder and fail to authenticate.
@@ -608,7 +640,14 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - `deploy-staging.yml` gate job broken `if:` condition (`workflow_run.conclusion` on a `push` trigger is always null) — fixed: gate job removed; staging triggers on `qa` branch push
   - docker-compose.yml missing on VM (broken cloud-init) → api/portal not running → cloudflared returns 502 → smoke test fails — fixed: "Bootstrap VM" step in all setup-cloudflare jobs
   - All 8 issues with root causes, investigation steps, and fixes documented in `docs/troubleshooting/infrastructure.md`
-- 🔲 First full end-to-end successful dev pipeline run (all 5 jobs green: infra → build → deploy-app → setup-cloudflare → smoke-test)
+- ✅ **SSH security redesigned (2026-04-16):** Deploy-first, secure-last approach replaces failed dynamic punch/seal
+  - Removed dynamic NSG punch/seal logic (was failing with OCI CLI exit code 2)
+  - Deploy with `admin_ssh_cidrs = ["0.0.0.0/0"]` — SSH open to world during all deployment jobs
+  - Added `tighten-ssh-{env}` job at end of pipeline (runs after smoke-test passes)
+  - tighten-ssh removes 0.0.0.0/0 rules and adds admin IP only (173.33.214.49/32)
+  - Phase B (tunnel SSH) unchanged — added at end after tunnel verified active
+  - Eliminates chicken-and-egg lockout risk, guarantees SSH always works during deploy
+- 🔲 First full end-to-end successful dev pipeline run (all 7 jobs green: infra → build → deploy-app → setup-cloudflare → smoke-test → tighten-ssh)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 
 **Application Development:**
