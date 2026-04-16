@@ -319,13 +319,9 @@ create_access_application() {
     --arg domain "$fqdn" \
     --arg type "self_hosted" \
     --arg session_duration "8h" \
-    '{name: $name, domain: $domain, type: $type, session_duration: $session_duration, tags: ["familyshield", "admin"]}')
+    '{name: $name, domain: $domain, type: $type, session_duration: $session_duration}')
 
   local response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
-
-  # Debug: always print the response so we can diagnose issues
-  echo "DEBUG create_access_application response:" >&2
-  echo "$response" | jq '.' >&2
 
   local app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
 
@@ -356,7 +352,7 @@ create_ssh_access_app() {
     --arg domain "$fqdn" \
     --arg type "self_hosted" \
     --arg session_duration "8h" \
-    '{name: $name, domain: $domain, type: $type, session_duration: $session_duration, tags: ["familyshield", "ssh"]}')
+    '{name: $name, domain: $domain, type: $type, session_duration: $session_duration}')
 
   local response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
 
