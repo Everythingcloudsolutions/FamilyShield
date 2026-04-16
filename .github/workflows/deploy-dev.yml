@@ -116,18 +116,22 @@ jobs:
           # Passing credentials explicitly via flags is the only reliable method
           for attempt in {1..5}; do
             echo "Checking SSH tunnel reachability: $SSH_HOST (attempt $attempt/5)"
-            if ssh -i ~/.ssh/familyshield \
+            SSH_OUT=$(ssh -v -i ~/.ssh/familyshield \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=15 \
               -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
-              ubuntu@"${SSH_HOST}" echo "tunnel-ok" 2>/dev/null; then
+              ubuntu@"${SSH_HOST}" echo "tunnel-ok" 2>&1)
+            EXIT=$?
+            if [ $EXIT -eq 0 ]; then
               echo "✅ SSH tunnel reachable"
               exit 0
             fi
+            echo "   Exit $EXIT — last lines:"
+            echo "$SSH_OUT" | tail -5
             [ $attempt -lt 5 ] && sleep 15
           done
-          echo "❌ SSH tunnel not reachable after 5 attempts — is cloudflared running on the VM?"
+          echo "❌ SSH tunnel not reachable after 5 attempts"
           exit 1
 
       - name: Portal health check via tunnel
