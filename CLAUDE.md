@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (SSH security + heredoc fix + docker-compose bootstrap + jq JSON encoding + OCI CLI query fix + security hardening baseline)
+> Last updated: 2026-04-16 (SSH security + heredoc fix + docker-compose bootstrap + jq JSON encoding + OCI CLI nsg rule syntax fix)
 
 ---
 
@@ -763,35 +763,38 @@ local payload=$(jq -n \
 
 Use `--argjson` for boolean/numeric values, `--arg` for strings.
 
-### OCI CLI Command Syntax — "nsg-rules" command doesn't exist (2026-04-16)
+### OCI CLI Command Syntax — "nsg rule" command structure (2026-04-16 — FIXED)
 
-**Problem:** The `tighten-ssh-{env}` jobs were trying to use `oci network nsg-rules` (list, remove, add) but the OCI CLI returned `Error: No such command 'nsg-rules'`.
+**Problem (historical):** The `tighten-ssh-{env}` jobs were trying to use `oci network security-group-rule` (from incorrect documentation) but the OCI CLI returned `Error: No such command 'security-group-rule'`.
 
-**Root cause:** The OCI CLI command structure for network security groups is different from what was used. The correct commands are:
+**Root cause:** The OCI CLI command structure for network security groups uses `nsg rule` not `security-group-rule`. The correct commands are:
 
-- List: `oci network security-group-rule list` (NOT `nsg-rules list`)
-- Delete: `oci network security-group-rule delete` (NOT `nsg-rules remove`)
-- Create: `oci network security-group-rule create` (NOT `nsg-rules add`)
+- List: `oci network nsg rule list` (NOT `security-group-rule list`)
+- Delete: `oci network nsg rule delete` (NOT `security-group-rule delete`)
+- Create: `oci network nsg rule create` (NOT `security-group-rule create`)
 
-**Solution:** Use the correct OCI CLI command names:
+**Solution (corrected 2026-04-16):** Use the correct OCI CLI command names and parameters:
 
 ```bash
 # ❌ Old — incorrect command structure
-oci network nsg-rules list ...
-oci network nsg-rules remove ...
-oci network nsg-rules add ...
-
-# ✅ New — correct OCI CLI command structure
 oci network security-group-rule list \
-  --network-security-group-id "$NSG_ID" \
+  --network-security-group-id "$NSG_ID"
+oci network security-group-rule delete \
+  --security-group-rule-id "$RULE_ID"
+oci network security-group-rule create \
+  --network-security-group-id "$NSG_ID"
+
+# ✅ New — correct OCI CLI command structure (as of 2026-04-16)
+oci network nsg rule list \
+  --nsg-id "$NSG_ID" \
   --output json
 
-oci network security-group-rule delete \
-  --security-group-rule-id "$RULE_ID" \
+oci network nsg rule delete \
+  --nsg-rule-id "$RULE_ID" \
   --force
 
-oci network security-group-rule create \
-  --network-security-group-id "$NSG_ID" \
+oci network nsg rule create \
+  --nsg-id "$NSG_ID" \
   --direction INGRESS \
   --protocol 6 \
   --source "$ADMIN_IP" \
@@ -799,7 +802,7 @@ oci network security-group-rule create \
   --tcp-options "destinationPortRange={min:22,max:22}"
 ```
 
-Also added JSON validation before parsing with `jq`:
+Also includes JSON validation before parsing with `jq`:
 
 ```bash
 if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
@@ -808,21 +811,24 @@ if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
 fi
 ```
 
-**Fixed in:**
+**Fixed in (commit e306349):**
 
 - `.github/workflows/deploy-dev.yml` — tighten-ssh-dev step
 - `.github/workflows/deploy-staging.yml` — tighten-ssh-staging step
 - `.github/workflows/deploy-prod.yml` — tighten-ssh-prod step
 
-**Pattern:** Always check OCI CLI command documentation for correct syntax, and validate JSON before parsing:
+**Pattern:** Always check OCI CLI command documentation for correct syntax. The key differences:
 
 ```bash
-# List OCI CLI commands
-oci --version              # Check version
-oci network --help         # List network commands
-oci network security-group-rule --help  # Command-specific help
+# Command structure for NSG rules:
+oci network nsg rule list              # ✅ correct
+oci network nsg rule delete            # ✅ correct
+oci network nsg rule create            # ✅ correct
 
-# Validate JSON
+# NOT:
+oci network security-group-rule list   # ❌ wrong — command doesn't exist
+oci network nsg-rules list             # ❌ wrong — subcommand doesn't exist
+```
 if ! echo "$OUTPUT" | jq -e . >/dev/null 2>&1; then
   # Handle error — output is not valid JSON
 fi
