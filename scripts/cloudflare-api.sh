@@ -322,6 +322,11 @@ create_access_application() {
     '{name: $name, domain: $domain, type: $type, session_duration: $session_duration, tags: ["familyshield", "admin"]}')
 
   local response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
+
+  # Debug: always print the response so we can diagnose issues
+  echo "DEBUG create_access_application response:" >&2
+  echo "$response" | jq '.' >&2
+
   local app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
 
   [ -n "$app_id" ] && [ "$app_id" != "null" ] || die "Failed to create access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
@@ -354,6 +359,11 @@ create_ssh_access_app() {
     '{name: $name, domain: $domain, type: $type, session_duration: $session_duration, tags: ["familyshield", "ssh"]}')
 
   local response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
+
+  # Debug: always print the response so we can diagnose issues
+  echo "DEBUG create_ssh_access_app response:" >&2
+  echo "$response" | jq '.' >&2
+
   local app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
 
   [ -n "$app_id" ] && [ "$app_id" != "null" ] || die "Failed to create SSH access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
