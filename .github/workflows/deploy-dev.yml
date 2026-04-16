@@ -106,32 +106,43 @@ jobs:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
         run: |
           SSH_HOST="ssh-dev.everythingcloud.ca"
-          echo "Checking SSH tunnel reachability: $SSH_HOST"
+          echo "=== cloudflared version ==="
+          cloudflared version
+
+          echo "=== Checking service token credentials are set ==="
+          if [ -z "$CF_ACCESS_CLIENT_ID" ]; then
+            echo "❌ CF_ACCESS_CLIENT_ID is EMPTY — secret not set or wrong name"
+          else
+            echo "✅ CF_ACCESS_CLIENT_ID is set (length: ${#CF_ACCESS_CLIENT_ID})"
+          fi
+          if [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
+            echo "❌ CF_ACCESS_CLIENT_SECRET is EMPTY — secret not set or wrong name"
+          else
+            echo "✅ CF_ACCESS_CLIENT_SECRET is set (length: ${#CF_ACCESS_CLIENT_SECRET})"
+          fi
 
           mkdir -p ~/.ssh
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
 
-          # Try up to 5 times with service token auth
-          for attempt in {1..5}; do
-            RESULT=$(ssh -i ~/.ssh/familyshield \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=10 \
-              -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
-              ubuntu@"${SSH_HOST}" echo "tunnel-ok" 2>/dev/null || echo "")
+          echo "=== DNS resolution for $SSH_HOST ==="
+          nslookup "$SSH_HOST" || true
 
-            if [ "$RESULT" = "tunnel-ok" ]; then
-              echo "✅ SSH tunnel is reachable (attempt $attempt)"
-              exit 0
-            fi
+          echo "=== Testing cloudflared access token (pre-auth check) ==="
+          cloudflared access token --app="https://${SSH_HOST}" \
+            --service-token-id "$CF_ACCESS_CLIENT_ID" \
+            --service-token-secret "$CF_ACCESS_CLIENT_SECRET" \
+            2>&1 | head -20 || true
 
-            echo "   Attempt $attempt/5 — waiting 15s..."
-            sleep 15
-          done
-
-          # Non-fatal — proceed with portal HTTP check as fallback
-          echo "ℹ️  SSH tunnel pre-check inconclusive — will verify via portal health check"
+          echo "=== Attempting SSH (attempt 1 — verbose, no retry) ==="
+          ssh -v -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 \
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET} --loglevel debug" \
+            ubuntu@"${SSH_HOST}" echo "tunnel-ok" 2>&1 \
+            && echo "✅ SSH tunnel is reachable" \
+            || echo "❌ SSH attempt failed (see verbose output above)"
 
       - name: Portal health check via tunnel
         run: |
