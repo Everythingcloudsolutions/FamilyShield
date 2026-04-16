@@ -176,12 +176,23 @@ jobs:
             docker push ghcr.io/everythingcloudsolutions/familyshield-$app:latest
           done
 
+      - name: Prepare SSH key (remove carriage returns)
+        id: ssh_key
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          SSH_KEY_CLEAN=$(echo "$SSH_KEY" | tr -d '\r')
+          echo "key<<EOF" >> $GITHUB_OUTPUT
+          echo "$SSH_KEY_CLEAN" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Deploy containers to prod VM
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ needs.deploy-infra-prod.outputs.vm_ip }}
           username: ubuntu
-          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          key: ${{ steps.ssh_key.outputs.key }}
           script: |
             # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
             sudo cloud-init status --wait 2>/dev/null || true

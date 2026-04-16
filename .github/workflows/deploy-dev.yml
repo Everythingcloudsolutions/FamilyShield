@@ -201,6 +201,17 @@ jobs:
           oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
           oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
 
+      - name: Prepare SSH key (remove carriage returns)
+        id: ssh_key
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          SSH_KEY_CLEAN=$(echo "$SSH_KEY" | tr -d '\r')
+          echo "key<<EOF" >> $GITHUB_OUTPUT
+          echo "$SSH_KEY_CLEAN" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Deploy updated containers to dev VM
         uses: appleboy/ssh-action@v1
         env:
@@ -209,7 +220,7 @@ jobs:
         with:
           host: ${{ needs.deploy-infra-dev.outputs.vm_ip }}
           username: ubuntu
-          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          key: ${{ steps.ssh_key.outputs.key }}
           envs: GHCR_TOKEN,GHCR_USER
           script: |
             set -euo pipefail
