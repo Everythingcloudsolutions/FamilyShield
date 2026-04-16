@@ -473,6 +473,28 @@ gh pr create --base main --head development
 
 ---
 
+## Repository Structure Rules (Non-Negotiable)
+
+The canonical structure is defined in `README.md`. Every file and folder must live in its correct location. **Never scatter files at the repo root or outside their designated top-level folder.**
+
+| Content Type | Correct Location | Examples |
+|---|---|---|
+| Application code, configs, Dockerfiles | `apps/` | `apps/api/`, `apps/portal/`, `apps/mitm/`, `apps/platform-config/` |
+| Infrastructure as Code | `iac/` | modules, tfvars, templates |
+| Documentation, plans, analysis | `docs/` | architecture, guides, troubleshooting, deployment-operations |
+| Bootstrap and utility scripts | `scripts/` | `bootstrap-oci.sh`, `cloudflare-api.sh` |
+| CI/CD pipelines and reusable actions | `.github/` | workflows, actions |
+
+**Banned at repo root:** planning docs, analysis files, config folders, binaries, rendered templates, or any file that belongs in a subdirectory. Only these files belong at root: `README.md`, `CLAUDE.md`, `SETUP.md`, `LICENSE`, `.env.example`, `FamilyShield.code-workspace`, `.gitignore`.
+
+**Service runtime configs** (grafana, nodered, ntfy, etc.) → `apps/platform-config/`  
+**Planning and analysis documents** → `docs/` (e.g., `docs/deployment-operations/`, `docs/architecture/`)  
+**Never create `config/`, `data/`, `build/`, `dist/` at repo root.**
+
+When asked to create or move any file, check its type against this table first. If it doesn't belong at root, put it in the right folder without asking.
+
+---
+
 ## Coding Standards
 
 - **TypeScript:** strict mode, no `any`, Zod for runtime validation

@@ -1,192 +1,192 @@
 name: Deploy Platform Services
 
 "on":
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: "Target environment: dev | staging | prod"
-        required: true
-        type: choice
-        options: [dev, staging, prod]
+    workflow_dispatch:
+        inputs:
+            environment:
+                description: "Target environment: dev | staging | prod"
+                required: true
+                type: choice
+                options: [dev, staging, prod]
 
 permissions:
-  contents: read
-  id-token: write
+    contents: read
+    id-token: write
 
 jobs:
-  deploy-platform-services:
-    name: "Deploy platform services (${{ github.event.inputs.environment }})"
-    runs-on: ubuntu-latest
-    environment:
-      name: ${{ github.event.inputs.environment }}
+    deploy-platform-services:
+        name: "Deploy platform services (${{ github.event.inputs.environment }})"
+        runs-on: ubuntu-latest
+        environment:
+            name: ${{ github.event.inputs.environment }}
 
-    steps:
-      - uses: actions/checkout@v4
+        steps:
+            - uses: actions/checkout@v4
 
-      - name: OCI Login
-        uses: ./.github/actions/oci-login
-        with:
-          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+            - name: OCI Login
+              uses: ./.github/actions/oci-login
+              with:
+                  oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+                  oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+                  oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+                  oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
 
-      - name: Setup OpenTofu
-        uses: opentofu/setup-opentofu@v1
-        with:
-          tofu_version: "1.6.x"
+            - name: Setup OpenTofu
+              uses: opentofu/setup-opentofu@v1
+              with:
+                  tofu_version: "1.6.x"
 
-      - name: Resolve environment-specific secrets
-        id: vars
-        shell: bash
-        run: |
-          set -euo pipefail
-          ENV="${{ github.event.inputs.environment }}"
+            - name: Resolve environment-specific secrets
+              id: vars
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  ENV="${{ github.event.inputs.environment }}"
 
-          if [ "$ENV" = "dev" ]; then
-            echo "supabase_url=${{ secrets.SUPABASE_URL }}" >> $GITHUB_OUTPUT
-            echo "supabase_anon_key=${{ secrets.SUPABASE_ANON_KEY }}" >> $GITHUB_OUTPUT
-          elif [ "$ENV" = "staging" ]; then
-            echo "supabase_url=${{ secrets.SUPABASE_URL_STAGING }}" >> $GITHUB_OUTPUT
-            echo "supabase_anon_key=${{ secrets.SUPABASE_ANON_KEY_STAGING }}" >> $GITHUB_OUTPUT
-          else
-            echo "supabase_url=${{ secrets.SUPABASE_URL_PROD }}" >> $GITHUB_OUTPUT
-            echo "supabase_anon_key=${{ secrets.SUPABASE_ANON_KEY_PROD }}" >> $GITHUB_OUTPUT
-          fi
+                  if [ "$ENV" = "dev" ]; then
+                    echo "supabase_url=${{ secrets.SUPABASE_URL }}" >> $GITHUB_OUTPUT
+                    echo "supabase_anon_key=${{ secrets.SUPABASE_ANON_KEY }}" >> $GITHUB_OUTPUT
+                  elif [ "$ENV" = "staging" ]; then
+                    echo "supabase_url=${{ secrets.SUPABASE_URL_STAGING }}" >> $GITHUB_OUTPUT
+                    echo "supabase_anon_key=${{ secrets.SUPABASE_ANON_KEY_STAGING }}" >> $GITHUB_OUTPUT
+                  else
+                    echo "supabase_url=${{ secrets.SUPABASE_URL_PROD }}" >> $GITHUB_OUTPUT
+                    echo "supabase_anon_key=${{ secrets.SUPABASE_ANON_KEY_PROD }}" >> $GITHUB_OUTPUT
+                  fi
 
-          echo "groq_api_key=${{ secrets.GROQ_API_KEY }}" >> $GITHUB_OUTPUT
-          echo "anthropic_api_key=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_OUTPUT
+                  echo "groq_api_key=${{ secrets.GROQ_API_KEY }}" >> $GITHUB_OUTPUT
+                  echo "anthropic_api_key=${{ secrets.ANTHROPIC_API_KEY }}" >> $GITHUB_OUTPUT
 
-      - name: Get VM IP from IaC state
-        id: iac
-        working-directory: iac
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
-        run: |
-          set -euo pipefail
-          ENV="${{ github.event.inputs.environment }}"
+            - name: Get VM IP from IaC state
+              id: iac
+              working-directory: iac
+              env:
+                  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                  OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+              run: |
+                  set -euo pipefail
+                  ENV="${{ github.event.inputs.environment }}"
 
-          tofu init \
-            -backend-config="bucket=familyshield-tfstate" \
-            -backend-config="key=${ENV}/terraform.tfstate" \
-            -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
-            -backend-config="region=ca-toronto-1" \
-            -backend-config="skip_region_validation=true" \
-            -backend-config="skip_credentials_validation=true" \
-            -backend-config="skip_metadata_api_check=true" \
-            -backend-config="use_path_style=true" \
-            -reconfigure
+                  tofu init \
+                    -backend-config="bucket=familyshield-tfstate" \
+                    -backend-config="key=${ENV}/terraform.tfstate" \
+                    -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
+                    -backend-config="region=ca-toronto-1" \
+                    -backend-config="skip_region_validation=true" \
+                    -backend-config="skip_credentials_validation=true" \
+                    -backend-config="skip_metadata_api_check=true" \
+                    -backend-config="use_path_style=true" \
+                    -reconfigure
 
-          VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
-          if [ -z "$VM_IP" ]; then
-            echo "❌ VM IP not found in IaC outputs"
-            exit 1
-          fi
-          echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
+                  VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
+                  if [ -z "$VM_IP" ]; then
+                    echo "❌ VM IP not found in IaC outputs"
+                    exit 1
+                  fi
+                  echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
 
-      - name: Prepare SSH key
-        shell: bash
-        env:
-          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
-          chmod 600 ~/.ssh/familyshield
+            - name: Prepare SSH key
+              shell: bash
+              env:
+                  SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+              run: |
+                  set -euo pipefail
+                  mkdir -p ~/.ssh
+                  echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+                  chmod 600 ~/.ssh/familyshield
 
-      - name: Render docker-compose if missing
-        shell: bash
-        env:
-          VM_IP: ${{ steps.iac.outputs.vm_ip }}
-          ENVIRONMENT: ${{ github.event.inputs.environment }}
-          SUPABASE_URL: ${{ steps.vars.outputs.supabase_url }}
-          SUPABASE_ANON_KEY: ${{ steps.vars.outputs.supabase_anon_key }}
-          GROQ_API_KEY: ${{ steps.vars.outputs.groq_api_key }}
-          ANTHROPIC_API_KEY: ${{ steps.vars.outputs.anthropic_api_key }}
-        run: |
-          set -euo pipefail
+            - name: Render docker-compose if missing
+              shell: bash
+              env:
+                  VM_IP: ${{ steps.iac.outputs.vm_ip }}
+                  ENVIRONMENT: ${{ github.event.inputs.environment }}
+                  SUPABASE_URL: ${{ steps.vars.outputs.supabase_url }}
+                  SUPABASE_ANON_KEY: ${{ steps.vars.outputs.supabase_anon_key }}
+                  GROQ_API_KEY: ${{ steps.vars.outputs.groq_api_key }}
+                  ANTHROPIC_API_KEY: ${{ steps.vars.outputs.anthropic_api_key }}
+              run: |
+                  set -euo pipefail
 
-          COMPOSE_EXISTS=$(ssh -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" \
-            "test -f /opt/familyshield/docker-compose.yml && echo yes || echo no" 2>/dev/null || echo "no")
+                  COMPOSE_EXISTS=$(ssh -i ~/.ssh/familyshield \
+                    -o StrictHostKeyChecking=no \
+                    -o UserKnownHostsFile=/dev/null \
+                    -o ConnectTimeout=15 \
+                    ubuntu@"$VM_IP" \
+                    "test -f /opt/familyshield/docker-compose.yml && echo yes || echo no" 2>/dev/null || echo "no")
 
-          if [ "$COMPOSE_EXISTS" = "yes" ]; then
-            echo "✅ docker-compose.yml already exists on VM"
-            exit 0
-          fi
+                  if [ "$COMPOSE_EXISTS" = "yes" ]; then
+                    echo "✅ docker-compose.yml already exists on VM"
+                    exit 0
+                  fi
 
-          echo "⚠️ docker-compose.yml missing — rendering and copying"
-          sed \
-            -e "s|\${environment}|$ENVIRONMENT|g" \
-            -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_${ENVIRONMENT}|g" \
-            -e "s|\${supabase_url}|$SUPABASE_URL|g" \
-            -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
-            -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
-            -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
-            -e 's|\$\${|\${|g' \
-            iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
+                  echo "⚠️ docker-compose.yml missing — rendering and copying"
+                  sed \
+                    -e "s|\${environment}|$ENVIRONMENT|g" \
+                    -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_${ENVIRONMENT}|g" \
+                    -e "s|\${supabase_url}|$SUPABASE_URL|g" \
+                    -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
+                    -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
+                    -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
+                    -e 's|\$\${|\${|g' \
+                    iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
 
-          scp -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            /tmp/docker-compose.yml \
-            ubuntu@"$VM_IP":/opt/familyshield/docker-compose.yml
+                  scp -i ~/.ssh/familyshield \
+                    -o StrictHostKeyChecking=no \
+                    -o UserKnownHostsFile=/dev/null \
+                    /tmp/docker-compose.yml \
+                    ubuntu@"$VM_IP":/opt/familyshield/docker-compose.yml
 
-      - name: Sync runtime assets (config + mitm addon)
-        shell: bash
-        env:
-          VM_IP: ${{ steps.iac.outputs.vm_ip }}
-        run: |
-          set -euo pipefail
+            - name: Sync runtime assets (config + mitm addon)
+              shell: bash
+              env:
+                  VM_IP: ${{ steps.iac.outputs.vm_ip }}
+              run: |
+                  set -euo pipefail
 
-          tar -czf /tmp/familyshield-runtime-assets.tgz apps/mitm apps/platform-config
-          scp -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            /tmp/familyshield-runtime-assets.tgz \
-            ubuntu@"$VM_IP":/tmp/familyshield-runtime-assets.tgz
+                  tar -czf /tmp/familyshield-runtime-assets.tgz apps/mitm apps/platform-config
+                  scp -i ~/.ssh/familyshield \
+                    -o StrictHostKeyChecking=no \
+                    -o UserKnownHostsFile=/dev/null \
+                    /tmp/familyshield-runtime-assets.tgz \
+                    ubuntu@"$VM_IP":/tmp/familyshield-runtime-assets.tgz
 
-          ssh -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=20 \
-            ubuntu@"$VM_IP" \
-            "mkdir -p /opt/familyshield && tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
+                  ssh -i ~/.ssh/familyshield \
+                    -o StrictHostKeyChecking=no \
+                    -o UserKnownHostsFile=/dev/null \
+                    -o ConnectTimeout=20 \
+                    ubuntu@"$VM_IP" \
+                    "mkdir -p /opt/familyshield && tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
 
-      - name: Start platform services
-        shell: bash
-        env:
-          VM_IP: ${{ steps.iac.outputs.vm_ip }}
-          ENVIRONMENT: ${{ github.event.inputs.environment }}
-        run: |
-          set -euo pipefail
+            - name: Start platform services
+              shell: bash
+              env:
+                  VM_IP: ${{ steps.iac.outputs.vm_ip }}
+                  ENVIRONMENT: ${{ github.event.inputs.environment }}
+              run: |
+                  set -euo pipefail
 
-          ssh -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=30 \
-            ubuntu@"$VM_IP" bash -s <<'ENDSSH'
-          set -euo pipefail
+                  ssh -i ~/.ssh/familyshield \
+                    -o StrictHostKeyChecking=no \
+                    -o UserKnownHostsFile=/dev/null \
+                    -o ConnectTimeout=30 \
+                    ubuntu@"$VM_IP" bash -s <<'ENDSSH'
+                  set -euo pipefail
 
-          cd /opt/familyshield
+                  cd /opt/familyshield
 
-          export INFLUXDB_PASSWORD="${INFLUXDB_PASSWORD:-familyshield-influx-bootstrap}"
-          export GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-familyshield-grafana-bootstrap}"
+                  export INFLUXDB_PASSWORD="${INFLUXDB_PASSWORD:-familyshield-influx-bootstrap}"
+                  export GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-familyshield-grafana-bootstrap}"
 
-          docker compose up -d adguard headscale mitmproxy redis nodered influxdb grafana ntfy
-          sleep 12
-          docker compose ps
-          ENDSSH
+                  docker compose up -d adguard headscale mitmproxy redis nodered influxdb grafana ntfy
+                  sleep 12
+                  docker compose ps
+                  ENDSSH
 
-      - name: Summary
-        run: |
-          echo "## Platform Services Deployment" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "Services started: adguard, headscale, mitmproxy, redis, nodered, influxdb, grafana, ntfy" >> $GITHUB_STEP_SUMMARY
-          echo "Workflow intentionally excludes app image promotion (api/portal)" >> $GITHUB_STEP_SUMMARY
+            - name: Summary
+              run: |
+                  echo "## Platform Services Deployment" >> $GITHUB_STEP_SUMMARY
+                  echo "" >> $GITHUB_STEP_SUMMARY
+                  echo "Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+                  echo "Services started: adguard, headscale, mitmproxy, redis, nodered, influxdb, grafana, ntfy" >> $GITHUB_STEP_SUMMARY
+                  echo "Workflow intentionally excludes app image promotion (api/portal)" >> $GITHUB_STEP_SUMMARY

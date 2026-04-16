@@ -22,7 +22,7 @@ jobs:
   deploy-infra-dev:
     name: "IaC → dev (Phase 1: Infrastructure Only)"
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # up to 4h capacity retry loop + buffer
+    timeout-minutes: 360 # up to 4h capacity retry loop + buffer
     environment:
       name: dev
       url: https://familyshield-dev.everythingcloud.ca
@@ -149,7 +149,6 @@ jobs:
           echo ""
           echo "📦 Infrastructure outputs:"
           tofu output -no-color
-
 
   build-and-push:
     name: "Build & Push Docker images"
