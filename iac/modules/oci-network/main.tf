@@ -65,7 +65,7 @@ resource "oci_core_security_list" "main" {
   dynamic "ingress_security_rules" {
     for_each = var.admin_ssh_cidrs
     content {
-      protocol = "6"  # TCP
+      protocol = "6" # TCP
       source   = ingress_security_rules.value
       tcp_options {
         min = 22
@@ -112,7 +112,7 @@ resource "oci_core_network_security_group_security_rule" "ssh_admin" {
   for_each                  = toset(var.admin_ssh_cidrs)
   network_security_group_id = oci_core_network_security_group.vm.id
   direction                 = "INGRESS"
-  protocol                  = "6"  # TCP
+  protocol                  = "6" # TCP
   source                    = each.value
   source_type               = "CIDR_BLOCK"
   stateless                 = false

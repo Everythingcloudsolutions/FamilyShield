@@ -68,12 +68,12 @@ module "compartments" {
 module "network" {
   source = "./modules/oci-network"
 
-  compartment_id     = module.compartments.compartment_id
-  environment        = var.environment
-  region             = var.oci_region
-  vcn_cidr           = var.vcn_cidr
-  admin_ssh_cidrs    = var.admin_ssh_cidrs
-  tags               = local.common_tags
+  compartment_id  = module.compartments.compartment_id
+  environment     = var.environment
+  region          = var.oci_region
+  vcn_cidr        = var.vcn_cidr
+  admin_ssh_cidrs = var.admin_ssh_cidrs
+  tags            = local.common_tags
 }
 
 ###############################################################################
