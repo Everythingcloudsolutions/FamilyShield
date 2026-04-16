@@ -306,9 +306,9 @@ create_access_application() {
   header "Creating Access Application: $app_name ($fqdn)"
 
   # Check if already exists
-  local existing=$(cf_api GET "/zones/$ZONE_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
+  local existing=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
 
-  if [ -n "$existing" ]; then
+  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
     info "Access app already exists: $existing"
     echo "$existing"
     return 0
@@ -321,10 +321,10 @@ create_access_application() {
     --arg session_duration "8h" \
     '{name: $name, domain: $domain, type: $type, session_duration: $session_duration, tags: ["familyshield", "admin"]}')
 
-  local response=$(cf_api POST "/zones/$ZONE_ID/access/apps" "$payload")
-  local app_id=$(echo "$response" | jq -r '.result.id' 2>/dev/null || echo "")
+  local response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
+  local app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
 
-  [ -n "$app_id" ] || die "Failed to create access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
+  [ -n "$app_id" ] && [ "$app_id" != "null" ] || die "Failed to create access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
 
   success "Access application created: $app_name ($app_id)"
   echo "$app_id"
@@ -338,9 +338,9 @@ create_ssh_access_app() {
   header "Creating SSH Access Application: $app_name"
 
   # Check if already exists
-  local existing=$(cf_api GET "/zones/$ZONE_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
+  local existing=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
 
-  if [ -n "$existing" ]; then
+  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
     info "SSH Access app already exists: $existing"
     echo "$existing"
     return 0
@@ -353,10 +353,10 @@ create_ssh_access_app() {
     --arg session_duration "8h" \
     '{name: $name, domain: $domain, type: $type, session_duration: $session_duration, tags: ["familyshield", "ssh"]}')
 
-  local response=$(cf_api POST "/zones/$ZONE_ID/access/apps" "$payload")
-  local app_id=$(echo "$response" | jq -r '.result.id' 2>/dev/null || echo "")
+  local response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
+  local app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
 
-  [ -n "$app_id" ] || die "Failed to create SSH access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
+  [ -n "$app_id" ] && [ "$app_id" != "null" ] || die "Failed to create SSH access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
 
   success "SSH Access app created: $app_name ($app_id)"
   echo "$app_id"
@@ -367,11 +367,11 @@ delete_access_application() {
 
   header "Deleting Access Application: $app_name"
 
-  local app_id=$(cf_api GET "/zones/$ZONE_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
+  local app_id=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
 
-  [ -z "$app_id" ] && { info "Access app not found: $app_name"; return 0; }
+  [ -z "$app_id" ] || [ "$app_id" = "null" ] && { info "Access app not found: $app_name"; return 0; }
 
-  local response=$(cf_api DELETE "/zones/$ZONE_ID/access/apps/$app_id" "")
+  local response=$(cf_api DELETE "/accounts/$ACCOUNT_ID/access/apps/$app_id" "")
 
   if echo "$response" | jq -e '.success == false' >/dev/null 2>&1; then
     die "Failed to delete access app: $(echo "$response" | jq -r '.errors[0].message // .' 2>/dev/null)"
