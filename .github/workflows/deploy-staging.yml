@@ -186,14 +186,21 @@ jobs:
           RULE_ID: ${{ steps.punch.outputs.nsg_rule_id }}
         shell: bash
         run: |
-          if [ -z "$NSG_ID" ] || [ -z "$RULE_ID" ]; then
-            echo "⚠️  NSG_ID or RULE_ID not available — skipping NSG rule removal"
+          set -euo pipefail
+
+          if [ -z "$NSG_ID" ]; then
+            echo "⚠️  NSG_ID not available — skipping NSG rule removal"
             exit 0
           fi
+
+          if [ -z "$RULE_ID" ]; then
+            echo "❌ RULE_ID is missing for NSG $NSG_ID — cannot safely remove the temporary SSH rule"
+            exit 1
+          fi
+
           oci network nsg-rules remove \
             --nsg-id "$NSG_ID" \
-            --security-rule-ids "[\"$RULE_ID\"]" || \
-            echo "⚠️  NSG rule removal failed — may need manual cleanup"
+            --security-rule-ids "[\"$RULE_ID\"]"
           echo "✅ SSH hole sealed"
 
   setup-cloudflare-staging:
