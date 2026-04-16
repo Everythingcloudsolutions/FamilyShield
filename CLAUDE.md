@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (workflow split: infra-dev/prod separate from deploy-dev/prod; CF tunnel SSH for app deploys)
+> Last updated: 2026-04-16 (workflow split; CF tunnel SSH; tighten-ssh via tofu apply; Cloudflare tags removed; cloud-init wait added)
 
 ---
 
@@ -808,76 +808,55 @@ local payload=$(jq -n \
 
 Use `--argjson` for boolean/numeric values, `--arg` for strings.
 
-### OCI CLI Command Syntax — "nsg rule" command structure (2026-04-16 — FIXED)
+### OCI NSG — tighten-ssh via tofu apply (2026-04-16)
 
-**Problem (historical):** The `tighten-ssh-{env}` jobs were trying to use `oci network security-group-rule` (from incorrect documentation) but the OCI CLI returned `Error: No such command 'security-group-rule'`.
+**Problem:** Three iterations of OCI CLI commands all failed (`security-group-rule`, `nsg rule`, `nsg-security-rules`) — the correct command either doesn't exist in the runner's OCI CLI version or produces unexpected errors.
 
-**Root cause:** The OCI CLI command structure for network security groups uses `nsg rule` not `security-group-rule`. The correct commands are:
+**Root cause (architectural):** The NSG is managed by OpenTofu state. Using OCI CLI to modify it directly causes state drift — OpenTofu believes the NSG has `0.0.0.0/0` while the actual resource has been tightened. Any subsequent `tofu apply` would revert the tightening.
 
-- List: `oci network nsg rule list` (NOT `security-group-rule list`)
-- Delete: `oci network nsg rule delete` (NOT `security-group-rule delete`)
-- Create: `oci network nsg rule create` (NOT `security-group-rule create`)
+**Solution:** `tighten-ssh-dev` and `tighten-ssh-prod` now run a second `tofu apply` with `TF_VAR_admin_ssh_cidrs='["173.33.214.49/32"]'`. This:
+- Keeps the NSG in sync with OpenTofu state
+- Uses no OCI CLI NSG commands at all
+- Is idempotent — re-running has no effect if already tightened
 
-**Solution (corrected 2026-04-16):** Use the correct OCI CLI command names and parameters:
+```yaml
+env:
+  TF_VAR_admin_ssh_cidrs: '["173.33.214.49/32"]'
+run: |
+  tofu init ...
+  tofu apply -var="environment=dev" -var-file="environments/dev/terraform.tfvars" -auto-approve -no-color
+```
+
+The `admin_ssh_cidrs` variable (default `["0.0.0.0/0"]`) is defined in `iac/variables.tf`. The first `tofu apply` in `deploy-infra-{env}` deploys with the default (open). The second `tofu apply` in `tighten-ssh-{env}` overrides it to admin IP only.
+
+### Cloudflare Access App — Tags Error 12130 (2026-04-16 — FIXED)
+
+**Error:** `access.api.error.invalid_request: tags contain a tag that does not exist, tags must be created before assigning to an application`
+
+**Root cause:** `scripts/cloudflare-api.sh` was passing `tags: ["familyshield", "admin"]` and `tags: ["familyshield", "ssh"]` in Access Application payloads. Cloudflare requires tags to be pre-created in the Zero Trust dashboard before they can be assigned to an application. Since these tags never existed, the API returned error 12130 and the apps were never created.
+
+**Fix (commit 12ebf77):** Removed the `tags` field entirely from all Access Application payloads in `create_access_application()` and `create_ssh_access_app()`. Tags are cosmetic organization — removing them has no functional impact on tunnel routing or Zero Trust policies.
+
+**Pattern:** Never pass `tags` to Cloudflare Access Application API calls unless those exact tag names have been manually pre-created in Zero Trust → Settings → Tags.
+
+### Bootstrap Step — docker: command not found on Fresh VM (2026-04-16 — FIXED)
+
+**Error:** `bash: line 3: docker: command not found` when the `Bootstrap VM` step in `setup-cloudflare-{env}` tries to run docker commands on a freshly provisioned VM.
+
+**Root cause:** The bootstrap step SSHes to the VM and immediately runs `docker compose up` etc. On a fresh VM, cloud-init is still running and hasn't finished installing Docker, docker-compose, and other packages. The step was racing against cloud-init.
+
+**Fix (commit 1df4dcd):** Added `sudo cloud-init status --wait || true` as the first command in the bootstrap SSH heredoc (in both `infra-dev.yml` and `infra-prod.yml`). This blocks until cloud-init finishes before any docker commands run.
 
 ```bash
-# ❌ Old — incorrect command structure
-oci network security-group-rule list \
-  --network-security-group-id "$NSG_ID"
-oci network security-group-rule delete \
-  --security-group-rule-id "$RULE_ID"
-oci network security-group-rule create \
-  --network-security-group-id "$NSG_ID"
-
-# ✅ New — correct OCI CLI command structure (as of 2026-04-16)
-oci network nsg rule list \
-  --nsg-id "$NSG_ID" \
-  --output json
-
-oci network nsg rule delete \
-  --nsg-rule-id "$RULE_ID" \
-  --force
-
-oci network nsg rule create \
-  --nsg-id "$NSG_ID" \
-  --direction INGRESS \
-  --protocol 6 \
-  --source "$ADMIN_IP" \
-  --source-type CIDR_BLOCK \
-  --tcp-options "destinationPortRange={min:22,max:22}"
+ubuntu@"$VM_IP" bash -s <<ENDSSH
+set -euo pipefail
+sudo cloud-init status --wait || true   # ← wait for Docker to be installed
+cd /opt/familyshield
+echo "${GHCR_TOKEN}" | docker login ghcr.io ...
+ENDSSH
 ```
 
-Also includes JSON validation before parsing with `jq`:
-
-```bash
-if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
-  echo "⚠️  Failed to query NSG rules — skipping rule removal"
-  SSH_RULES="[]"
-fi
-```
-
-**Fixed in (commit e306349):**
-
-- `.github/workflows/deploy-dev.yml` — tighten-ssh-dev step
-- `.github/workflows/deploy-staging.yml` — tighten-ssh-staging step
-- `.github/workflows/deploy-prod.yml` — tighten-ssh-prod step
-
-**Pattern:** Always check OCI CLI command documentation for correct syntax. The key differences:
-
-```bash
-# Command structure for NSG rules:
-oci network nsg rule list              # ✅ correct
-oci network nsg rule delete            # ✅ correct
-oci network nsg rule create            # ✅ correct
-
-# NOT:
-oci network security-group-rule list   # ❌ wrong — command doesn't exist
-oci network nsg-rules list             # ❌ wrong — subcommand doesn't exist
-```
-if ! echo "$OUTPUT" | jq -e . >/dev/null 2>&1; then
-  # Handle error — output is not valid JSON
-fi
-```
+The `|| true` ensures the step doesn't fail if cloud-init has already completed (exit code 2 = "done") or if the command itself is unavailable.
 
 ### SSH Key Carriage Returns — appleboy/ssh-action Failure (2026-04-16 — OBSOLETE)
 
@@ -1023,6 +1002,10 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - Updated `pr-check.yml` — split into `lint-iac` + `lint-apps` + path-filtered `plan-dev` / `plan-prod`
   - App workflows never use public IP SSH — work regardless of NSG state (tightened or open)
   - Mixed commit handling: `wait-for-infra` job polls GitHub API and waits up to 10 min for infra workflow to complete
+- ✅ **Pipeline blockers resolved (2026-04-16, continued):**
+  - OCI CLI NSG commands kept failing (`security-group-rule`, `nsg rule`, `nsg-security-rules`) — replaced with second `tofu apply` using `TF_VAR_admin_ssh_cidrs='["173.33.214.49/32"]'`; keeps state consistent, no OCI CLI NSG commands needed
+  - Cloudflare Access App creation failing with error 12130 — tags must be pre-created; removed tags from all payloads (commit 12ebf77)
+  - Bootstrap VM step failing with `docker: command not found` on fresh VMs — added `sudo cloud-init status --wait` before docker commands (commit 1df4dcd)
 - 🔲 First full end-to-end successful dev pipeline run (infra-dev.yml: all 4 jobs green + deploy-dev.yml: all 5 jobs green)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 
