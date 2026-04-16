@@ -894,6 +894,7 @@ Replaced `appleboy/ssh-action@v1` with native SSH command:
 3. No external action dependency — simpler and more reliable
 
 **Before (broken):**
+
 ```yaml
 - name: Deploy containers to dev VM
   uses: appleboy/ssh-action@v1
@@ -905,6 +906,7 @@ Replaced `appleboy/ssh-action@v1` with native SSH command:
 ```
 
 **After (working):**
+
 ```bash
 mkdir -p ~/.ssh
 echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
@@ -976,7 +978,259 @@ The added complexity of dynamic rule management during deployment created failur
 
 ---
 
-## Workflow File Quick Reference
+## Issue 11: Cloudflare API JSON Encoding — Control Characters Break Payload (2026-04-16)
+
+**Date discovered:** 2026-04-16
+**Affected jobs:** `setup-cloudflare-{env}`
+**Status:** FIXED
+**Commit that fixed it:** Current session
+
+### What You See
+
+```
+API Response:
+{
+  "success": false,
+  "errors": [
+    {
+      "code": 1030,
+      "message": "Could not parse input. Json deserialize error: control character (\\u0000-\\u001F) found while parsing a string at line 4 column 0"
+    }
+  ],
+  ...
+}
+```
+
+Later investigation reveals the actual issue is base64 line wrapping:
+
+```
+API Response:
+{
+  "success": false,
+  "errors": [
+    {
+      "code": 1030,
+      "message": "Could not parse input. Json deserialize error: invalid type: string \"MWVYdnp2U05QTDZjdDd4RVBTN3l4N284TXFVVldyUkdwcFppWnVWTVZPcUlMODRCYmFJTnF2Ukp6\\nb3lDQWtrNA==\", expected a borrowed string at line 3 column 111"
+    }
+  ],
+  ...
+}
+```
+
+The `\\n` in the base64 string indicates embedded newlines breaking the JSON.
+
+### Root Cause
+
+**Part 1 — JSON Construction via String Concatenation:**  
+JSON payloads were being constructed using bash string concatenation with command substitution (`cat <<EOF` with `$(...)` expansions). This doesn't properly escape special characters, and when variables contain unexpected content, the resulting JSON becomes malformed.
+
+**Part 2 — base64 Line Wrapping:**  
+The `base64` command by default wraps output at 76 characters and inserts literal newlines. When the tunnel_secret is 64+ characters, base64 splits it across multiple lines:
+
+```
+base64data\nmore_data
+```
+
+When embedded in JSON without proper escaping:
+
+```json
+{"tunnel_secret": "base64data\nmore_data"}  // Invalid — unescaped newline in string literal
+```
+
+Cloudflare's JSON parser rejects this as malformed.
+
+### Investigation Steps
+
+1. Ran `bash scripts/cloudflare-api.sh setup dev "<tunnel-secret>" "admin@example.com"`
+2. Saw error: `control character (\u0000-\\u001F) found while parsing a string at line 4 column 0`
+3. Applied `jq -n --arg` fix for JSON construction (Part 1)
+4. Still saw error: `invalid type: string ... \\n ...` with embedded `\\n` in base64
+5. Realized base64 default wrapping was inserting newlines into the base64-encoded tunnel_secret
+
+### The Solution
+
+**Part 1 — Use `jq -n` for Safe JSON Construction:**
+
+Replace string concatenation with `jq -n` + `--arg` / `--argjson` flags:
+
+```bash
+# ❌ Wrong — unsafe, breaks on special characters
+local payload=$(cat <<EOF
+{"name": "$name", "tunnel_secret": "$(echo -n "$tunnel_secret" | base64)"}
+EOF
+)
+
+# ✅ Right — safe, all variables properly escaped
+local tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64 -w 0)
+local payload=$(jq -n \
+  --arg name "familyshield-$environment" \
+  --arg secret "$tunnel_secret_b64" \
+  '{name: $name, tunnel_secret: $secret}')
+```
+
+**Part 2 — Disable base64 Line Wrapping:**
+
+Use `base64 -w 0` flag to prevent newline insertion:
+
+```bash
+# ❌ Old — wraps at 76 chars, inserts \n
+local tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64)
+
+# ✅ New — disables wrapping, produces single line
+local tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64 -w 0)
+```
+
+**Part 3 — Trim Whitespace from Inputs:**
+
+Also added defensive whitespace trimming in `create_tunnel()` and `setup_cloudflare()`:
+
+```bash
+# Strip leading/trailing whitespace (handles CR, LF, etc from GitHub Actions outputs)
+tunnel_secret=$(echo "$tunnel_secret" | tr -d '[:space:]')
+```
+
+### Files Changed
+
+- `scripts/cloudflare-api.sh` line 89-95: `create_tunnel()` — added `base64 -w 0` + `jq -n --arg`
+- `scripts/cloudflare-api.sh` setup_cloudflare(): Added whitespace trimming + input validation
+- `scripts/cloudflare-api.sh` line 258-268: `create_dns_record()` — replaced string concat with `jq -n`
+- `scripts/cloudflare-api.sh` line 318-327: `create_access_application()` — replaced string concat with `jq -n`
+- `scripts/cloudflare-api.sh` line 354-363: `create_ssh_access_app()` — replaced string concat with `jq -n`
+
+### Lesson
+
+**Never construct JSON via string concatenation.** Always use `jq -n` with variable arguments:
+
+```bash
+# Pattern for all JSON construction:
+local payload=$(jq -n \
+  --arg var1 "$value1" \
+  --argjson var2 "$numeric_value" \
+  '{key1: $var1, key2: $var2}')
+```
+
+- `--arg` for string values (automatically escaped)
+- `--argjson` for boolean/numeric values
+- Ensures JSON is always valid regardless of variable content
+
+Also: **Be defensive about external input parameters**, especially from GitHub Actions workflow outputs, which may contain carriage returns or newlines. Always trim whitespace before using.
+
+---
+
+## Issue 12: OCI CLI Command Syntax — `nsg-rules` Command Doesn't Exist (2026-04-16)
+
+**Date discovered:** 2026-04-16
+**Affected jobs:** `tighten-ssh-{env}` (all three workflows)
+**Status:** FIXED
+**Commit that fixed it:** Current session
+
+### What You See
+
+```
+Usage: oci network [OPTIONS] COMMAND [ARGS]...
+Error: No such command 'nsg-rules'.
+```
+
+### Root Cause
+
+The OCI CLI command structure for network security groups uses `security-group-rule`, not `nsg-rules`. The script was using an outdated or incorrect API:
+
+- ❌ `oci network nsg-rules list`
+- ❌ `oci network nsg-rules remove`
+- ❌ `oci network nsg-rules add`
+
+Correct commands:
+
+- ✅ `oci network security-group-rule list`
+- ✅ `oci network security-group-rule delete`
+- ✅ `oci network security-group-rule create`
+
+### Investigation Steps
+
+1. Ran deploy-dev.yml, saw "Phase A Security: Tightening SSH to admin IP only..." message
+2. Immediately hit: `Error: No such command 'nsg-rules'`
+3. Checked OCI CLI help: `oci network --help` → listed `security-group-rule` as available command
+4. Updated command structure to use correct names
+
+### The Solution
+
+Replace incorrect `nsg-rules` commands with correct `security-group-rule` commands:
+
+**List all rules:**
+
+```bash
+# ❌ Wrong
+oci network nsg-rules list \
+  --network-security-group-id "$NSG_ID" \
+  --query "data[?direction=='INGRESS' && (tcp_options || protocol=='6')]" \
+  --output json
+
+# ✅ Correct (simpler, more reliable)
+oci network security-group-rule list \
+  --network-security-group-id "$NSG_ID" \
+  --output json
+```
+
+**Delete a rule:**
+
+```bash
+# ❌ Wrong
+oci network nsg-rules remove \
+  --nsg-id "$NSG_ID" \
+  --security-rule-ids "[$RULE_ID]"
+
+# ✅ Correct
+oci network security-group-rule delete \
+  --security-group-rule-id "$RULE_ID" \
+  --force
+```
+
+**Create a rule:**
+
+```bash
+# ❌ Wrong
+oci network nsg-rules add \
+  --nsg-id "$NSG_ID" \
+  --security-rules "[{\"direction\":\"INGRESS\",\"protocol\":\"6\", ...}]"
+
+# ✅ Correct (use individual parameters, not JSON)
+oci network security-group-rule create \
+  --network-security-group-id "$NSG_ID" \
+  --direction INGRESS \
+  --protocol 6 \
+  --source "$ADMIN_IP" \
+  --source-type CIDR_BLOCK \
+  --tcp-options "destinationPortRange={min:22,max:22}"
+```
+
+Also added **JSON validation before parsing:**
+
+```bash
+# Validate JSON before processing with jq
+if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
+  echo "⚠️  Failed to query NSG rules — skipping rule removal"
+  SSH_RULES="[]"
+fi
+```
+
+### Files Changed
+
+- `.github/workflows/deploy-dev.yml` — tighten-ssh-dev step
+- `.github/workflows/deploy-staging.yml` — tighten-ssh-staging step
+- `.github/workflows/deploy-prod.yml` — tighten-ssh-prod step
+
+All three workflows updated to use:
+
+- `oci network security-group-rule list` (correct command name)
+- `oci network security-group-rule delete` (correct command name)
+- `oci network security-group-rule create` (correct command name)
+- JSON validation with `jq -e .` before parsing
+
+### Lesson
+
+**Always check OCI CLI command documentation for correct syntax.** Use `oci --help` and `oci [service] --help` to explore available commands before hardcoding them. Also, **simplify OCI CLI queries**: removing complex `--query` parameters makes commands more reliable and easier to debug.
+
+---
 
 | Workflow file | Trigger | Job sequence |
 |--------------|---------|-------------|
