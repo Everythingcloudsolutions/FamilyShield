@@ -443,7 +443,7 @@ cleanup_cloudflare() {
   fi
 
   # Delete DNS records
-  delete_dns_record "ssh.familyshield-$environment"
+  delete_dns_record "ssh-$environment"
   delete_dns_record "familyshield-$environment"
   delete_dns_record "api-$environment"
   delete_dns_record "adguard-$environment"
