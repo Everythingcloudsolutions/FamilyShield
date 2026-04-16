@@ -18,7 +18,9 @@ const baseRaw: RawContentEvent = {
 const basePartial: Partial<EnrichedEvent> = { ...baseRaw };
 
 describe('enrichRoblox', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
 
   it('enriches a game with all metadata and age recommendation', async () => {
     mockedAxios.get

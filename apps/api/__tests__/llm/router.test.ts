@@ -1,15 +1,19 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { scoreRisk } from '../../src/llm/router';
 import type { EnrichedEvent } from '../../src/types';
+
+// Create mock instances that will be used
+let groqCreateMock: jest.Mock<any>;
+let anthropicCreateMock: jest.Mock<any>;
 
 // Mock SDKs before importing
 jest.mock('groq-sdk', () => {
+  groqCreateMock = jest.fn<any>();
   return {
     __esModule: true,
     default: jest.fn().mockImplementation(() => ({
       chat: {
         completions: {
-          create: jest.fn<any>(),
+          create: groqCreateMock,
         },
       },
     })),
@@ -17,21 +21,18 @@ jest.mock('groq-sdk', () => {
 });
 
 jest.mock('@anthropic-ai/sdk', () => {
+  anthropicCreateMock = jest.fn<any>();
   return {
     __esModule: true,
     default: jest.fn().mockImplementation(() => ({
       messages: {
-        create: jest.fn<any>(),
+        create: anthropicCreateMock,
       },
     })),
   };
 });
 
-import Groq from 'groq-sdk';
-import Anthropic from '@anthropic-ai/sdk';
-
-const groqInstance = (new (Groq as any)()) as any;
-const anthropicInstance = (new (Anthropic as any)()) as any;
+import { scoreRisk } from '../../src/llm/router';
 
 const testEvent: EnrichedEvent = {
   device_ip: '10.0.0.1',
@@ -47,7 +48,9 @@ const testEvent: EnrichedEvent = {
 };
 
 describe('scoreRisk (LLM router)', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
 
   it('returns Groq risk result on success', async () => {
     const groqResponse = JSON.stringify({
@@ -57,7 +60,7 @@ describe('scoreRisk (LLM router)', () => {
       reasoning: 'Family-friendly Minecraft content',
     });
 
-    groqInstance.chat.completions.create.mockResolvedValueOnce({
+    groqCreateMock.mockResolvedValueOnce({
       choices: [{ message: { content: groqResponse } }],
       usage: { total_tokens: 150 },
     });
@@ -72,7 +75,7 @@ describe('scoreRisk (LLM router)', () => {
   });
 
   it('falls back to Anthropic when Groq throws', async () => {
-    groqInstance.chat.completions.create.mockRejectedValueOnce(
+    groqCreateMock.mockRejectedValueOnce(
       new Error('Groq rate limit exceeded'),
     );
 
@@ -83,7 +86,7 @@ describe('scoreRisk (LLM router)', () => {
       reasoning: 'Some mature themes',
     });
 
-    anthropicInstance.messages.create.mockResolvedValueOnce({
+    anthropicCreateMock.mockResolvedValueOnce({
       content: [{ type: 'text', text: anthropicResponse }],
       usage: { input_tokens: 80, output_tokens: 50 },
     });
@@ -98,7 +101,7 @@ describe('scoreRisk (LLM router)', () => {
   it('handles JSON wrapped in markdown code fences', async () => {
     const fencedResponse = '```json\n{"risk_level":"high","categories":["violence"],"confidence":0.88}\n```';
 
-    groqInstance.chat.completions.create.mockResolvedValueOnce({
+    groqCreateMock.mockResolvedValueOnce({
       choices: [{ message: { content: fencedResponse } }],
       usage: { total_tokens: 90 },
     });
@@ -109,7 +112,7 @@ describe('scoreRisk (LLM router)', () => {
   });
 
   it('returns safe defaults when JSON parse fails', async () => {
-    groqInstance.chat.completions.create.mockResolvedValueOnce({
+    groqCreateMock.mockResolvedValueOnce({
       choices: [{ message: { content: 'This is not JSON' } }],
       usage: { total_tokens: 20 },
     });
@@ -122,8 +125,8 @@ describe('scoreRisk (LLM router)', () => {
   });
 
   it('returns safe defaults when both Groq and Anthropic fail', async () => {
-    groqInstance.chat.completions.create.mockRejectedValueOnce(new Error('Groq down'));
-    anthropicInstance.messages.create.mockRejectedValueOnce(new Error('Anthropic down'));
+    groqCreateMock.mockRejectedValueOnce(new Error('Groq down'));
+    anthropicCreateMock.mockRejectedValueOnce(new Error('Anthropic down'));
 
     await expect(scoreRisk(testEvent)).rejects.toThrow('Anthropic down');
   });

@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (SSH security + heredoc fix + docker-compose bootstrap + jq JSON encoding + OCI CLI query fix)
+> Last updated: 2026-04-16 (SSH security + heredoc fix + docker-compose bootstrap + jq JSON encoding + OCI CLI query fix + security hardening baseline)
 
 ---
 
@@ -255,6 +255,7 @@ tighten-ssh-{env}           Phase A: Remove 0.0.0.0/0, add admin IP only (173.33
 ```
 
 **Key change (2026-04-16):** SSH deployed wide-open (0.0.0.0/0), tightened to admin IP AFTER tests pass.
+
 - Eliminates dynamic NSG punch/seal complexity during deployment
 - Guarantees SSH always works for all deployment jobs
 - Security applied at the END after system is verified healthy
@@ -272,6 +273,7 @@ tighten-ssh-{env}           Phase A: Remove 0.0.0.0/0, add admin IP only (173.33
 **Cloudflare Tunnel Token Delivery (critical pattern):**
 
 IaC renders `docker-compose.yaml` with a placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real Cloudflare tunnel token is not known at `tofu apply` time. The `setup-cloudflare-{env}` job:
+
 1. Creates/verifies tunnel via `scripts/cloudflare-api.sh setup {env}` (gets real token from Cloudflare API)
 2. SSHes to the VM via **public IP** and writes `docker-compose.override.yaml` with the real `TUNNEL_TOKEN`
 3. Restarts cloudflared — the tunnel goes from INACTIVE → ACTIVE in the Cloudflare dashboard
@@ -469,7 +471,6 @@ gh pr create --base main --head development
 8. Review final PR, check `tofu plan` for prod infrastructure changes
 9. Merge to `main` → `deploy-prod.yml` triggers with approval gate in GitHub UI
 
-
 ---
 
 ## Coding Standards
@@ -477,6 +478,10 @@ gh pr create --base main --head development
 - **TypeScript:** strict mode, no `any`, Zod for runtime validation
 - **Python:** black formatter, flake8 lint, type hints required, docstrings on all classes
 - **Terraform/OpenTofu:** `tofu fmt` before commit, tflint clean, all resources tagged
+- **Authentication:** no admin, dashboard, device, alert, or internal operations without explicit authn/authz design
+- **Database access:** browser clients must use publishable/anonymous keys only; privileged keys are server-side only
+- **Supabase:** enable RLS on every app table, default deny, then add least-privilege policies
+- **Network exposure:** no new public endpoints for admin/internal services unless explicitly protected and documented
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `iac:`, `docs:`, `chore:`)
 - **PRs:**
   - Create on feature/fix branch
@@ -485,6 +490,120 @@ gh pr create --base main --head development
   - After testing in dev, create separate PR: `development` → `main`
 - **Secrets:** never in code, always via environment variables or GitHub Secrets
 - **Tests:** new feature = new tests, no merge without tests passing
+
+---
+
+## Security Baseline (Mandatory)
+
+These rules are non-optional. Claude Code and developers must follow them for every change.
+
+### 1. Secrets and Credentials
+
+- Never place live secrets, API keys, private keys, tunnel tokens, JWTs, or customer data in git, docs, screenshots, examples, tests, or workflow logs.
+- `NEXT_PUBLIC_*` variables must contain only values that are safe to expose to browsers.
+- Supabase `service_role` keys must never be used in browser code, `NEXT_PUBLIC_*` vars, or client bundles.
+- Treat all infrastructure secrets as sensitive even if a provider labels them "anon", "public", or "non-secret".
+- Never write sensitive values to `GITHUB_OUTPUT`, job summaries, PR comments, Terraform outputs, or console logs unless masked and strictly required.
+- Examples in docs must use placeholders only, never realistic credential-shaped values.
+
+### 2. Authentication and Authorization
+
+- The portal must not expose alerts, devices, content events, or administrative actions without authenticated user context.
+- Cloudflare Access is not a substitute for application authorization on sensitive data paths.
+- Every write operation must have an explicit authorization rule.
+- Internal/admin services such as AdGuard, Grafana, Node-RED, mitmproxy UI, SSH, and similar management surfaces must be protected by Zero Trust or equivalent access control before exposure.
+- Do not add unauthenticated management endpoints, debug routes, or convenience backdoors.
+
+### 3. Supabase and Data Protection
+
+- All application tables must have Row Level Security enabled before they are used by portal or API features.
+- Start with deny-by-default policies and add only the minimum required read/write access.
+- Privileged database operations belong in trusted server-side code only.
+- Device metadata, child activity, alerts, and risk scores are privacy-sensitive and must be treated as protected data.
+- Do not assume a table is safe because access currently happens behind a tunnel.
+
+### 4. Infrastructure and Network Exposure
+
+- Do not introduce persistent `0.0.0.0/0` access for SSH, admin UIs, APIs, or data stores.
+- Temporary broad access for CI/CD is allowed only when there is an automated tighten/cleanup step and the workflow clearly documents the fallback risk.
+- Host key verification should be enabled wherever practical; disabling it requires a documented justification.
+- Prefer outbound-only connectivity patterns, Zero Trust access, and least-exposed service topology.
+- New public DNS routes must be reviewed as a security decision, not just a deployment step.
+
+### 5. CI/CD and Automation
+
+- Minimize secret scope per job and per environment.
+- Do not pass secrets through unnecessary intermediate files, outputs, or summaries.
+- Workflow logs must remain safe to share with collaborators.
+- Deployment automation must fail safely: if hardening or cleanup does not run, this must be visible and actionable.
+- Avoid long-lived credentials when a safer alternative exists; if long-lived credentials are still required, document why and constrain their permissions.
+
+### 6. Public Repository Readiness
+
+- Before making any part of the repo public, confirm:
+  - no live secrets or secret-shaped historical artifacts are present
+  - no browser path depends on privileged credentials
+  - no sensitive service is publicly routable without proper access control
+  - RLS/policies exist for all user-facing data tables
+  - docs do not instruct unsafe secret usage
+- Public-readiness is a separate review gate and must not be assumed from successful deployment alone.
+
+---
+
+## Security Hardening Plan
+
+This is the minimum hardening sequence Claude Code should recommend and preserve.
+
+### Phase A — Immediate
+
+1. Replace any use of Supabase `service_role` keys in values named or treated as browser-safe credentials.
+2. Add application authentication to the portal before exposing real device or alert data.
+3. Enable RLS and create explicit policies for `content_events`, `alerts`, and `devices`.
+4. Restrict public/tunneled routes so only intended services are exposed.
+5. Stop writing sensitive tunnel or infrastructure values to reusable workflow outputs unless masked and unavoidable.
+
+### Phase B — Short Term
+
+1. Remove or reduce reliance on `StrictHostKeyChecking=no` where possible.
+2. Separate public app traffic from admin traffic with distinct access controls and clearer routing.
+3. Review all workflow permissions and secret exposure paths for least privilege.
+4. Add security-focused CI checks: secret scanning, dependency audit, and config linting.
+
+### Phase C — Ongoing
+
+1. Re-audit any new endpoint, table, workflow, or third-party integration before rollout.
+2. Keep docs aligned with secure operating practice; insecure examples are treated as bugs.
+3. Re-run a public-readiness review before any visibility change or open-source release.
+
+---
+
+## Development Best Practices (Always Follow)
+
+### Design and Architecture
+
+- Preserve the core architecture decisions, but do not use architecture consistency as a reason to keep insecure defaults.
+- Prefer secure-by-default implementations over convenience-first shortcuts.
+- Build features so auth, authorization, validation, and auditing are part of the initial design, not follow-up work.
+
+### Code Changes
+
+- Validate all untrusted input, including URLs, IDs, webhook payloads, headers, and query parameters.
+- Add explicit error handling for external systems without leaking sensitive internals in responses or logs.
+- Avoid broad permissions, wildcard access, or implicit trust between services.
+- If a feature handles protected family or child activity data, document its trust boundary and access path.
+
+### Reviews and Testing
+
+- Every feature PR should consider auth, data exposure, secret handling, and logging impact.
+- Add tests for authorization and access control when changing user-facing data flows.
+- Treat missing security tests for sensitive features as an incomplete implementation.
+- If a workaround weakens security temporarily, document the reason, expiry condition, and cleanup step.
+
+### Documentation and AI Guidance
+
+- Claude Code should challenge unsafe instructions rather than silently following them.
+- If docs, prompts, or prior notes conflict with secure practice, update the docs and follow the secure path.
+- When asked to expose a service, add credentials to client code, or weaken access controls, Claude Code must explicitly call out the risk and propose the safer alternative.
 
 ---
 
@@ -532,6 +651,7 @@ Earlier approach tried dynamic NSG punch/seal: open SSH for runner, deploy, seal
 **Root cause:** The action's drone-ssh binary cannot properly parse multiline SSH keys passed via GitHub Actions outputs. The issue is with the action itself, not the key format.
 
 **Solution:** Replaced `appleboy/ssh-action@v1` with native SSH command:
+
 - Write SSH key to file with carriage returns stripped
 - Use native `ssh -i ~/.ssh/familyshield` with heredoc for deployment script
 - No external action dependency — simpler and more reliable

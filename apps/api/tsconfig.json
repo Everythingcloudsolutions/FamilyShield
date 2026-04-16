@@ -5,6 +5,10 @@
     "lib": [
       "ES2022"
     ],
+    "types": [
+      "jest",
+      "node"
+    ],
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
@@ -23,11 +27,11 @@
     "noImplicitReturns": true
   },
   "include": [
-    "src/**/*"
+    "src/**/*",
+    "__tests__/**/*"
   ],
   "exclude": [
     "node_modules",
-    "dist",
-    "**/*.test.ts"
+    "dist"
   ]
 }
