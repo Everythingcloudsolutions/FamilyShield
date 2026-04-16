@@ -95,9 +95,17 @@ EOF
 )
 
   local response=$(cf_api POST "/accounts/$ACCOUNT_ID/cfd_tunnel" "$payload")
-  local tunnel_id=$(echo "$response" | jq -r '.result.id' 2>/dev/null || echo "")
 
-  [ -n "$tunnel_id" ] || die "Failed to create tunnel: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
+  # Debug: print full response if creation fails
+  if ! echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
+    echo "API Response:" >&2
+    echo "$response" | jq '.' >&2
+    die "Tunnel creation failed"
+  fi
+
+  local tunnel_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null)
+
+  [ -n "$tunnel_id" ] || die "Failed to extract tunnel ID from response"
 
   success "Tunnel created: $tunnel_id"
   echo "$tunnel_id"
@@ -108,6 +116,11 @@ configure_tunnel_routes() {
   local environment=$2
 
   header "Configuring Tunnel Routes: $tunnel_id"
+
+  # Validate tunnel_id
+  if [ -z "$tunnel_id" ] || [ "$tunnel_id" = "null" ]; then
+    die "Invalid tunnel_id: $tunnel_id (must be a valid UUID)"
+  fi
 
   # Tunnel ingress configuration
   local payload=$(cat <<'CONFIG_EOF'
@@ -160,12 +173,16 @@ CONFIG_EOF
 
   local response=$(cf_api PUT "/accounts/$ACCOUNT_ID/cfd_tunnel/$tunnel_id/configurations" "$payload")
 
-  if echo "$response" | jq -e '.success == true or .errors == null' >/dev/null 2>&1; then
+  # Check if configuration succeeded
+  if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
     success "Tunnel routes configured"
     return 0
-  else
-    info "⚠️  Tunnel configuration response: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
   fi
+
+  # If not success, print response for debugging and continue (non-fatal warning)
+  info "⚠️  Tunnel configuration warning:"
+  echo "$response" | jq '.' >&2
+  info "Continuing despite configuration warning..."
 }
 
 get_tunnel_token() {
@@ -173,12 +190,25 @@ get_tunnel_token() {
 
   header "Getting Tunnel Token: $tunnel_id"
 
+  # Validate tunnel_id is a proper UUID
+  if [ -z "$tunnel_id" ] || [ "$tunnel_id" = "null" ]; then
+    die "Invalid tunnel_id: $tunnel_id (must be a valid UUID)"
+  fi
+
   local response
   response=$(cf_api GET "/accounts/$ACCOUNT_ID/cfd_tunnel/$tunnel_id/token")
+
+  # Debug: print full response if token retrieval fails
+  if ! echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
+    echo "API Response:" >&2
+    echo "$response" | jq '.' >&2
+    die "Failed to get tunnel token"
+  fi
+
   local token
   token=$(echo "$response" | jq -r '.result // empty' 2>/dev/null)
 
-  [ -n "$token" ] || die "Failed to get tunnel token: $(echo "$response" | jq -r '.errors[0].message // .' 2>/dev/null)"
+  [ -n "$token" ] || die "Failed to extract token from response"
 
   success "Tunnel token retrieved"
   echo "$token"
