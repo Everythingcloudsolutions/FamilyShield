@@ -398,36 +398,34 @@ jobs:
 
           echo "🔐 Tightening SSH to admin IP only ($ADMIN_IP)..."
 
-          RAW=$(oci network nsg rule list \
+          RAW=$(oci network nsg-security-rules list \
             --nsg-id "$NSG_ID" \
             --output json 2>/dev/null || echo "")
 
           # Normalize: OCI returns {"data":[...]}; fallback is empty string or bare array
           RULES=$(echo "$RAW" | jq -e 'if type=="object" then (.data // []) else if type=="array" then . else [] end end' 2>/dev/null || echo "[]")
 
-          RULE_COUNT=$(echo "$RULES" | jq '[.[] | select(.direction=="INGRESS" and .source=="0.0.0.0/0")] | length' 2>/dev/null || echo "0")
+          # Collect all 0.0.0.0/0 rule IDs into a JSON array for batch delete
+          BROAD_IDS=$(echo "$RULES" | jq '[.[] | select(.direction=="INGRESS" and .source=="0.0.0.0/0") | .id]' 2>/dev/null || echo "[]")
+          RULE_COUNT=$(echo "$BROAD_IDS" | jq 'length')
           echo "Found $RULE_COUNT broad SSH rule(s) to remove"
 
-          while IFS= read -r RULE_ID; do
-            if [ -n "$RULE_ID" ] && [ "$RULE_ID" != "null" ]; then
-              oci network nsg rule delete \
-                --nsg-rule-id "$RULE_ID" \
-                --force 2>/dev/null || true
-              echo "   Removed: $RULE_ID"
-            fi
-          done < <(echo "$RULES" | jq -r '.[] | select(.direction=="INGRESS" and .source=="0.0.0.0/0") | .id' 2>/dev/null || true)
+          if [ "$RULE_COUNT" -gt 0 ]; then
+            oci network nsg-security-rules delete \
+              --nsg-id "$NSG_ID" \
+              --security-rule-ids "$BROAD_IDS" \
+              --force 2>/dev/null || true
+            echo "   Removed $RULE_COUNT rule(s)"
+          fi
 
           ADMIN_EXISTS=$(echo "$RULES" | jq -r --arg ip "$ADMIN_IP" \
-            '.[] | select(.direction=="INGRESS" and .source==$ip) | .id' 2>/dev/null | head -1 || echo "")
+            '[.[] | select(.direction=="INGRESS" and .source==$ip)] | length' 2>/dev/null || echo "0")
 
-          if [ -z "$ADMIN_EXISTS" ]; then
-            oci network nsg rule create \
+          if [ "$ADMIN_EXISTS" = "0" ]; then
+            oci network nsg-security-rules add \
               --nsg-id "$NSG_ID" \
-              --direction INGRESS \
-              --protocol 6 \
-              --source "$ADMIN_IP" \
-              --source-type CIDR_BLOCK \
-              --tcp-options "destinationPortRange={min:22,max:22}"
+              --security-rules "$(jq -cn --arg ip "$ADMIN_IP" \
+                '[{"direction":"INGRESS","protocol":"6","source":$ip,"sourceType":"CIDR_BLOCK","tcpOptions":{"destinationPortRange":{"min":22,"max":22}}}]')"
             echo "✅ SSH tightened to admin IP only ($ADMIN_IP)"
           else
             echo "✅ Admin IP rule already present — no change needed"
