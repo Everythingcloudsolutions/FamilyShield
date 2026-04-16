@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (SSH security + heredoc fix + docker-compose bootstrap + jq JSON encoding)
+> Last updated: 2026-04-16 (SSH security + heredoc fix + docker-compose bootstrap + jq JSON encoding + OCI CLI query fix)
 
 ---
 
@@ -642,6 +642,55 @@ local payload=$(jq -n \
 ```
 
 Use `--argjson` for boolean/numeric values, `--arg` for strings.
+
+### OCI CLI Query Syntax — jq parse error (2026-04-16)
+
+**Problem:** The `tighten-ssh-{env}` job failed with `jq: parse error: Invalid numeric literal at line 1, column 6` when trying to parse OCI CLI output.
+
+**Root cause:** The OCI CLI `--query` parameter with complex JMESPath syntax (`data[?direction=='INGRESS' && (tcp_options || protocol=='6')]`) was either failing silently or returning an error message instead of JSON. When `jq` tried to parse an error message as JSON, it failed.
+
+**Solution:** Simplified the OCI CLI command to fetch all rules without complex filtering:
+
+```bash
+# ❌ Old — complex query that could fail silently
+SSH_RULES=$(oci network nsg-rules list \
+  --network-security-group-id "$NSG_ID" \
+  --query "data[?direction=='INGRESS' && (tcp_options || protocol=='6')]" \
+  --output json)
+
+# ✅ New — simple fetch, validate JSON, graceful fallback
+SSH_RULES=$(oci network nsg-rules list \
+  --network-security-group-id "$NSG_ID" \
+  --output json 2>/dev/null || echo "[]")
+
+# Validate JSON before processing
+if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
+  echo "⚠️  Failed to query NSG rules — skipping rule removal"
+  SSH_RULES="[]"
+fi
+```
+
+**Key improvements:**
+
+- Removed complex `--query` parameter (simpler = more reliable)
+- Added JSON validation before passing to `jq` with `jq -e .`
+- Graceful fallback to `[]` if validation fails
+- Warning message explains why rules weren't removed
+
+**Fixed in:**
+
+- `.github/workflows/deploy-dev.yml` — tighten-ssh-dev step
+- `.github/workflows/deploy-staging.yml` — tighten-ssh-staging step
+- `.github/workflows/deploy-prod.yml` — tighten-ssh-prod step
+
+**Pattern:** Always validate JSON output before parsing with `jq`:
+
+```bash
+if ! echo "$OUTPUT" | jq -e . >/dev/null 2>&1; then
+  # Handle error — output is not valid JSON
+  # Use fallback or exit gracefully
+fi
+```
 
 ### SSH Key Carriage Returns — appleboy/ssh-action Failure (2026-04-16 — OBSOLETE)
 

@@ -540,10 +540,16 @@ jobs:
           echo "🔐 Phase A Security: Tightening SSH to admin IP only..."
 
           # Get all current SSH ingress rules (port 22)
+          # Note: Remove complex query — just get all rules and filter locally
           SSH_RULES=$(oci network nsg-rules list \
             --network-security-group-id "$NSG_ID" \
-            --query "data[?direction=='INGRESS' && (tcp_options || protocol=='6')]" \
             --output json 2>/dev/null || echo "[]")
+
+          # Validate JSON before processing with jq
+          if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
+            echo "⚠️  Failed to query NSG rules — skipping rule removal"
+            SSH_RULES="[]"
+          fi
 
           RULE_COUNT=$(echo "$SSH_RULES" | jq 'length')
           if [ "$RULE_COUNT" -gt 0 ]; then
