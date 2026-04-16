@@ -101,28 +101,30 @@ jobs:
 
       - name: Verify SSH tunnel reachable
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
         run: |
           SSH_HOST="ssh-dev.everythingcloud.ca"
-          echo "Checking tunnel reachability: $SSH_HOST"
+          echo "Checking SSH tunnel reachability: $SSH_HOST"
 
-          # Try up to 5 times (tunnel may need a moment after infra run)
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+
+          # Try up to 5 times with service token auth
           for attempt in {1..5}; do
-            if cloudflared access ssh --hostname "$SSH_HOST" --url "ssh://$SSH_HOST:22" \
-                --service-token-id "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" \
-                --service-token-secret "${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-                2>&1 | grep -q "connection refused\|connected\|handshake\|tunnel"; then
-              echo "✅ Tunnel is reachable (attempt $attempt)"
+            RESULT=$(ssh -i ~/.ssh/familyshield \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=10 \
+              -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
+              ubuntu@"${SSH_HOST}" echo "tunnel-ok" 2>/dev/null || echo "")
+
+            if [ "$RESULT" = "tunnel-ok" ]; then
+              echo "✅ SSH tunnel is reachable (attempt $attempt)"
               exit 0
             fi
-
-            # Simpler check — cloudflared returns 0 if tunnel is routable
-            timeout 10 cloudflared access ssh \
-              --hostname "$SSH_HOST" \
-              -- echo "tunnel-ok" 2>/dev/null && {
-              echo "✅ Tunnel is reachable"
-              exit 0
-            } || true
 
             echo "   Attempt $attempt/5 — waiting 15s..."
             sleep 15
@@ -205,7 +207,8 @@ jobs:
 
       - name: Sync runtime assets to VM
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           SSH_HOST="ssh-dev.everythingcloud.ca"
 
@@ -215,14 +218,14 @@ jobs:
           scp -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST}" \
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
             /tmp/familyshield-runtime-assets.tgz \
             ubuntu@"${SSH_HOST}":/tmp/familyshield-runtime-assets.tgz
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST}" \
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
             ubuntu@"${SSH_HOST}" \
             "mkdir -p /opt/familyshield && tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
 
@@ -232,14 +235,15 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           SSH_HOST="ssh-dev.everythingcloud.ca"
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST}" \
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
             ubuntu@"${SSH_HOST}" bash -s <<ENDSSH
           set -euo pipefail
           cd /opt/familyshield

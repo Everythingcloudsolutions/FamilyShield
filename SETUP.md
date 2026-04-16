@@ -3,7 +3,7 @@
 > **Who this is for:** Anyone setting up FamilyShield for the first time, including people with no prior Oracle Cloud experience.
 > **Time needed:** About 2 hours the first time.
 > **Cost:** $0 CAD/month — this guide uses Always Free tiers throughout.
-> **Last updated:** 2026-04-14 — Added Step 7 compartment creation to bootstrap
+> **Last updated:** 2026-04-16 — Added Part 3.4 Cloudflare Access Service Token (required for CI tunnel SSH)
 
 ---
 
@@ -261,6 +261,48 @@ FamilyShield requires **three** Cloudflare permissions — do NOT use a template
 7. **Copy the token now** — it is only shown once and cannot be retrieved later
 8. Save it in your text file
 
+### 3.4 Create a Cloudflare Access Service Token
+
+This is a **separate credential** from the API token above. GitHub Actions runners use it to connect to the OCI VM through the Cloudflare Zero Trust layer without browser-based authentication.
+
+> **Why is this different from the API token?**
+> - The **API Token** (Part 3.3) calls the Cloudflare REST API to *create and manage* resources (tunnels, DNS, access apps).
+> - The **Tunnel Token** is what cloudflared uses on the VM to *run* the tunnel.
+> - The **Access Service Token** is what a *client* (CI runner) presents to pass *through* Cloudflare Zero Trust when SSH-ing to `ssh-dev.everythingcloud.ca` or `ssh-prod.everythingcloud.ca`. Without it, the runner hits the Cloudflare Access auth wall (which normally redirects to a browser) and silently fails.
+>
+> These are three completely separate credential types.
+
+#### Step 1 — Create the Service Token
+
+1. Log in to **dash.cloudflare.com** and click **Zero Trust** in the left sidebar
+2. In the Zero Trust sidebar, go to **Access controls → Service credentials → Service Tokens**
+3. Click **Create Service Token**
+4. Fill in:
+   - **Name:** `familyshield-github-actions`
+   - **Service Token Duration:** select **Non-expiring** (easier to maintain; alternatively choose 1 year and calendar a renewal)
+5. Click **Generate token**
+6. You will see a **Client ID** and a **Client Secret** — **copy both values now and save them in your text file**
+
+> Cloudflare displays the Client Secret only once. If you close this page without saving it, you must delete the token and create a new one.
+
+#### Step 2 — Add the Service Token to the SSH Access Application
+
+This step can only be done **after** the first infrastructure deployment (Part 11), because the SSH access applications (`FamilyShield SSH dev`, `FamilyShield SSH prod`) are created automatically during that deployment. Come back here once Part 11 is complete.
+
+1. In Zero Trust, go to **Access controls → Applications**
+2. Find **FamilyShield SSH dev** in the list and click **Edit**
+3. Click the **Policies** tab
+4. Click **Add a policy**
+5. Fill in:
+   - **Policy name:** `CI Access`
+   - **Action:** select **Service Auth** (not "Allow" — using Allow would still prompt for browser login)
+6. Under the **Include** rules section, click **Add include**
+7. From the selector dropdown, choose **Service Token**
+8. In the value field, select **familyshield-github-actions** (the token you just created)
+9. Click **Save policy**
+10. Click **Save application**
+11. Repeat steps 2–10 for **FamilyShield SSH prod** when you set up production
+
 ---
 
 ## Part 4 — Supabase Setup
@@ -465,6 +507,8 @@ Secrets are stored encrypted in GitHub and injected into workflows at deploy tim
 | `CLOUDFLARE_API_TOKEN` | Part 3.3 |
 | `CLOUDFLARE_ZONE_ID` | Part 3.2 |
 | `CLOUDFLARE_ACCOUNT_ID` | Part 3.2 |
+| `CF_ACCESS_CLIENT_ID` | Part 3.4 — Client ID from the Access Service Token |
+| `CF_ACCESS_CLIENT_SECRET` | Part 3.4 — Client Secret from the Access Service Token |
 | `SUPABASE_URL` | Part 4.3 |
 | `SUPABASE_ANON_KEY` | Part 4.3 — use the **Service Role Key**, not the deprecated anon public key |
 | `GROQ_API_KEY` | Part 5.1 |

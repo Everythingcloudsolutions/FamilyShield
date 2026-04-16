@@ -284,40 +284,49 @@ jobs:
              echo '✅ cloudflared started'"
 
   smoke-infra-dev:
-    name: "Smoke test — infra (tunnel SSH reachable)"
+    name: "Smoke test — infra (cloudflared registered)"
     runs-on: ubuntu-latest
-    needs: setup-cloudflare-dev
+    needs: [deploy-infra-dev, setup-cloudflare-dev]
     steps:
-      - name: Install cloudflared
-        run: |
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-            -o /usr/local/bin/cloudflared
-          chmod +x /usr/local/bin/cloudflared
-
-      - name: Verify tunnel SSH reachable
+      - name: Verify cloudflared registered via public IP SSH
         env:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          SSH_HOST: "ssh-dev.everythingcloud.ca"
+          VM_IP: ${{ needs.deploy-infra-dev.outputs.vm_ip }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
 
-          echo "Verifying Cloudflare tunnel SSH: $SSH_HOST"
-          for attempt in {1..18}; do
-            if ssh -i ~/.ssh/familyshield \
+          echo "Verifying cloudflared is running and registered on $VM_IP"
+          for attempt in {1..12}; do
+            LOGS=$(ssh -i ~/.ssh/familyshield \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=10 \
-              -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST}" \
-              ubuntu@"${SSH_HOST}" "echo tunnel-ok" 2>/dev/null | grep -q "tunnel-ok"; then
-              echo "✅ Tunnel SSH reachable (attempt $attempt)"
+              ubuntu@"$VM_IP" \
+              "docker logs familyshield-cloudflared --tail 30 2>&1" 2>/dev/null || echo "")
+
+            if echo "$LOGS" | grep -q "Registered tunnel connection"; then
+              echo "✅ cloudflared registered with Cloudflare (attempt $attempt)"
               exit 0
             fi
-            echo "   Attempt $attempt/18 — tunnel not ready, waiting 10s..."
+
+            STATUS=$(ssh -i ~/.ssh/familyshield \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=10 \
+              ubuntu@"$VM_IP" \
+              "docker inspect familyshield-cloudflared --format '{{.State.Status}}' 2>/dev/null" 2>/dev/null || echo "unknown")
+
+            echo "   Attempt $attempt/12 — container: $STATUS, waiting 10s..."
             sleep 10
           done
-          echo "⚠️  Tunnel SSH not reachable after 3 min — check cloudflared logs on VM"
+          echo "⚠️  cloudflared not registered after 2 min — dumping logs:"
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            ubuntu@"$VM_IP" \
+            "docker logs familyshield-cloudflared --tail 50 2>&1" 2>/dev/null || true
           exit 1
 
   tighten-ssh-dev:

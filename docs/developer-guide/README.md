@@ -107,11 +107,17 @@ Add these repository secrets (values from bootstrap-oci.sh output):
 | `OCI_SSH_PRIVATE_KEY` | `~/.ssh/familyshield` |
 
 ### Cloudflare Secrets
+
 | Secret Name | Where to get it |
 |---|---|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare → Profile → API Tokens → Create token (Zone:DNS:Edit + Tunnel) |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare → Profile → API Tokens → Custom Token with Zone:DNS:Edit + Tunnel:Edit + Access:Edit (see SETUP.md Part 3.3) |
 | `CLOUDFLARE_ZONE_ID` | Cloudflare → everythingcloud.ca → Overview → Zone ID |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare → Profile → Account ID |
+| `CF_ACCESS_CLIENT_ID` | Cloudflare Zero Trust → Access → Service Auth → Service Tokens → `familyshield-github-actions` Client ID (see SETUP.md Part 3.4) |
+| `CF_ACCESS_CLIENT_SECRET` | Same service token — Client Secret (only shown at creation time) |
+
+> **Why two Cloudflare token types?**
+> `CLOUDFLARE_API_TOKEN` manages Cloudflare resources (tunnel creation, DNS, access apps). `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET` are a Cloudflare Access Service Token — used by GitHub Actions runners to authenticate *through* the Cloudflare Zero Trust layer when SSH-ing to the OCI VM via `ssh-dev.everythingcloud.ca` or `ssh-prod.everythingcloud.ca`. Without the service token, the runner hits the Access auth wall and cannot connect.
 
 ### Application Secrets
 | Secret Name | Where to get it |
