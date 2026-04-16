@@ -77,7 +77,8 @@ Job 6: tighten-ssh-{env}  (NEW as of 2026-04-16)
 
 **Date discovered:** 2026-04-14
 **Affected jobs:** All jobs that SSH to the VM
-**Commit that fixed it:** `3dee412`
+**Status:** FIXED
+**Commit that fixed it:** `3dee412` (initial fix), `6d2208a` (comprehensive fix for all SSH actions)
 
 ### What You See
 
