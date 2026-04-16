@@ -74,6 +74,9 @@ create_tunnel() {
   local environment=$1
   local tunnel_secret=$2
 
+  # Strip leading/trailing whitespace (handles carriage returns, newlines, etc.)
+  tunnel_secret=$(echo "$tunnel_secret" | tr -d '[:space:]')
+
   header "Creating Cloudflare Tunnel: familyshield-$environment"
 
   # Check if tunnel already exists
@@ -85,14 +88,12 @@ create_tunnel() {
     return 0
   fi
 
-  # Create tunnel
-  local payload=$(cat <<EOF
-{
-  "name": "familyshield-$environment",
-  "tunnel_secret": "$(echo -n "$tunnel_secret" | base64)"
-}
-EOF
-)
+  # Create tunnel (use jq for safe JSON construction)
+  local tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64)
+  local payload=$(jq -n \
+    --arg name "familyshield-$environment" \
+    --arg secret "$tunnel_secret_b64" \
+    '{name: $name, tunnel_secret: $secret}')
 
   local response=$(cf_api POST "/accounts/$ACCOUNT_ID/cfd_tunnel" "$payload")
 
@@ -255,17 +256,14 @@ create_dns_record() {
     return 0
   fi
 
-  local payload=$(cat <<EOF
-{
-  "type": "CNAME",
-  "name": "$fqdn",
-  "content": "$target",
-  "ttl": 1,
-  "proxied": true,
-  "comment": "FamilyShield Cloudflare Tunnel"
-}
-EOF
-)
+  local payload=$(jq -n \
+    --arg type "CNAME" \
+    --arg name "$fqdn" \
+    --arg content "$target" \
+    --argjson ttl 1 \
+    --argjson proxied true \
+    --arg comment "FamilyShield Cloudflare Tunnel" \
+    '{type: $type, name: $name, content: $content, ttl: $ttl, proxied: $proxied, comment: $comment}')
 
   local response=$(cf_api POST "/zones/$ZONE_ID/dns_records" "$payload")
   local record_id=$(echo "$response" | jq -r '.result.id' 2>/dev/null || echo "")
@@ -315,16 +313,12 @@ create_access_application() {
     return 0
   fi
 
-  local payload=$(cat <<EOF
-{
-    "name": "$app_name",
-    "domain": "$fqdn",
-    "type": "self_hosted",
-    "session_duration": "8h",
-    "tags": ["familyshield", "admin"]
-  }
-EOF
-)
+  local payload=$(jq -n \
+    --arg name "$app_name" \
+    --arg domain "$fqdn" \
+    --arg type "self_hosted" \
+    --arg session_duration "8h" \
+    '{name: $name, domain: $domain, type: $type, session_duration: $session_duration, tags: ["familyshield", "admin"]}')
 
   local response=$(cf_api POST "/zones/$ZONE_ID/access/apps" "$payload")
   local app_id=$(echo "$response" | jq -r '.result.id' 2>/dev/null || echo "")
@@ -351,16 +345,12 @@ create_ssh_access_app() {
     return 0
   fi
 
-  local payload=$(cat <<EOF
-{
-  "name": "$app_name",
-  "domain": "$fqdn",
-  "type": "ssh",
-  "session_duration": "8h",
-  "tags": ["familyshield", "ssh"]
-}
-EOF
-)
+  local payload=$(jq -n \
+    --arg name "$app_name" \
+    --arg domain "$fqdn" \
+    --arg type "ssh" \
+    --arg session_duration "8h" \
+    '{name: $name, domain: $domain, type: $type, session_duration: $session_duration, tags: ["familyshield", "ssh"]}')
 
   local response=$(cf_api POST "/zones/$ZONE_ID/access/apps" "$payload")
   local app_id=$(echo "$response" | jq -r '.result.id' 2>/dev/null || echo "")
@@ -397,6 +387,15 @@ setup_cloudflare() {
   local environment=$1
   local tunnel_secret=$2
   local admin_emails=$3
+
+  # Normalize inputs: strip whitespace that might be from GitHub Actions outputs
+  tunnel_secret=$(echo "$tunnel_secret" | tr -d '[:space:]')
+  environment=$(echo "$environment" | tr -d '[:space:]')
+  admin_emails=$(echo "$admin_emails" | tr -d '[:space:]')
+
+  # Validate required inputs
+  [ -n "$environment" ] || die "environment parameter is empty"
+  [ -n "$tunnel_secret" ] || die "tunnel_secret parameter is empty"
 
   header "CLOUDFLARE SETUP — $environment"
 

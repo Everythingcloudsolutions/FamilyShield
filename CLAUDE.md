@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (SSH security + heredoc fix + docker-compose bootstrap)
+> Last updated: 2026-04-16 (SSH security + heredoc fix + docker-compose bootstrap + jq JSON encoding)
 
 ---
 
@@ -580,6 +580,55 @@ All three workflows (`deploy-{dev,staging,prod}.yml`) now use native SSH instead
 - Any file created during first-boot cloud-init that later deployment steps depend on
 
 The bootstrap pattern (check → render → copy) is idempotent and safe to run multiple times.
+
+### Cloudflare API JSON Encoding — Control Characters Break Payload (2026-04-16)
+
+**Problem:** Cloudflare API rejected tunnel creation with error: `Could not parse input. Json deserialize error: control character (\u0000-\u001F) found while parsing a string at line 4 column 0`
+
+**Root cause — Part 1 (JSON construction):** JSON payloads were being constructed using bash string concatenation and command substitution (`cat <<EOF` with `$(...)` expansions). When variables like `tunnel_secret` contain special characters or when command substitution produces unexpected output, the resulting JSON becomes malformed with unprintable control characters that Cloudflare's parser rejects.
+
+**Root cause — Part 2 (Whitespace in outputs):** When `tunnel_secret` is extracted from GitHub Actions workflow outputs (via `${{ steps.iac.outputs.tunnel_secret }}`), it may include trailing whitespace like carriage returns or newlines. These are control characters that break JSON when the value is embedded without proper escaping. The SSH logic update may have changed how GitHub Actions handles outputs, introducing carriage returns similar to the SSH key issue.
+
+**Solution — Part 1:** Replaced all JSON payload construction in `scripts/cloudflare-api.sh` with `jq -n` + `--arg` / `--argjson` flags. This ensures:
+
+- All variables are safely escaped as JSON values
+- Special characters don't corrupt the payload
+- JSON is guaranteed to be valid before transmission
+
+**Solution — Part 2:** Added defensive whitespace trimming in `create_tunnel()` and `setup_cloudflare()` functions:
+
+```bash
+# Strip leading/trailing whitespace (handles carriage returns, newlines, etc.)
+tunnel_secret=$(echo "$tunnel_secret" | tr -d '[:space:]')
+```
+
+This prevents control characters from GitHub Actions workflow outputs from breaking the JSON payload.
+
+**Fixed in:**
+
+- `scripts/cloudflare-api.sh` line 89-95: `create_tunnel()` now uses `jq -n --arg` + whitespace trimming
+- `scripts/cloudflare-api.sh` setup_cloudflare() function: Added parameter normalization and validation
+- `scripts/cloudflare-api.sh` line 258-268: `create_dns_record()` now uses `jq -n --arg --argjson`
+- `scripts/cloudflare-api.sh` line 318-327: `create_access_application()` now uses `jq -n --arg`
+- `scripts/cloudflare-api.sh` line 354-363: `create_ssh_access_app()` now uses `jq -n --arg`
+
+**Pattern:** Never construct JSON via string concatenation. Always use `jq -n` with variable arguments:
+
+```bash
+# ❌ Wrong — unsafe, breaks on special characters
+local payload=$(cat <<EOF
+{"name": "$name", "value": "$value"}
+EOF
+)
+
+# ✅ Right — safe, handles any special characters
+local payload=$(jq -n \
+  --arg name "$name" \
+  --arg value "$value" \
+  '{name: $name, value: $value}')
+```
+
+Use `--argjson` for boolean/numeric values, `--arg` for strings.
 
 ### SSH Key Carriage Returns — appleboy/ssh-action Failure (2026-04-16 — OBSOLETE)
 
