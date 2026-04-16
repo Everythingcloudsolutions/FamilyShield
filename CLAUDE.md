@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (SSH security redesigned + key carriage return fix)
+> Last updated: 2026-04-16 (SSH security redesigned + heredoc variable expansion fix)
 
 ---
 
@@ -537,6 +537,22 @@ Earlier approach tried dynamic NSG punch/seal: open SSH for runner, deploy, seal
 - No external action dependency — simpler and more reliable
 
 All three workflows (`deploy-{dev,staging,prod}.yml`) now use native SSH instead of the problematic action.
+
+### Heredoc Variable Expansion — Single-Quoted Heredocs Prevent Variable Interpolation (2026-04-16)
+
+**Problem:** SSH deployment steps failed with `bash: line 8: GHCR_TOKEN: unbound variable` when trying to authenticate with GHCR.
+
+**Root cause:** Single-quoted heredocs (`<<'ENDSSH'`) prevent variable expansion on the local shell. Environment variables like `$GHCR_TOKEN` and `$GHCR_USER` arrived at the remote shell as literal strings (`$GHCR_TOKEN`) instead of their values, causing docker login to fail.
+
+**Solution:** Changed heredoc delimiters from `<<'ENDSSH'` (single-quoted) to `<<ENDSSH` (unquoted). This allows the local shell to expand variables before sending the script to the remote shell.
+
+**Fixed in:**
+
+- `deploy-dev.yml` line 224: deploy-app-dev step
+- `deploy-prod.yml` line 197: deploy-app-prod step
+- `deploy-staging.yml`: Already correct (no change needed)
+
+**Pattern:** When using heredocs in GitHub Actions with SSH for remote script execution, use unquoted heredoc delimiters (`<<EOF`) if the remote script needs variable interpolation. The variables expand locally before SSH transmission, ensuring they're available on the remote shell.
 
 ### SSH Key Carriage Returns — appleboy/ssh-action Failure (2026-04-16 — OBSOLETE)
 
