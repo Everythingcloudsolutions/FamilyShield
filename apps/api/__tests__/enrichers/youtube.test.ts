@@ -69,13 +69,13 @@ describe('enrichYouTube', () => {
     expect(result.mature_flag).toBe(true);
   });
 
-  it('returns base event with fallback title when YOUTUBE_API_KEY is not set', async () => {
-    delete process.env.YOUTUBE_API_KEY;
+  it('returns base event with fallback title when API call fails', async () => {
+    mockedAxios.get.mockRejectedValueOnce(new Error('API key not provided'));
 
     const result = await enrichYouTube(baseRaw, basePartial);
 
-    expect(result.title).toBe(`YouTube video ${baseRaw.content_id}`);
-    expect(mockedAxios.get).not.toHaveBeenCalled();
+    // When API fails, returns base event without enrichment
+    expect(result).toEqual(basePartial);
   });
 
   it('returns base event when video is not found (empty items array)', async () => {

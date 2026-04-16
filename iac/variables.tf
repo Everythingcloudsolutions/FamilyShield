@@ -42,6 +42,12 @@ variable "vcn_cidr" {
   default     = "10.0.0.0/16"
 }
 
+variable "admin_ssh_cidrs" {
+  description = "CIDRs allowed permanent SSH access to the VM public IP (admin IPs). During deploy: 0.0.0.0/0 for unrestricted access. After deploy: restricted to admin IPs via tighten-ssh job."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
 # ── Compute ───────────────────────────────────────────────────────────────────
 
 variable "instance_ocpus" {
@@ -81,7 +87,13 @@ variable "supabase_url" {
 }
 
 variable "supabase_anon_key" {
-  description = "Supabase anonymous key (public)"
+  description = "Supabase anonymous (publishable) key — safe for browser/NEXT_PUBLIC_ use"
+  type        = string
+  sensitive   = true
+}
+
+variable "supabase_service_role_key" {
+  description = "Supabase service role key — server-side only, never exposed to browser"
   type        = string
   sensitive   = true
 }

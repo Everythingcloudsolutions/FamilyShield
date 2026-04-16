@@ -154,6 +154,7 @@ jobs:
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
           TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL }}
           TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY }}
+          TF_VAR_supabase_service_role_key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -161,7 +162,7 @@ jobs:
             -var="environment=dev" \
             -var-file="environments/dev/terraform.tfvars" \
             -auto-approve \
-            -no-color
+            -no-color || { echo "❌ tofu destroy failed — check logs above"; exit 1; }
           echo "✅ Dev environment fully destroyed"
           echo "ℹ️  The shared tfstate bucket and compartments (bootstrap) were NOT deleted"
           echo "ℹ️  Re-deploy at any time with: gh workflow run deploy-dev.yml --ref development"

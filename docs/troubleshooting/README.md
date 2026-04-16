@@ -1,6 +1,6 @@
 # FamilyShield — Troubleshooting Guide
 
-> Last updated: 2026-04-15
+> Last updated: 2026-04-16
 > Platform: FamilyShield v1 — OCI ca-toronto-1 (Toronto, Canada)
 
 > **New joiners and infrastructure debuggers:** Start with the companion document:
@@ -1252,6 +1252,71 @@ sudo cat /var/log/cloud-init-output.log | tail -50
 ---
 
 ### GitHub Actions CI/CD Issues
+
+#### deploy-dev SSH via Cloudflare tunnel times out — all attempts fail
+
+**Symptom:** The `deploy-app-dev` or `verify-tunnel` job in `deploy-dev.yml` retries SSH 18 times and fails:
+
+```
+Attempt 1/18 — tunnel not ready, waiting 10s...
+...
+Attempt 18/18 — tunnel not ready, waiting 10s...
+⚠️  Tunnel SSH not reachable after 3 min
+```
+
+**Root cause:** `cloudflared access ssh --hostname ssh-dev.everythingcloud.ca` requires Cloudflare Zero Trust authentication. Without a **service token**, the runner hits the Access auth wall (which normally redirects to a browser) and the connection silently fails.
+
+This is a separate credential from:
+
+- `CLOUDFLARE_API_TOKEN` — manages resources via the Cloudflare REST API
+- The tunnel token — what cloudflared on the VM uses to run the tunnel
+
+A **Cloudflare Access Service Token** (Client ID + Client Secret pair) is what non-interactive clients like GitHub Actions runners use to authenticate through Cloudflare Zero Trust.
+
+**Fix — Step 1: Create the service token**
+
+1. Go to **dash.cloudflare.com → Zero Trust**
+2. In the Zero Trust sidebar: **Access controls → Service credentials → Service Tokens**
+3. Click **Create Service Token**
+4. Fill in:
+   - **Name:** `familyshield-github-actions`
+   - **Service Token Duration:** Non-expiring
+5. Click **Generate token**
+6. Copy the **Client ID** and **Client Secret** — shown only once
+7. Add as GitHub repository secrets (Settings → Secrets and variables → Actions):
+   - `CF_ACCESS_CLIENT_ID` → Client ID
+   - `CF_ACCESS_CLIENT_SECRET` → Client Secret
+
+**Fix — Step 2: Add the service token to the SSH application policy**
+
+1. In Zero Trust: **Access controls → Applications**
+2. Find **FamilyShield SSH dev** → click **Edit**
+3. Click the **Policies** tab → **Add a policy**
+4. Fill in:
+   - **Policy name:** `CI Access`
+   - **Action:** `Service Auth` ← must be "Service Auth", not "Allow" — "Allow" still triggers browser login
+5. Under **Include**, click **Add include** → selector: **Service Token** → value: `familyshield-github-actions`
+6. Click **Save policy** → **Save application**
+7. Re-run the `deploy-dev.yml` workflow
+
+**How to verify from your laptop:**
+
+```bash
+# Requires cloudflared installed locally
+ssh -i ~/.ssh/familyshield \
+  -o StrictHostKeyChecking=no \
+  -o ProxyCommand="cloudflared access ssh \
+    --hostname ssh-dev.everythingcloud.ca \
+    --service-token-id <CF_ACCESS_CLIENT_ID> \
+    --service-token-secret <CF_ACCESS_CLIENT_SECRET>" \
+  ubuntu@ssh-dev.everythingcloud.ca "echo ok"
+```
+
+If this returns `ok`, the service token and policy are correctly configured.
+
+See **SETUP.md Part 3.4** for the full first-time setup walkthrough.
+
+---
 
 #### deploy-cloudflare workflow fails or doesn't run
 

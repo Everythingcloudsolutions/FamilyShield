@@ -47,3 +47,9 @@ variable "cloud_init_script" {
 variable "tags" {
   type = map(string)
 }
+
+variable "nsg_ids" {
+  description = "List of NSG OCIDs to attach to the VM VNIC"
+  type        = list(string)
+  default     = []
+}

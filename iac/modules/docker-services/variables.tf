@@ -11,6 +11,11 @@ variable "supabase_anon_key" {
   sensitive = true
 }
 
+variable "supabase_service_role_key" {
+  type      = string
+  sensitive = true
+}
+
 variable "groq_api_key" {
   type      = string
   sensitive = true

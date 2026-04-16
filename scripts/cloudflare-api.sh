@@ -74,6 +74,9 @@ create_tunnel() {
   local environment=$1
   local tunnel_secret=$2
 
+  # Strip leading/trailing whitespace (handles carriage returns, newlines, etc.)
+  tunnel_secret=$(echo "$tunnel_secret" | tr -d '[:space:]')
+
   header "Creating Cloudflare Tunnel: familyshield-$environment"
 
   # Check if tunnel already exists
@@ -85,19 +88,27 @@ create_tunnel() {
     return 0
   fi
 
-  # Create tunnel
-  local payload=$(cat <<EOF
-{
-  "name": "familyshield-$environment",
-  "tunnel_secret": "$(echo -n "$tunnel_secret" | base64)"
-}
-EOF
-)
+  # Create tunnel (use jq for safe JSON construction)
+  # Use base64 | tr -d '\n' for portability (base64 -w 0 is GNU-only and fails on macOS/BSD)
+  local tunnel_secret_b64
+  tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64 | tr -d '\n')
+  local payload=$(jq -n \
+    --arg name "familyshield-$environment" \
+    --arg secret "$tunnel_secret_b64" \
+    '{name: $name, tunnel_secret: $secret}')
 
   local response=$(cf_api POST "/accounts/$ACCOUNT_ID/cfd_tunnel" "$payload")
-  local tunnel_id=$(echo "$response" | jq -r '.result.id' 2>/dev/null || echo "")
 
-  [ -n "$tunnel_id" ] || die "Failed to create tunnel: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
+  # Debug: print full response if creation fails
+  if ! echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
+    echo "API Response:" >&2
+    echo "$response" | jq '.' >&2
+    die "Tunnel creation failed"
+  fi
+
+  local tunnel_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null)
+
+  [ -n "$tunnel_id" ] || die "Failed to extract tunnel ID from response"
 
   success "Tunnel created: $tunnel_id"
   echo "$tunnel_id"
@@ -108,6 +119,11 @@ configure_tunnel_routes() {
   local environment=$2
 
   header "Configuring Tunnel Routes: $tunnel_id"
+
+  # Validate tunnel_id
+  if [ -z "$tunnel_id" ] || [ "$tunnel_id" = "null" ]; then
+    die "Invalid tunnel_id: $tunnel_id (must be a valid UUID)"
+  fi
 
   # Tunnel ingress configuration
   local payload=$(cat <<'CONFIG_EOF'
@@ -143,6 +159,10 @@ configure_tunnel_routes() {
         "service": "http://localhost:1880"
       },
       {
+        "hostname": "ssh-ENVIRONMENT.everythingcloud.ca",
+        "service": "ssh://localhost:22"
+      },
+      {
         "service": "http_status:404"
       }
     ]
@@ -156,12 +176,16 @@ CONFIG_EOF
 
   local response=$(cf_api PUT "/accounts/$ACCOUNT_ID/cfd_tunnel/$tunnel_id/configurations" "$payload")
 
-  if echo "$response" | jq -e '.success == true or .errors == null' >/dev/null 2>&1; then
+  # Check if configuration succeeded
+  if echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
     success "Tunnel routes configured"
     return 0
-  else
-    info "⚠️  Tunnel configuration response: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
   fi
+
+  # If not success, print response for debugging and continue (non-fatal warning)
+  info "⚠️  Tunnel configuration warning:"
+  echo "$response" | jq '.' >&2
+  info "Continuing despite configuration warning..."
 }
 
 get_tunnel_token() {
@@ -169,12 +193,25 @@ get_tunnel_token() {
 
   header "Getting Tunnel Token: $tunnel_id"
 
+  # Validate tunnel_id is a proper UUID
+  if [ -z "$tunnel_id" ] || [ "$tunnel_id" = "null" ]; then
+    die "Invalid tunnel_id: $tunnel_id (must be a valid UUID)"
+  fi
+
   local response
   response=$(cf_api GET "/accounts/$ACCOUNT_ID/cfd_tunnel/$tunnel_id/token")
+
+  # Debug: print full response if token retrieval fails
+  if ! echo "$response" | jq -e '.success == true' >/dev/null 2>&1; then
+    echo "API Response:" >&2
+    echo "$response" | jq '.' >&2
+    die "Failed to get tunnel token"
+  fi
+
   local token
   token=$(echo "$response" | jq -r '.result // empty' 2>/dev/null)
 
-  [ -n "$token" ] || die "Failed to get tunnel token: $(echo "$response" | jq -r '.errors[0].message // .' 2>/dev/null)"
+  [ -n "$token" ] || die "Failed to extract token from response"
 
   success "Tunnel token retrieved"
   echo "$token"
@@ -221,17 +258,14 @@ create_dns_record() {
     return 0
   fi
 
-  local payload=$(cat <<EOF
-{
-  "type": "CNAME",
-  "name": "$fqdn",
-  "content": "$target",
-  "ttl": 1,
-  "proxied": true,
-  "comment": "FamilyShield Cloudflare Tunnel"
-}
-EOF
-)
+  local payload=$(jq -n \
+    --arg type "CNAME" \
+    --arg name "$fqdn" \
+    --arg content "$target" \
+    --argjson ttl 1 \
+    --argjson proxied true \
+    --arg comment "FamilyShield Cloudflare Tunnel" \
+    '{type: $type, name: $name, content: $content, ttl: $ttl, proxied: $proxied, comment: $comment}')
 
   local response=$(cf_api POST "/zones/$ZONE_ID/dns_records" "$payload")
   local record_id=$(echo "$response" | jq -r '.result.id' 2>/dev/null || echo "")
@@ -273,31 +307,65 @@ create_access_application() {
   header "Creating Access Application: $app_name ($fqdn)"
 
   # Check if already exists
-  local existing=$(cf_api GET "/zones/$ZONE_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
+  local existing=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
 
-  if [ -n "$existing" ]; then
+  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
     info "Access app already exists: $existing"
     echo "$existing"
     return 0
   fi
 
-  local payload=$(cat <<EOF
-{
-    "name": "$app_name",
-    "domain": "$fqdn",
-    "type": "self_hosted",
-    "session_duration": "8h",
-    "tags": ["familyshield", "admin"]
-  }
-EOF
-)
+  local payload=$(jq -n \
+    --arg name "$app_name" \
+    --arg domain "$fqdn" \
+    --arg type "self_hosted" \
+    --arg session_duration "8h" \
+    '{name: $name, domain: $domain, type: $type, session_duration: $session_duration}')
 
-  local response=$(cf_api POST "/zones/$ZONE_ID/access/apps" "$payload")
-  local app_id=$(echo "$response" | jq -r '.result.id' 2>/dev/null || echo "")
+  local response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
 
-  [ -n "$app_id" ] || die "Failed to create access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
+  local app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+
+  [ -n "$app_id" ] && [ "$app_id" != "null" ] || die "Failed to create access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
 
   success "Access application created: $app_name ($app_id)"
+  echo "$app_id"
+}
+
+create_ssh_access_app() {
+  local environment=$1
+  local fqdn="ssh-$environment.$ROOT_DOMAIN"
+  local app_name="FamilyShield SSH $environment"
+
+  header "Creating SSH Access Application: $app_name"
+
+  # Check if already exists
+  local existing=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
+
+  if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+    info "SSH Access app already exists: $existing"
+    echo "$existing"
+    return 0
+  fi
+
+  local payload=$(jq -n \
+    --arg name "$app_name" \
+    --arg domain "$fqdn" \
+    --arg type "self_hosted" \
+    --arg session_duration "8h" \
+    '{name: $name, domain: $domain, type: $type, session_duration: $session_duration}')
+
+  local response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
+
+  # Debug: always print the response so we can diagnose issues
+  echo "DEBUG create_ssh_access_app response:" >&2
+  echo "$response" | jq '.' >&2
+
+  local app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+
+  [ -n "$app_id" ] && [ "$app_id" != "null" ] || die "Failed to create SSH access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
+
+  success "SSH Access app created: $app_name ($app_id)"
   echo "$app_id"
 }
 
@@ -306,11 +374,11 @@ delete_access_application() {
 
   header "Deleting Access Application: $app_name"
 
-  local app_id=$(cf_api GET "/zones/$ZONE_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
+  local app_id=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
 
-  [ -z "$app_id" ] && { info "Access app not found: $app_name"; return 0; }
+  [ -z "$app_id" ] || [ "$app_id" = "null" ] && { info "Access app not found: $app_name"; return 0; }
 
-  local response=$(cf_api DELETE "/zones/$ZONE_ID/access/apps/$app_id" "")
+  local response=$(cf_api DELETE "/accounts/$ACCOUNT_ID/access/apps/$app_id" "")
 
   if echo "$response" | jq -e '.success == false' >/dev/null 2>&1; then
     die "Failed to delete access app: $(echo "$response" | jq -r '.errors[0].message // .' 2>/dev/null)"
@@ -326,7 +394,14 @@ delete_access_application() {
 setup_cloudflare() {
   local environment=$1
   local tunnel_secret=$2
-  local admin_emails=$3
+
+  # Normalize inputs: strip whitespace that might be from GitHub Actions outputs
+  tunnel_secret=$(echo "$tunnel_secret" | tr -d '[:space:]')
+  environment=$(echo "$environment" | tr -d '[:space:]')
+
+  # Validate required inputs
+  [ -n "$environment" ] || die "environment parameter is empty"
+  [ -n "$tunnel_secret" ] || die "tunnel_secret parameter is empty"
 
   header "CLOUDFLARE SETUP — $environment"
 
@@ -344,7 +419,7 @@ setup_cloudflare() {
   tunnel_token=$(get_tunnel_token "$tunnel_id")
 
   # 4. Create DNS records
-  create_dns_record "ssh.familyshield-$environment" "$tunnel_id"
+  create_dns_record "ssh-$environment" "$tunnel_id"
   create_dns_record "familyshield-$environment" "$tunnel_id"
   create_dns_record "api-$environment" "$tunnel_id"
   create_dns_record "adguard-$environment" "$tunnel_id"
@@ -362,6 +437,8 @@ setup_cloudflare() {
     "FamilyShield Grafana $environment" \
     "grafana-$environment.$ROOT_DOMAIN"
 
+  create_ssh_access_app "$environment"
+
   # 6. Output for workflow
   echo "TUNNEL_ID=$tunnel_id" >> "$GITHUB_OUTPUT" 2>/dev/null || true
   echo "TUNNEL_TOKEN=$tunnel_token" >> "$GITHUB_OUTPUT" 2>/dev/null || true
@@ -370,8 +447,8 @@ setup_cloudflare() {
   echo ""
   echo "Tunnel ID:    $tunnel_id"
   echo "Tunnel Token: $(echo "$tunnel_token" | cut -c1-20)..."
-  echo "DNS Records:  7 CNAME records created"
-  echo "Access Apps:  AdGuard + Grafana (Zero Trust)"
+  echo "DNS Records:  8 CNAME records created"
+  echo "Access Apps:  AdGuard + Grafana + SSH (Zero Trust)"
   echo ""
   echo "Routes configured for:"
   echo "  - familyshield-$environment.everythingcloud.ca → Portal (port 3000)"
@@ -381,6 +458,7 @@ setup_cloudflare() {
   echo "  - vpn.familyshield-$environment.everythingcloud.ca → Headscale (port 8080)"
   echo "  - grafana-$environment.everythingcloud.ca → Grafana (port 3000)"
   echo "  - nodered-$environment.everythingcloud.ca → Node-RED (port 1880)"
+  echo "  - ssh-$environment.everythingcloud.ca → SSH (port 22)"
 }
 
 cleanup_cloudflare() {
@@ -400,6 +478,7 @@ cleanup_cloudflare() {
   fi
 
   # Delete DNS records
+  delete_dns_record "ssh-$environment"
   delete_dns_record "familyshield-$environment"
   delete_dns_record "api-$environment"
   delete_dns_record "adguard-$environment"
@@ -411,6 +490,7 @@ cleanup_cloudflare() {
   # Delete Access Applications
   delete_access_application "FamilyShield AdGuard $environment"
   delete_access_application "FamilyShield Grafana $environment"
+  delete_access_application "FamilyShield SSH $environment"
 
   header "✅ CLOUDFLARE CLEANUP COMPLETE"
 }
@@ -434,11 +514,11 @@ main() {
 Usage: $0 <command> [args]
 
 Commands:
-  setup <environment> <tunnel_secret> <admin_emails>    Create Cloudflare resources
+  setup <environment> <tunnel_secret>                    Create Cloudflare resources
   cleanup <environment>                                  Delete Cloudflare resources
 
 Examples:
-  $0 setup dev "my-secret-12345" "admin@example.com"
+  $0 setup dev "my-secret-12345"
   $0 cleanup dev
 
 Environment variables required:

@@ -26,11 +26,11 @@
 
 | Tool | Purpose | Install |
 |---|---|---|
-| VS Code | Editor + Remote SSH | https://code.visualstudio.com |
-| Git | Version control | https://git-scm.com |
+| VS Code | Editor + Remote SSH | <https://code.visualstudio.com> |
+| Git | Version control | <https://git-scm.com> |
 | GitHub CLI | Repo management | `winget install GitHub.cli` |
 | OCI CLI | Cloud operations | `pip install oci-cli` |
-| OpenTofu | IaC | https://opentofu.org/docs/intro/install |
+| OpenTofu | IaC | <https://opentofu.org/docs/intro/install> |
 | OpenSSH | SSH key management | Built into Windows 10+ |
 
 ### OCI Account
@@ -96,6 +96,7 @@ Go to: `https://github.com/Everythingcloudsolutions/FamilyShield/settings/secret
 Add these repository secrets (values from bootstrap-oci.sh output):
 
 ### OCI Secrets
+
 | Secret Name | Where to get it |
 |---|---|
 | `OCI_TENANCY_OCID` | OCI Console → Profile → Tenancy |
@@ -107,13 +108,20 @@ Add these repository secrets (values from bootstrap-oci.sh output):
 | `OCI_SSH_PRIVATE_KEY` | `~/.ssh/familyshield` |
 
 ### Cloudflare Secrets
+
 | Secret Name | Where to get it |
 |---|---|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare → Profile → API Tokens → Create token (Zone:DNS:Edit + Tunnel) |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare → Profile → API Tokens → Custom Token with Zone:DNS:Edit + Tunnel:Edit + Access:Edit (see SETUP.md Part 3.3) |
 | `CLOUDFLARE_ZONE_ID` | Cloudflare → everythingcloud.ca → Overview → Zone ID |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare → Profile → Account ID |
+| `CF_ACCESS_CLIENT_ID` | Cloudflare Zero Trust → Access → Service Auth → Service Tokens → `familyshield-github-actions` Client ID (see SETUP.md Part 3.4) |
+| `CF_ACCESS_CLIENT_SECRET` | Same service token — Client Secret (only shown at creation time) |
+
+> **Why two Cloudflare token types?**
+> `CLOUDFLARE_API_TOKEN` manages Cloudflare resources (tunnel creation, DNS, access apps). `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET` are a Cloudflare Access Service Token — used by GitHub Actions runners to authenticate *through* the Cloudflare Zero Trust layer when SSH-ing to the OCI VM via `ssh-dev.everythingcloud.ca` or `ssh-prod.everythingcloud.ca`. Without the service token, the runner hits the Access auth wall and cannot connect.
 
 ### Application Secrets
+
 | Secret Name | Where to get it |
 |---|---|
 | `ADGUARD_ADMIN_PASSWORD` | Choose a strong password |
@@ -144,6 +152,7 @@ Host familyshield-staging
 ```
 
 Then in VS Code:
+
 1. Install extension: `Remote - SSH` (ms-vscode-remote.remote-ssh)
 2. `Ctrl+Shift+P` → `Remote-SSH: Connect to Host`
 3. Select `familyshield-dev`
@@ -194,6 +203,7 @@ main branch
 ```
 
 ### Branch naming convention
+
 - `feat/` — new feature
 - `fix/` — bug fix
 - `iac/` — infrastructure changes only
@@ -201,6 +211,7 @@ main branch
 - `chore/` — maintenance
 
 ### Commit message format (Conventional Commits)
+
 ```
 feat(portal): add rule builder drag-and-drop
 fix(mitm): handle cert pinning gracefully
@@ -246,21 +257,25 @@ See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wi
 ## 9. Working with Each Service
 
 ### AdGuard Home
+
 - Admin UI: `https://adguard-dev.everythingcloud.ca` (Cloudflare Zero Trust auth)
 - Config: `/opt/familyshield/data/adguard/`
-- API docs: http://localhost:3080/swagger
+- API docs: <http://localhost:3080/swagger>
 
 ### mitmproxy
+
 - Web UI: `https://mitm-dev.everythingcloud.ca`
 - Addon code: `apps/mitm/familyshield_addon.py`
 - Logs: `docker logs familyshield-mitmproxy`
 
 ### API / Enrichment Worker
+
 - Health: `https://familyshield-dev.everythingcloud.ca/api/health`
 - Code: `apps/api/src/`
 - Env vars: see `iac/templates/docker-compose.yaml.tpl`
 
 ### Portal (Next.js)
+
 - URL: `https://familyshield-dev.everythingcloud.ca`
 - Code: `apps/portal/`
 - Local dev: `cd apps/portal && npm run dev` (requires tunnel or SSH port-forward)

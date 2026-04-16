@@ -3,7 +3,7 @@
 > **Who this is for:** Anyone setting up FamilyShield for the first time, including people with no prior Oracle Cloud experience.
 > **Time needed:** About 2 hours the first time.
 > **Cost:** $0 CAD/month — this guide uses Always Free tiers throughout.
-> **Last updated:** 2026-04-14 — Added Step 7 compartment creation to bootstrap
+> **Last updated:** 2026-04-16 — Added Part 3.4 Cloudflare Access Service Token (required for CI tunnel SSH)
 
 ---
 
@@ -261,6 +261,49 @@ FamilyShield requires **three** Cloudflare permissions — do NOT use a template
 7. **Copy the token now** — it is only shown once and cannot be retrieved later
 8. Save it in your text file
 
+### 3.4 Create a Cloudflare Access Service Token
+
+This is a **separate credential** from the API token above. GitHub Actions runners use it to connect to the OCI VM through the Cloudflare Zero Trust layer without browser-based authentication.
+
+> **Why is this different from the API token?**
+>
+> - The **API Token** (Part 3.3) calls the Cloudflare REST API to *create and manage* resources (tunnels, DNS, access apps).
+> - The **Tunnel Token** is what cloudflared uses on the VM to *run* the tunnel.
+> - The **Access Service Token** is what a *client* (CI runner) presents to pass *through* Cloudflare Zero Trust when SSH-ing to `ssh-dev.everythingcloud.ca` or `ssh-prod.everythingcloud.ca`. Without it, the runner hits the Cloudflare Access auth wall (which normally redirects to a browser) and silently fails.
+>
+> These are three completely separate credential types.
+
+#### Step 1 — Create the Service Token
+
+1. Log in to **dash.cloudflare.com** and click **Zero Trust** in the left sidebar
+2. In the Zero Trust sidebar, go to **Access controls → Service credentials → Service Tokens**
+3. Click **Create Service Token**
+4. Fill in:
+   - **Name:** `familyshield-github-actions`
+   - **Service Token Duration:** select **Non-expiring** (easier to maintain; alternatively choose 1 year and calendar a renewal)
+5. Click **Generate token**
+6. You will see a **Client ID** and a **Client Secret** — **copy both values now and save them in your text file**
+
+> Cloudflare displays the Client Secret only once. If you close this page without saving it, you must delete the token and create a new one.
+
+#### Step 2 — Add the Service Token to the SSH Access Application
+
+This step can only be done **after** the first infrastructure deployment (Part 11), because the SSH access applications (`FamilyShield SSH dev`, `FamilyShield SSH prod`) are created automatically during that deployment. Come back here once Part 11 is complete.
+
+1. In Zero Trust, go to **Access controls → Applications**
+2. Find **FamilyShield SSH dev** in the list and click **Edit**
+3. Click the **Policies** tab
+4. Click **Add a policy**
+5. Fill in:
+   - **Policy name:** `CI Access`
+   - **Action:** select **Service Auth** (not "Allow" — using Allow would still prompt for browser login)
+6. Under the **Include** rules section, click **Add include**
+7. From the selector dropdown, choose **Service Token**
+8. In the value field, select **familyshield-github-actions** (the token you just created)
+9. Click **Save policy**
+10. Click **Save application**
+11. Repeat steps 2–10 for **FamilyShield SSH prod** when you set up production
+
 ---
 
 ## Part 4 — Supabase Setup
@@ -465,6 +508,8 @@ Secrets are stored encrypted in GitHub and injected into workflows at deploy tim
 | `CLOUDFLARE_API_TOKEN` | Part 3.3 |
 | `CLOUDFLARE_ZONE_ID` | Part 3.2 |
 | `CLOUDFLARE_ACCOUNT_ID` | Part 3.2 |
+| `CF_ACCESS_CLIENT_ID` | Part 3.4 — Client ID from the Access Service Token |
+| `CF_ACCESS_CLIENT_SECRET` | Part 3.4 — Client Secret from the Access Service Token |
 | `SUPABASE_URL` | Part 4.3 |
 | `SUPABASE_ANON_KEY` | Part 4.3 — use the **Service Role Key**, not the deprecated anon public key |
 | `GROQ_API_KEY` | Part 5.1 |
@@ -606,18 +651,21 @@ You now have everything set up. This step will create the actual cloud server (V
 4. **Total time:** 10–20 minutes for all three stages
 
 5. Open the **deploy-dev** workflow details and scroll to the bottom — you'll see:
+
    ```
    Outputs
    vm_public_ip = 152.67.xxx.xxx
    ```
+
    - **Copy this IP address** — you'll use it in Part 12
 
 > **What if deploy-cloudflare fails?**
-> 
+>
 > The Cloudflare workflow can fail if:
+>
 > - The API token is missing scopes (must have Zone DNS + Tunnel + Access scopes — see Part 3.3)
 > - The Cloudflare account ID or zone ID is wrong
-> 
+>
 > To fix: Verify your credentials in GitHub Secrets, then re-run the `deploy-cloudflare` workflow manually from the Actions tab. No need to re-run the IaC stage.
 
 **That's it!** Your cloud infrastructure is now live, Cloudflare is configured, and your apps are running.
@@ -759,25 +807,30 @@ All admin URLs are behind Cloudflare Zero Trust — you log in with your Cloudfl
 
 **GitHub Actions tofu apply fails with "404-NotAuthorizedOrNotFound" on compartments or policies**
 → The GitHub Actions IAM user has no tenancy-level permissions. Re-run:
+
   ```bash
   bash scripts/bootstrap-oci.sh
   ```
+
   The script will skip existing resources (user, API key, bucket) and create only the missing
   bootstrap IAM policy (Step 6).
   
   **Manual alternative** in OCI Console: Identity → Policies → Create Policy (root compartment):
-  - Name: `familyshield-bootstrap-policy`
-  - Statement: `Allow any-user to manage all-resources in tenancy where request.user.id = '<OCI_USER_OCID>'`
-  - Replace `<OCI_USER_OCID>` with your OCI_USER_OCID GitHub secret value
+
+- Name: `familyshield-bootstrap-policy`
+- Statement: `Allow any-user to manage all-resources in tenancy where request.user.id = '<OCI_USER_OCID>'`
+- Replace `<OCI_USER_OCID>` with your OCI_USER_OCID GitHub secret value
 
 **Cloudflare Authentication error (10000) during deploy-cloudflare workflow**
 → The API token is missing required scopes. The "Edit zone DNS" template is NOT sufficient.
   FamilyShield requires **three** permissions:
-  - **Zone → DNS → Edit** (for CNAME records)
-  - **Account → Cloudflare Tunnel → Edit** (for Argo Tunnel creation)
-  - **Account → Access: Apps and Policies → Edit** (for Zero Trust access applications)
+
+- **Zone → DNS → Edit** (for CNAME records)
+- **Account → Cloudflare Tunnel → Edit** (for Argo Tunnel creation)
+- **Account → Access: Apps and Policies → Edit** (for Zero Trust access applications)
 
   **To fix:**
+
   1. Log in to **dash.cloudflare.com/profile/api-tokens**
   2. Delete the old `familyshield-deploy` token
   3. Create a new **Custom Token** (NOT a template) with all three permissions
@@ -789,22 +842,26 @@ All admin URLs are behind Cloudflare Zero Trust — you log in with your Cloudfl
 
 **deploy-cloudflare workflow never starts after deploy-dev succeeds**
 → The workflow is triggered automatically only if the previous `deploy-dev` workflow completes successfully. Check:
+
   1. Go to Actions tab → find the `deploy-dev` workflow that just ran
   2. Click on it and scroll to bottom — look for green ✅ checkmark
   3. If it shows ✅, wait 1–2 minutes and refresh the Actions page
   4. The `deploy-cloudflare` workflow should appear
   
   If `deploy-dev` failed or was cancelled, manually trigger `deploy-cloudflare`:
+
   1. Go to Actions tab → search for `Deploy → Cloudflare` workflow
   2. Click **Run workflow** → select environment (dev) and action (setup)
   3. Click **Run workflow**
 
 **deploy-cloudflare fails with "Tunnel not found" or "DNS record already exists"**
 → This can happen if:
-  - A previous deployment partially completed
-  - Manual resources exist in Cloudflare
+
+- A previous deployment partially completed
+- Manual resources exist in Cloudflare
   
   **To fix:** Run the cleanup workflow first, then re-run deploy-cloudflare:
+
   1. Go to Actions tab → search for `Cleanup → Cloudflare` workflow
   2. Click **Run workflow** → select environment (dev)
   3. Click **Run workflow** — wait for it to complete
@@ -812,6 +869,7 @@ All admin URLs are behind Cloudflare Zero Trust — you log in with your Cloudfl
 
 **Portal or admin URLs not accessible after deployment**
 → Verify that the Cloudflare tunnel is running:
+
   1. Log in to **dash.cloudflare.com**
   2. Go to Tunnels (in the left sidebar under Access)
   3. Look for `familyshield-dev` tunnel

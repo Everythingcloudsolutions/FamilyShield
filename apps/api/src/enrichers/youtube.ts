@@ -38,32 +38,37 @@ export async function enrichYouTube(
     return { ...base, title: `YouTube video ${raw.content_id}`, category: "video" } as EnrichedEvent;
   }
 
-  const response = await axios.get(`${YT_API_BASE}/videos`, {
-    params: {
-      id: raw.content_id,
-      part: "snippet,contentDetails,contentRating,status",
-      key: YT_API_KEY,
-    },
-    timeout: 5000,
-  });
+  try {
+    const response = await axios.get(`${YT_API_BASE}/videos`, {
+      params: {
+        id: raw.content_id,
+        part: "snippet,contentDetails,contentRating,status",
+        key: YT_API_KEY,
+      },
+      timeout: 5000,
+    });
 
-  const item = response.data?.items?.[0];
-  if (!item) {
+    const item = response.data?.items?.[0];
+    if (!item) {
+      return base as EnrichedEvent;
+    }
+
+    const snippet = item.snippet ?? {};
+    const contentRating = item.contentRating ?? {};
+    const categoryId = snippet.categoryId ?? "24";
+
+    return {
+      ...base,
+      title:         snippet.title,
+      description:   (snippet.description ?? "").slice(0, 500),
+      category:      CATEGORY_MAP[categoryId] ?? "Entertainment",
+      channel_name:  snippet.channelTitle,
+      age_restricted: contentRating.ytRating === "ytAgeRestricted",
+      mature_flag:   contentRating.ytRating === "ytAgeRestricted",
+      thumbnail_url: snippet.thumbnails?.medium?.url,
+    } as EnrichedEvent;
+  } catch (error: any) {
+    console.warn(`YouTube API error: ${error?.message} — returning base event`);
     return base as EnrichedEvent;
   }
-
-  const snippet = item.snippet ?? {};
-  const contentRating = item.contentRating ?? {};
-  const categoryId = snippet.categoryId ?? "24";
-
-  return {
-    ...base,
-    title:         snippet.title,
-    description:   (snippet.description ?? "").slice(0, 500),
-    category:      CATEGORY_MAP[categoryId] ?? "Entertainment",
-    channel_name:  snippet.channelTitle,
-    age_restricted: contentRating.ytRating === "ytAgeRestricted",
-    mature_flag:   contentRating.ytRating === "ytAgeRestricted",
-    thumbnail_url: snippet.thumbnails?.medium?.url,
-  } as EnrichedEvent;
 }

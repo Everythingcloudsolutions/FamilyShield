@@ -1,5 +1,5 @@
-/** @type {import('ts-jest').JestConfigWithTsJest} */
-module.exports = {
+/** @type {import('jest').Config} */
+const config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src', '<rootDir>/__tests__'],
@@ -17,4 +17,18 @@ module.exports = {
       functions: 70,
     },
   },
+  transform: {
+    '^.+\\.tsx?$': [
+      'ts-jest',
+      {
+        tsconfig: {
+          types: ['jest', 'node'],
+        },
+      },
+    ],
+  },
+  setupFiles: ['<rootDir>/__tests__/setupEnv.ts'],
+  setupFilesAfterEnv: ['<rootDir>/__tests__/setup.ts'],
 };
+
+module.exports = config;

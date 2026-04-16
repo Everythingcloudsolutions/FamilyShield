@@ -1,361 +1,303 @@
 # .github/workflows/deploy-prod.yml
-# PRODUCTION DEPLOYMENT — Triggered on merge to main
-# Go to: Actions → Deploy → Prod → Review deployments → Approve
-# Requires environment approval in GitHub UI
-name: Deploy → Prod
+# Triggered on apps/** changes to main branch, or manually,
+# or after infra-prod.yml completes (to restart containers on fresh VM).
+#
+# Uses Cloudflare Tunnel SSH exclusively — never touches public IP.
+# Works regardless of NSG state (0.0.0.0/0 or tightened to admin IP).
+#
+# Images are PROMOTED from the dev SHA tag — not rebuilt.
+# Mixed commit handling: wait-for-infra polls for infra-prod.yml if both trigger.
+name: "FamilyShield — Deploy Prod"
 
 on:
   push:
     branches: [main]
+    paths:
+      - "apps/**"
+      - "scripts/**"
+      - ".github/workflows/deploy-prod.yml"
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type DEPLOY to confirm production deployment"
+        description: "Type DEPLOY to confirm production app deployment"
         required: true
+  workflow_run:
+    workflows: ["FamilyShield — Infrastructure Prod"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
   id-token: write
   packages: write
+  actions: read # Needed to poll workflow runs for wait-for-infra
 
-# Queue prod deploys — never cancel a production deployment mid-flight
+# Never cancel prod deploys mid-flight
 concurrency:
   group: deploy-prod
   cancel-in-progress: false
 
 jobs:
   safety-check:
-    name: Pre-deploy safety check
+    name: "Pre-deploy safety check"
     runs-on: ubuntu-latest
+    # Only check on direct push/dispatch — workflow_run doesn't need this gate
+    if: github.event_name != 'workflow_run'
     steps:
       - name: Confirm production deploy intent
         run: |
-          # Push to main is automatic (branch protection is the gate)
-          # workflow_dispatch requires explicit "DEPLOY" confirmation
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.confirm }}" != "DEPLOY" ]; then
             echo "❌ You must type DEPLOY in the confirm field to proceed"
             exit 1
           fi
-          echo "✅ Production deploy confirmed by ${{ github.actor }} (trigger: ${{ github.event_name }})"
+          echo "✅ Production app deploy confirmed by ${{ github.actor }} (trigger: ${{ github.event_name }})"
 
-      - name: Check staging passed
-        run: |
-          echo "Verify staging is green before deploying to prod"
-          echo "Deploying SHA: ${{ github.event.inputs.sha || github.sha }}"
-
-  # GitHub Environment 'prod' requires manual approval in Settings → Environments
-  deploy-infra-prod:
-    name: "IaC → prod"
+  wait-for-infra:
+    name: "Wait for infra-prod if running"
     runs-on: ubuntu-latest
-    timeout-minutes: 360
     needs: safety-check
+    if: |
+      always() &&
+      (needs.safety-check.result == 'success' || needs.safety-check.result == 'skipped') &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    outputs:
+      infra_conclusion: ${{ steps.poll.outputs.infra_conclusion }}
+    steps:
+      - name: Poll for running infra-prod workflow
+        id: poll
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          echo "Checking if infra-prod.yml is running for this commit..."
+          MAX_WAIT=600
+          INTERVAL=30
+          ELAPSED=0
+
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            RUN=$(gh api \
+              "repos/$REPO/actions/workflows/infra-prod.yml/runs?branch=main&per_page=5" \
+              --jq '.workflow_runs[] | select(.head_sha == env.SHA) | {status: .status, conclusion: .conclusion}' \
+              2>/dev/null | head -1 || echo "")
+
+            if [ -z "$RUN" ]; then
+              echo "ℹ️  No infra-prod run found for this commit — proceeding"
+              echo "infra_conclusion=none" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            STATUS=$(echo "$RUN" | jq -r '.status')
+            CONCLUSION=$(echo "$RUN" | jq -r '.conclusion')
+
+            if [ "$STATUS" = "completed" ]; then
+              echo "✅ infra-prod completed with conclusion: $CONCLUSION"
+              echo "infra_conclusion=$CONCLUSION" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            echo "   infra-prod status: $STATUS — waiting ${INTERVAL}s... (${ELAPSED}s elapsed)"
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
+          echo "⚠️  Timed out waiting for infra-prod — proceeding anyway"
+          echo "infra_conclusion=timeout" >> $GITHUB_OUTPUT
+
+  verify-tunnel:
+    name: "Verify Cloudflare tunnel SSH is reachable"
+    runs-on: ubuntu-latest
+    needs: wait-for-infra
+    if: |
+      always() &&
+      (needs.wait-for-infra.result == 'success' || needs.wait-for-infra.result == 'skipped')
+    steps:
+      - name: Install cloudflared
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o /usr/local/bin/cloudflared
+          chmod +x /usr/local/bin/cloudflared
+          cloudflared version
+
+      - name: Portal health check via tunnel
+        run: |
+          PORTAL_URL="https://familyshield.everythingcloud.ca"
+          for attempt in {1..6}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$PORTAL_URL" || echo "000")
+            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
+              echo "✅ Tunnel active — portal reachable (HTTP $STATUS)"
+              exit 0
+            fi
+            echo "   Attempt $attempt/6 — HTTP $STATUS, waiting 10s..."
+            sleep 10
+          done
+          echo "❌ Tunnel not reachable — run infra-prod.yml first, then retry"
+          exit 1
+
+  promote-images:
+    name: "Promote images dev → prod"
+    runs-on: ubuntu-latest
+    needs: verify-tunnel
     environment:
       name: prod
-      url: https://familyshield.everythingcloud.ca
-    outputs:
-      vm_ip: ${{ steps.outputs.outputs.vm_ip }}
-
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.sha || github.ref }}
-
-      - name: OCI Login
-        uses: ./.github/actions/oci-login
-        with:
-          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
-
-      - name: Validate IAM Permissions
-        shell: bash
-        env:
-          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
-        run: bash scripts/validate-iam-permissions.sh
-
-      - name: Plan prod (review before apply)
-        uses: ./.github/actions/tofu-plan
-        with:
-          environment: prod
-          working_directory: iac
-          var_file: environments/prod/terraform.tfvars
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          TF_VAR_oci_namespace: ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_ssh_public_key: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
-          TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD_PROD }}
-          TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_PROD }}
-          TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_PROD }}
-          TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-
-      - name: Apply IaC → prod
-        uses: ./.github/actions/tofu-apply
-        with:
-          environment: prod
-          working_directory: iac
-          var_file: environments/prod/terraform.tfvars
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          TF_VAR_oci_namespace: ${{ secrets.OCI_NAMESPACE }}
-          TF_VAR_ssh_public_key: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
-          TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD_PROD }}
-          TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_PROD }}
-          TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_PROD }}
-          TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
-          TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-
-      - name: Capture IaC outputs
-        id: outputs
-        working-directory: iac
-        continue-on-error: true
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        run: |
-          VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
-          echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
-          if [ -n "$VM_IP" ]; then
-            echo "Prod VM IP: $VM_IP"
-          fi
-          echo ""
-          echo "📦 Infrastructure outputs:"
-          tofu output -no-color
-
-  deploy-app-prod:
-    name: "App deploy → prod VM (via public IP)"
-    runs-on: ubuntu-latest
-    needs: deploy-infra-prod
-    if: needs.deploy-infra-prod.outputs.vm_ip != ''
-    steps:
-      - name: Log in to GHCR
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote images to prod
+      - name: Promote images to prod tag
         run: |
-          DEPLOY_SHA="${{ github.event.inputs.sha || github.sha }}"
+          DEPLOY_SHA="${{ github.sha }}"
           for app in api portal; do
-            docker pull ghcr.io/everythingcloudsolutions/familyshield-$app:$DEPLOY_SHA || \
+            # Prefer SHA-tagged image (built from same commit); fall back to :dev
+            docker pull ghcr.io/everythingcloudsolutions/familyshield-$app:$DEPLOY_SHA 2>/dev/null || \
               docker pull ghcr.io/everythingcloudsolutions/familyshield-$app:dev
+
             docker tag ghcr.io/everythingcloudsolutions/familyshield-$app:$DEPLOY_SHA \
                        ghcr.io/everythingcloudsolutions/familyshield-$app:prod 2>/dev/null || \
               docker tag ghcr.io/everythingcloudsolutions/familyshield-$app:dev \
                          ghcr.io/everythingcloudsolutions/familyshield-$app:prod
+
             docker tag ghcr.io/everythingcloudsolutions/familyshield-$app:prod \
                        ghcr.io/everythingcloudsolutions/familyshield-$app:latest
+
             docker push ghcr.io/everythingcloudsolutions/familyshield-$app:prod
             docker push ghcr.io/everythingcloudsolutions/familyshield-$app:latest
+            echo "✅ Promoted $app to :prod and :latest"
           done
 
-      - name: Deploy containers to prod VM
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ needs.deploy-infra-prod.outputs.vm_ip }}
-          username: ubuntu
-          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          script: |
-            # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
-            sudo cloud-init status --wait 2>/dev/null || true
-            cd /opt/familyshield
-            docker compose pull api portal
-            docker compose up -d --no-deps --remove-orphans api portal
-            sleep 10
-            docker compose ps
-            echo "✅ Prod app deploy complete"
-
-  setup-cloudflare-prod:
-    name: "Cloudflare setup — prod"
+  deploy-app-prod:
+    name: "App deploy → prod VM (via Cloudflare tunnel SSH)"
     runs-on: ubuntu-latest
-    needs: deploy-app-prod
-    if: needs.deploy-app-prod.result != 'skipped'
+    needs: promote-images
     environment:
       name: prod
-
+      url: https://familyshield.everythingcloud.ca
     steps:
       - uses: actions/checkout@v4
 
-      - name: OCI Login
-        uses: ./.github/actions/oci-login
-        with:
-          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
-          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
-          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
-
-      - name: Setup OpenTofu
-        uses: opentofu/setup-opentofu@v1
-        with:
-          tofu_version: "1.6.x"
-
-      - name: Get tunnel secret and VM IP from IaC state
-        id: iac
-        working-directory: iac
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+      - name: Install cloudflared
         run: |
-          tofu init \
-            -backend-config="bucket=familyshield-tfstate" \
-            -backend-config="key=prod/terraform.tfstate" \
-            -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
-            -backend-config="region=ca-toronto-1" \
-            -backend-config="skip_region_validation=true" \
-            -backend-config="skip_credentials_validation=true" \
-            -backend-config="skip_metadata_api_check=true" \
-            -backend-config="use_path_style=true" \
-            -reconfigure
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o /usr/local/bin/cloudflared
+          chmod +x /usr/local/bin/cloudflared
 
-          TUNNEL_SECRET=$(tofu output -raw tunnel_secret 2>/dev/null || echo "")
-          if [ -z "$TUNNEL_SECRET" ]; then
-            echo "❌ Failed to get tunnel_secret — IaC not yet provisioned"
-            exit 1
-          fi
-          echo "::add-mask::$TUNNEL_SECRET"
-          echo "tunnel_secret=$TUNNEL_SECRET" >> $GITHUB_OUTPUT
-
-          VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
-          echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
-          echo "VM IP: $VM_IP"
-
-      - name: Setup Cloudflare (tunnel, DNS, access)
-        id: cloudflare
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-        run: |
-          bash scripts/cloudflare-api.sh setup prod \
-            "${{ steps.iac.outputs.tunnel_secret }}" \
-            "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
-
-      - name: Bootstrap VM — copy docker-compose.yml if missing
-        shell: bash
+      - name: Prepare SSH key
         env:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          VM_IP: ${{ steps.iac.outputs.vm_ip }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL_PROD }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_PROD }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
-          if [ -z "$VM_IP" ]; then
-            echo "❌ VM IP not available — cannot bootstrap VM"
-            exit 1
-          fi
-          # Check if docker-compose.yml already exists on VM
-          COMPOSE_EXISTS=$(ssh -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" \
-            "test -f /opt/familyshield/docker-compose.yml && echo yes || echo no" 2>/dev/null || echo "no")
-          if [ "$COMPOSE_EXISTS" = "yes" ]; then
-            echo "✅ docker-compose.yml already exists on VM — skipping bootstrap"
-            exit 0
-          fi
-          echo "⚠️  docker-compose.yml missing — rendering template and copying to VM"
-          # Render Terraform template vars; un-escape $${...} → ${...} for Docker runtime env vars
-          sed \
-            -e "s|\${environment}|prod|g" \
-            -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_prod|g" \
-            -e "s|\${supabase_url}|$SUPABASE_URL|g" \
-            -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
-            -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
-            -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
-            -e 's|\$\${|\${|g' \
-            iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
+
+      - name: Sync runtime assets to VM
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          SSH_HOST="ssh-prod.everythingcloud.ca"
+
+          tar -czf /tmp/familyshield-runtime-assets.tgz apps/mitm apps/platform-config
+
           scp -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            /tmp/docker-compose.yml \
-            ubuntu@"$VM_IP":/opt/familyshield/docker-compose.yml
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
+            /tmp/familyshield-runtime-assets.tgz \
+            ubuntu@"${SSH_HOST}":/tmp/familyshield-runtime-assets.tgz
+
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" \
-            "cd /opt/familyshield && \
-             docker compose pull api portal 2>&1 | tail -5 && \
-             docker compose up -d --remove-orphans api portal && \
-             sleep 10 && \
-             docker compose ps && \
-             echo '✅ VM bootstrap complete — api and portal started'"
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
+            ubuntu@"${SSH_HOST}" \
+            "mkdir -p /opt/familyshield && tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
 
-      - name: Write tunnel token to VM and activate cloudflared
-        shell: bash
+          echo "✅ Runtime assets synced"
+
+      - name: Deploy containers via tunnel SSH
         env:
-          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          VM_IP: ${{ steps.iac.outputs.vm_ip }}
-          TUNNEL_TOKEN: ${{ steps.cloudflare.outputs.TUNNEL_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
-          echo "::add-mask::$TUNNEL_TOKEN"
-          if [ -z "$VM_IP" ]; then
-            echo "❌ VM IP not available — cannot write tunnel token"
-            exit 1
-          fi
-          if [ -z "$TUNNEL_TOKEN" ]; then
-            echo "❌ Tunnel token not available from cloudflare-api.sh output"
-            exit 1
-          fi
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
-          chmod 600 ~/.ssh/familyshield
+          SSH_HOST="ssh-prod.everythingcloud.ca"
 
-          # Start cloudflared via docker run (no docker-compose.yml dependency).
-          # --network host lets cloudflared reach services on localhost:3000/3001.
-          # The token downloads ingress config from Cloudflare's control plane.
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" \
-            "docker stop familyshield-cloudflared 2>/dev/null || true; \
-             docker rm familyshield-cloudflared 2>/dev/null || true; \
-             docker run -d \
-               --name familyshield-cloudflared \
-               --restart unless-stopped \
-               --network host \
-               cloudflare/cloudflared:latest \
-               tunnel --no-autoupdate run --token $TUNNEL_TOKEN && \
-             sleep 3 && \
-             docker inspect familyshield-cloudflared --format '{{.State.Status}}' && \
-             echo '✅ cloudflared started with tunnel token'"
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
+            ubuntu@"${SSH_HOST}" bash -s <<ENDSSH
+          set -euo pipefail
+          cd /opt/familyshield
 
-      - name: Wait for tunnel to become active (up to 3 min)
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+          docker compose pull api portal
+          docker compose up -d --no-deps --remove-orphans api portal
+
+          sleep 10
+          docker compose ps
+          echo "✅ Prod deploy complete"
+          ENDSSH
+
+  smoke-test:
+    name: "Smoke test — prod"
+    runs-on: ubuntu-latest
+    needs: deploy-app-prod
+    steps:
+      - name: Check portal and API health
+        env:
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID_PROD }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET_PROD }}
         run: |
-          PORTAL_URL="https://familyshield.everythingcloud.ca"
-          echo "Waiting for Cloudflare tunnel to route traffic: $PORTAL_URL"
-          for attempt in {1..18}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$PORTAL_URL" || echo "000")
+          BASE_URL="https://familyshield.everythingcloud.ca"
+
+          CF_HEADERS=()
+          if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
+            CF_HEADERS=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
+          fi
+
+          echo "Checking portal..."
+          PASSED=false
+          for i in {1..10}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$BASE_URL" || echo "000")
             if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
-              echo "✅ Tunnel active — portal reachable (HTTP $STATUS, attempt $attempt)"
-              exit 0
+              echo "✅ Production portal healthy (HTTP $STATUS)"
+              PASSED=true
+              break
+            elif [[ "$STATUS" =~ ^5 ]]; then
+              echo "❌ Server error $STATUS"
+              exit 1
             fi
-            echo "   Attempt $attempt/18 — HTTP $STATUS, waiting 10s..."
-            sleep 10
+            echo "Attempt $i: $STATUS — waiting 30s..."
+            sleep 30
           done
-          echo "⚠️  Tunnel HTTP not confirmed after 3 min — smoke test will re-verify"
+
+          if [ "$PASSED" = "false" ]; then
+            echo "❌ Production portal not responding after 10 attempts (last: $STATUS)"
+            exit 1
+          fi
+
+          echo "Checking API health..."
+          API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$BASE_URL/api/health" || echo "000")
+          if [[ "$API_STATUS" =~ ^(200|403)$ ]]; then
+            echo "✅ API reachable (HTTP $API_STATUS)"
+          else
+            echo "❌ API health check failed (HTTP $API_STATUS)"
+            exit 1
+          fi
+
+          echo "✅ Production smoke tests passed"
 
   create-release:
     name: "Create GitHub Release"
     runs-on: ubuntu-latest
-    needs: setup-cloudflare-prod
+    needs: smoke-test
     permissions:
       contents: write
     steps:
@@ -369,42 +311,9 @@ jobs:
           body: |
             ## Production Deployment
 
-            - **SHA:** ${{ github.event.inputs.sha || github.sha }}
+            - **SHA:** ${{ github.sha }}
             - **Deployed by:** ${{ github.actor }}
-            - **Date:** ${{ github.event.head_commit.timestamp }}
             - **Environment:** prod (ca-toronto-1)
             - **URL:** https://familyshield.everythingcloud.ca
           draft: false
           prerelease: false
-
-  prod-smoke-test:
-    name: "Smoke test — prod"
-    runs-on: ubuntu-latest
-    needs: setup-cloudflare-prod
-    steps:
-      - name: Verify prod is healthy
-        env:
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID_PROD }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET_PROD }}
-        run: |
-          BASE_URL="https://familyshield.everythingcloud.ca"
-          CF_HEADERS=()
-          if [ -n "$CF_ACCESS_CLIENT_ID" ] && [ -n "$CF_ACCESS_CLIENT_SECRET" ]; then
-            CF_HEADERS=(-H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET")
-          fi
-          PASSED=false
-          for i in {1..10}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$BASE_URL" || echo "000")
-            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
-              echo "✅ Production portal healthy (HTTP $STATUS)"
-              PASSED=true
-              break
-            elif [[ "$STATUS" =~ ^5 ]]; then
-              echo "❌ Server error $STATUS — failing immediately"
-              exit 1
-            fi
-            echo "Attempt $i: $STATUS — waiting 30s..."
-            sleep 30
-          done
-          $PASSED || { echo "❌ Production portal not responding after 10 attempts (last: $STATUS)"; exit 1; }
-          echo "✅ Production smoke test passed"

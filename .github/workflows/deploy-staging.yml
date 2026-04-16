@@ -27,6 +27,7 @@ jobs:
       url: https://familyshield-staging.everythingcloud.ca
     outputs:
       vm_ip: ${{ steps.outputs.outputs.vm_ip }}
+      nsg_vm_id: ${{ steps.outputs.outputs.nsg_vm_id }}
 
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +62,7 @@ jobs:
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
           TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_STAGING }}
           TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          TF_VAR_supabase_service_role_key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -74,6 +76,10 @@ jobs:
         run: |
           VM_IP=$(tofu output -raw vm_public_ip 2>/dev/null || echo "")
           echo "vm_ip=$VM_IP" >> $GITHUB_OUTPUT
+
+          NSG_ID=$(tofu output -raw nsg_vm_id 2>/dev/null || echo "")
+          echo "nsg_vm_id=$NSG_ID" >> $GITHUB_OUTPUT
+
           if [ -n "$VM_IP" ]; then
             echo "Staging VM IP: $VM_IP"
           fi
@@ -112,32 +118,119 @@ jobs:
     runs-on: ubuntu-latest
     needs: [deploy-infra-staging, promote-images]
     if: needs.deploy-infra-staging.outputs.vm_ip != ''
+    environment:
+      name: staging
     steps:
-      - name: Deploy containers to staging VM
-        uses: appleboy/ssh-action@v1
+      - uses: actions/checkout@v4
+
+      - name: OCI Login
+        uses: ./.github/actions/oci-login
+        with:
+          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+
+      - name: Sync VM docker-compose.yml from template
+        shell: bash
         env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          VM_IP: ${{ needs.deploy-infra-staging.outputs.vm_ip }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL_STAGING }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+          if [ -z "$VM_IP" ]; then
+            echo "❌ VM IP not available — cannot bootstrap VM"
+            exit 1
+          fi
+          echo "Syncing docker-compose.yml from template"
+          # Render Terraform template vars; un-escape $${...} → ${...} for Docker runtime env vars
+          sed \
+            -e "s|\${environment}|staging|g" \
+            -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_staging|g" \
+            -e "s|\${supabase_url}|$SUPABASE_URL|g" \
+            -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
+            -e "s|\${supabase_service_role_key}|$SUPABASE_SERVICE_ROLE_KEY|g" \
+            -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
+            -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
+            -e 's|\$\${|\${|g' \
+            iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
+          scp -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            /tmp/docker-compose.yml \
+            ubuntu@"$VM_IP":/opt/familyshield/docker-compose.yml
+          echo "✅ docker-compose.yml synced to VM"
+
+      - name: Sync runtime assets (config + mitm addon)
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          VM_IP: ${{ needs.deploy-infra-staging.outputs.vm_ip }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+          tar -czf /tmp/familyshield-runtime-assets.tgz apps/mitm apps/platform-config
+          scp -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            /tmp/familyshield-runtime-assets.tgz \
+            ubuntu@"$VM_IP":/tmp/familyshield-runtime-assets.tgz
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=20 \
+            ubuntu@"$VM_IP" \
+            "mkdir -p /opt/familyshield && tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
+
+      - name: Deploy containers to staging VM
+        env:
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          VM_IP: ${{ needs.deploy-infra-staging.outputs.vm_ip }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
-        with:
-          host: ${{ needs.deploy-infra-staging.outputs.vm_ip }}
-          username: ubuntu
-          key: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-          envs: GHCR_TOKEN,GHCR_USER
-          script: |
-            # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
-            sudo cloud-init status --wait 2>/dev/null || true
-            cd /opt/familyshield
-            # Authenticate with GHCR to pull private images
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            # Ensure Redis is running before API starts (API crashes if Redis unreachable)
-            docker compose up -d redis
-            sleep 5
-            # Pull and restart API + portal
-            docker compose pull api portal
-            docker compose up -d --remove-orphans api portal
-            sleep 10
-            docker compose ps
-            echo "✅ Staging app deploy complete"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Write SSH key to file (strip carriage returns)
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+
+          # SSH to VM and deploy
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            ubuntu@"$VM_IP" bash -s <<ENDSSH
+          set -euo pipefail
+
+          cd /opt/familyshield
+
+          # Authenticate with GHCR to pull private images
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          # Ensure Redis is running before API starts (API crashes if Redis unreachable)
+          docker compose up -d redis
+          sleep 5
+
+          # Pull and restart API + portal
+          docker compose pull api portal
+          docker compose up -d --remove-orphans api portal
+
+          sleep 10
+          docker compose ps
+          echo "✅ Staging app deploy complete"
+          ENDSSH
 
   setup-cloudflare-staging:
     name: "Cloudflare setup — staging"
@@ -202,8 +295,7 @@ jobs:
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
         run: |
           bash scripts/cloudflare-api.sh setup staging \
-            "${{ steps.iac.outputs.tunnel_secret }}" \
-            "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+            "${{ steps.iac.outputs.tunnel_secret }}"
 
       - name: Bootstrap VM — copy docker-compose.yml if missing
         shell: bash
@@ -212,6 +304,7 @@ jobs:
           VM_IP: ${{ steps.iac.outputs.vm_ip }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL_STAGING }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -242,6 +335,7 @@ jobs:
             -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_staging|g" \
             -e "s|\${supabase_url}|$SUPABASE_URL|g" \
             -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
+            -e "s|\${supabase_service_role_key}|$SUPABASE_SERVICE_ROLE_KEY|g" \
             -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
             -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
             -e 's|\$\${|\${|g' \
@@ -323,6 +417,27 @@ jobs:
           done
           echo "⚠️  Tunnel HTTP not confirmed after 3 min — integration tests will re-verify"
 
+      - name: Verify SSH via Cloudflare Tunnel (Phase B)
+        id: tunnel_ssh
+        continue-on-error: true
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TUNNEL_ID: ${{ steps.cloudflare.outputs.TUNNEL_ID }}
+        shell: bash
+        run: |
+          SSH_HOST="ssh-staging.everythingcloud.ca"
+          echo "### 🔐 SSH Access via Cloudflare Tunnel" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tunnel SSH is now configured at \`$SSH_HOST\`." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Connect via Cloudflare Tunnel:**" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" >> $GITHUB_STEP_SUMMARY
+          echo "ssh -o ProxyCommand='cloudflared access ssh --hostname $SSH_HOST' ubuntu@$SSH_HOST" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Fallback (admin IP only):** Contact administrator for SSH access to public IP" >> $GITHUB_STEP_SUMMARY
+
   integration-tests:
     name: "Integration tests — staging"
     runs-on: ubuntu-latest
@@ -390,13 +505,87 @@ jobs:
           $PASSED || { echo "❌ Staging not reachable after 10 attempts (last: $STATUS)"; exit 1; }
           echo "✅ Staging smoke test passed"
 
+  tighten-ssh-staging:
+    name: "Tighten SSH security → admin IP only"
+    runs-on: ubuntu-latest
+    needs: [deploy-infra-staging, smoke-test]
+    if: needs.deploy-infra-staging.outputs.vm_ip != ''
+    environment:
+      name: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: OCI Login
+        uses: ./.github/actions/oci-login
+        with:
+          oci_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          oci_user_ocid: ${{ secrets.OCI_USER_OCID }}
+          oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
+          oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
+
+      - name: Restrict SSH to admin IP only
+        env:
+          NSG_ID: ${{ needs.deploy-infra-staging.outputs.nsg_vm_id }}
+          ADMIN_IP: "173.33.214.49/32"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "$NSG_ID" ]; then
+            echo "⚠️  NSG_ID not available — SSH remains open"
+            exit 0
+          fi
+
+          echo "🔐 Phase A Security: Tightening SSH to admin IP only..."
+
+          # Get all current SSH ingress rules (port 22)
+          # Correct OCI CLI command: oci network nsg rule list
+          RAW=$(oci network nsg rule list \
+            --nsg-id "$NSG_ID" \
+            --output json 2>/dev/null || echo "")
+
+          # Normalize: OCI returns {"data":[...]}; fallback is empty string or bare array
+          SSH_RULES=$(echo "$RAW" | jq -e 'if type=="object" then (.data // []) else if type=="array" then . else [] end end' 2>/dev/null || echo "[]")
+
+          RULE_COUNT=$(echo "$SSH_RULES" | jq '[.[] | select(.direction=="INGRESS" and .source=="0.0.0.0/0")] | length' 2>/dev/null || echo "0")
+          if [ "$RULE_COUNT" -gt 0 ]; then
+            echo "Found $RULE_COUNT broad SSH rule(s) — removing old rules..."
+            while IFS= read -r RULE_ID; do
+              if [ -n "$RULE_ID" ] && [ "$RULE_ID" != "null" ]; then
+                oci network nsg rule delete \
+                  --nsg-rule-id "$RULE_ID" \
+                  --force 2>/dev/null || true
+                echo "   Removed: $RULE_ID"
+              fi
+            done < <(echo "$SSH_RULES" | jq -r '.[] | select(.direction=="INGRESS" and .source=="0.0.0.0/0") | .id' 2>/dev/null || true)
+          fi
+
+          # Check if admin IP rule already exists before adding
+          ADMIN_EXISTS=$(echo "$SSH_RULES" | jq -r --arg ip "$ADMIN_IP" \
+            '.[] | select(.direction=="INGRESS" and .source==$ip) | .id' 2>/dev/null | head -1 || echo "")
+
+          if [ -z "$ADMIN_EXISTS" ]; then
+            # Add restricted SSH rule for admin IP only
+            echo "Adding SSH rule for $ADMIN_IP..."
+            oci network nsg rule create \
+              --nsg-id "$NSG_ID" \
+              --direction INGRESS \
+              --protocol 6 \
+              --source "$ADMIN_IP" \
+              --source-type CIDR_BLOCK \
+              --tcp-options "destinationPortRange={min:22,max:22}" || true
+            echo "✅ SSH tightened to admin IP only ($ADMIN_IP)"
+          else
+            echo "✅ Admin IP rule already present — no change needed"
+          fi
+
   # ── Auto-teardown ────────────────────────────────────────────────────────
   # Runs ALWAYS after testing (pass or fail) — staging is ephemeral.
   # Publishes test summary → destroys OCI + Cloudflare → deletes qa branch.
   auto-teardown:
     name: "Publish results + teardown staging (always)"
     runs-on: ubuntu-latest
-    needs: [smoke-test, integration-tests]
+    needs: [smoke-test, integration-tests, tighten-ssh-staging]
     if: always()
     environment:
       name: staging
@@ -504,6 +693,7 @@ jobs:
           TF_VAR_adguard_admin_password: ${{ secrets.ADGUARD_ADMIN_PASSWORD }}
           TF_VAR_supabase_url: ${{ secrets.SUPABASE_URL_STAGING }}
           TF_VAR_supabase_anon_key: ${{ secrets.SUPABASE_ANON_KEY_STAGING }}
+          TF_VAR_supabase_service_role_key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -511,7 +701,7 @@ jobs:
             -var="environment=staging" \
             -var-file="environments/staging/terraform.tfvars" \
             -auto-approve \
-            -no-color
+            -no-color || { echo "❌ tofu destroy failed — check logs above"; exit 1; }
           echo "✅ Staging OCI infrastructure destroyed (Always Free quota released)"
 
       - name: Delete qa branch

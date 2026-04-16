@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-15 (deployment pipeline fully documented — all 8 blockers resolved)
+> Last updated: 2026-04-16 (workflow split: infra-dev/prod separate from deploy-dev/prod; CF tunnel SSH for app deploys)
 
 ---
 
@@ -238,38 +238,71 @@ FamilyShield/
 
 ### Deployment Flow
 
-Each environment follows the same 6-job pipeline (env = dev | staging | prod):
+**Split pipeline architecture (2026-04-16):** IaC and app deployment are separate workflows, triggered by different path changes.
+
+#### Infra workflows (triggered by `iac/**` changes)
 
 ```
-deploy-infra-{env}          IaC only (OCI VM, network, storage)
-       ↓
-build-and-push / promote-images   Docker images → GHCR
-       ↓
-deploy-app-{env}            SSH to VM via public IP → docker compose up
-       ↓
-setup-cloudflare-{env}      Cloudflare tunnel + DNS + write token to VM → restart cloudflared
-       ↓
-integration-tests (staging) / smoke-test (dev + prod)
+infra-dev.yml (development branch)    infra-prod.yml (main branch)
+       ↓                                      ↓
+  tofu apply                           safety-check → tofu plan → tofu apply
+       ↓                                      ↓
+  setup-cloudflare-{env}               setup-cloudflare-prod
+  (SSH via public IP)                  (SSH via public IP)
+       ↓                                      ↓
+  smoke-infra-{env}                    smoke-infra-prod
+  (tunnel reachable check)             (tunnel reachable check)
+       ↓                                      ↓
+  tighten-ssh-{env}                    tighten-ssh-prod → create-release
+  (admin IP only)                      (admin IP only)
 ```
 
-**Trigger by branch:**
+#### App workflows (triggered by `apps/**` changes)
 
-| Branch | Workflow | Behaviour |
-|---|---|---|
-| `development` | `deploy-dev.yml` | Auto — runs on every push |
-| `qa` | `deploy-staging.yml` | Auto — create qa from development to trigger |
-| `main` | `deploy-prod.yml` | Auto — GitHub Environment `prod` requires manual approval |
-| Any PR | `pr-check.yml` | Lint + `tofu plan` comment |
+```
+deploy-dev.yml (development branch)   deploy-prod.yml (main branch)
+       ↓                                      ↓
+  wait-for-infra                        safety-check → wait-for-infra
+  (poll if infra-dev also running)      (poll if infra-prod also running)
+       ↓                                      ↓
+  verify-tunnel                         verify-tunnel
+  (pre-check CF tunnel reachable)       (pre-check CF tunnel reachable)
+       ↓                                      ↓
+  build-and-push (arm64 to GHCR)        promote-images (dev SHA → prod tag)
+       ↓                                      ↓
+  deploy-app-dev                        deploy-app-prod
+  (SSH via CF tunnel)                   (SSH via CF tunnel)
+       ↓                                      ↓
+  smoke-test                            smoke-test → create-release
+```
+
+**SSH model:**
+- **Infra workflows:** public IP SSH (NSG wide-open during deploy, tightened after). Admin must open NSG before running infra refresh when NSG is already tightened.
+- **App workflows:** Cloudflare tunnel SSH exclusively (`ssh-dev.everythingcloud.ca` / `ssh-prod.everythingcloud.ca`). Works regardless of NSG state.
+
+**Mixed commit handling (iac/ + apps/ changed in same push):**
+
+Both infra and app workflows trigger simultaneously. The `wait-for-infra` job in deploy-dev/prod polls the GitHub API and waits up to 10 minutes for the corresponding infra workflow to finish before proceeding.
+
+**Trigger summary:**
+
+| Branch | Paths | Workflow | Notes |
+|---|---|---|---|
+| `development` | `iac/**` | `infra-dev.yml` | Auto — IaC only |
+| `development` | `apps/**`, `scripts/**` | `deploy-dev.yml` | Auto — app only via CF tunnel |
+| `main` | `iac/**` | `infra-prod.yml` | Auto — IaC only, safety check |
+| `main` | `apps/**`, `scripts/**` | `deploy-prod.yml` | Auto — app only via CF tunnel |
+| `qa` | any | `deploy-staging.yml` | Auto — combined (ephemeral) |
+| Any PR | any | `pr-check.yml` | lint-iac + lint-apps + plan + security |
 
 **Cloudflare Tunnel Token Delivery (critical pattern):**
 
-IaC renders `docker-compose.yaml` with a placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real Cloudflare tunnel token is not known at `tofu apply` time. The `setup-cloudflare-{env}` job:
-1. Creates/verifies tunnel via `scripts/cloudflare-api.sh setup {env}` (gets real token from Cloudflare API)
-2. SSHes to the VM via **public IP** and writes `docker-compose.override.yaml` with the real `TUNNEL_TOKEN`
-3. Restarts cloudflared — the tunnel goes from INACTIVE → ACTIVE in the Cloudflare dashboard
-4. Waits up to 3 minutes for the portal URL to become reachable over HTTP
+IaC renders `docker-compose.yaml` with a placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real Cloudflare tunnel token is not known at `tofu apply` time. The `setup-cloudflare-{env}` job in the **infra workflow**:
 
-Docker Compose automatically merges `docker-compose.override.yaml` over `docker-compose.yaml`, so the override persists across `docker compose up` restarts.
+1. Creates/verifies tunnel via `scripts/cloudflare-api.sh setup {env}` (gets real token from Cloudflare API)
+2. SSHes to the VM via **public IP** and bootstraps docker-compose.yml if missing
+3. Starts cloudflared via `docker run --network host --token $TUNNEL_TOKEN`
+4. Waits up to 3 minutes for the portal URL to become reachable over HTTP
 
 **Cleanup:**
 
@@ -461,6 +494,27 @@ gh pr create --base main --head development
 8. Review final PR, check `tofu plan` for prod infrastructure changes
 9. Merge to `main` → `deploy-prod.yml` triggers with approval gate in GitHub UI
 
+---
+
+## Repository Structure Rules (Non-Negotiable)
+
+The canonical structure is defined in `README.md`. Every file and folder must live in its correct location. **Never scatter files at the repo root or outside their designated top-level folder.**
+
+| Content Type | Correct Location | Examples |
+|---|---|---|
+| Application code, configs, Dockerfiles | `apps/` | `apps/api/`, `apps/portal/`, `apps/mitm/`, `apps/platform-config/` |
+| Infrastructure as Code | `iac/` | modules, tfvars, templates |
+| Documentation, plans, analysis | `docs/` | architecture, guides, troubleshooting, deployment-operations |
+| Bootstrap and utility scripts | `scripts/` | `bootstrap-oci.sh`, `cloudflare-api.sh` |
+| CI/CD pipelines and reusable actions | `.github/` | workflows, actions |
+
+**Banned at repo root:** planning docs, analysis files, config folders, binaries, rendered templates, or any file that belongs in a subdirectory. Only these files belong at root: `README.md`, `CLAUDE.md`, `SETUP.md`, `LICENSE`, `.env.example`, `FamilyShield.code-workspace`, `.gitignore`.
+
+**Service runtime configs** (grafana, nodered, ntfy, etc.) → `apps/platform-config/`  
+**Planning and analysis documents** → `docs/` (e.g., `docs/deployment-operations/`, `docs/architecture/`)  
+**Never create `config/`, `data/`, `build/`, `dist/` at repo root.**
+
+When asked to create or move any file, check its type against this table first. If it doesn't belong at root, put it in the right folder without asking.
 
 ---
 
@@ -469,6 +523,10 @@ gh pr create --base main --head development
 - **TypeScript:** strict mode, no `any`, Zod for runtime validation
 - **Python:** black formatter, flake8 lint, type hints required, docstrings on all classes
 - **Terraform/OpenTofu:** `tofu fmt` before commit, tflint clean, all resources tagged
+- **Authentication:** no admin, dashboard, device, alert, or internal operations without explicit authn/authz design
+- **Database access:** browser clients must use publishable/anonymous keys only; privileged keys are server-side only
+- **Supabase:** enable RLS on every app table, default deny, then add least-privilege policies
+- **Network exposure:** no new public endpoints for admin/internal services unless explicitly protected and documented
 - **Commits:** Conventional Commits (`feat:`, `fix:`, `iac:`, `docs:`, `chore:`)
 - **PRs:**
   - Create on feature/fix branch
@@ -477,6 +535,120 @@ gh pr create --base main --head development
   - After testing in dev, create separate PR: `development` → `main`
 - **Secrets:** never in code, always via environment variables or GitHub Secrets
 - **Tests:** new feature = new tests, no merge without tests passing
+
+---
+
+## Security Baseline (Mandatory)
+
+These rules are non-optional. Claude Code and developers must follow them for every change.
+
+### 1. Secrets and Credentials
+
+- Never place live secrets, API keys, private keys, tunnel tokens, JWTs, or customer data in git, docs, screenshots, examples, tests, or workflow logs.
+- `NEXT_PUBLIC_*` variables must contain only values that are safe to expose to browsers.
+- Supabase `service_role` keys must never be used in browser code, `NEXT_PUBLIC_*` vars, or client bundles.
+- Treat all infrastructure secrets as sensitive even if a provider labels them "anon", "public", or "non-secret".
+- Never write sensitive values to `GITHUB_OUTPUT`, job summaries, PR comments, Terraform outputs, or console logs unless masked and strictly required.
+- Examples in docs must use placeholders only, never realistic credential-shaped values.
+
+### 2. Authentication and Authorization
+
+- The portal must not expose alerts, devices, content events, or administrative actions without authenticated user context.
+- Cloudflare Access is not a substitute for application authorization on sensitive data paths.
+- Every write operation must have an explicit authorization rule.
+- Internal/admin services such as AdGuard, Grafana, Node-RED, mitmproxy UI, SSH, and similar management surfaces must be protected by Zero Trust or equivalent access control before exposure.
+- Do not add unauthenticated management endpoints, debug routes, or convenience backdoors.
+
+### 3. Supabase and Data Protection
+
+- All application tables must have Row Level Security enabled before they are used by portal or API features.
+- Start with deny-by-default policies and add only the minimum required read/write access.
+- Privileged database operations belong in trusted server-side code only.
+- Device metadata, child activity, alerts, and risk scores are privacy-sensitive and must be treated as protected data.
+- Do not assume a table is safe because access currently happens behind a tunnel.
+
+### 4. Infrastructure and Network Exposure
+
+- Do not introduce persistent `0.0.0.0/0` access for SSH, admin UIs, APIs, or data stores.
+- Temporary broad access for CI/CD is allowed only when there is an automated tighten/cleanup step and the workflow clearly documents the fallback risk.
+- Host key verification should be enabled wherever practical; disabling it requires a documented justification.
+- Prefer outbound-only connectivity patterns, Zero Trust access, and least-exposed service topology.
+- New public DNS routes must be reviewed as a security decision, not just a deployment step.
+
+### 5. CI/CD and Automation
+
+- Minimize secret scope per job and per environment.
+- Do not pass secrets through unnecessary intermediate files, outputs, or summaries.
+- Workflow logs must remain safe to share with collaborators.
+- Deployment automation must fail safely: if hardening or cleanup does not run, this must be visible and actionable.
+- Avoid long-lived credentials when a safer alternative exists; if long-lived credentials are still required, document why and constrain their permissions.
+
+### 6. Public Repository Readiness
+
+- Before making any part of the repo public, confirm:
+  - no live secrets or secret-shaped historical artifacts are present
+  - no browser path depends on privileged credentials
+  - no sensitive service is publicly routable without proper access control
+  - RLS/policies exist for all user-facing data tables
+  - docs do not instruct unsafe secret usage
+- Public-readiness is a separate review gate and must not be assumed from successful deployment alone.
+
+---
+
+## Security Hardening Plan
+
+This is the minimum hardening sequence Claude Code should recommend and preserve.
+
+### Phase A — Immediate
+
+1. Replace any use of Supabase `service_role` keys in values named or treated as browser-safe credentials.
+2. Add application authentication to the portal before exposing real device or alert data.
+3. Enable RLS and create explicit policies for `content_events`, `alerts`, and `devices`.
+4. Restrict public/tunneled routes so only intended services are exposed.
+5. Stop writing sensitive tunnel or infrastructure values to reusable workflow outputs unless masked and unavoidable.
+
+### Phase B — Short Term
+
+1. Remove or reduce reliance on `StrictHostKeyChecking=no` where possible.
+2. Separate public app traffic from admin traffic with distinct access controls and clearer routing.
+3. Review all workflow permissions and secret exposure paths for least privilege.
+4. Add security-focused CI checks: secret scanning, dependency audit, and config linting.
+
+### Phase C — Ongoing
+
+1. Re-audit any new endpoint, table, workflow, or third-party integration before rollout.
+2. Keep docs aligned with secure operating practice; insecure examples are treated as bugs.
+3. Re-run a public-readiness review before any visibility change or open-source release.
+
+---
+
+## Development Best Practices (Always Follow)
+
+### Design and Architecture
+
+- Preserve the core architecture decisions, but do not use architecture consistency as a reason to keep insecure defaults.
+- Prefer secure-by-default implementations over convenience-first shortcuts.
+- Build features so auth, authorization, validation, and auditing are part of the initial design, not follow-up work.
+
+### Code Changes
+
+- Validate all untrusted input, including URLs, IDs, webhook payloads, headers, and query parameters.
+- Add explicit error handling for external systems without leaking sensitive internals in responses or logs.
+- Avoid broad permissions, wildcard access, or implicit trust between services.
+- If a feature handles protected family or child activity data, document its trust boundary and access path.
+
+### Reviews and Testing
+
+- Every feature PR should consider auth, data exposure, secret handling, and logging impact.
+- Add tests for authorization and access control when changing user-facing data flows.
+- Treat missing security tests for sensitive features as an incomplete implementation.
+- If a workaround weakens security temporarily, document the reason, expiry condition, and cleanup step.
+
+### Documentation and AI Guidance
+
+- Claude Code should challenge unsafe instructions rather than silently following them.
+- If docs, prompts, or prior notes conflict with secure practice, update the docs and follow the secure path.
+- When asked to expose a service, add credentials to client code, or weaken access controls, Claude Code must explicitly call out the risk and propose the safer alternative.
 
 ---
 
@@ -492,6 +664,234 @@ gh pr create --base main --head development
 ---
 
 ## Known Issues & Troubleshooting
+
+### SSH Security — Deploy-First, Secure-Last (2026-04-16)
+
+**Why SSH deployed wide-open, then tightened?**
+
+Earlier approach tried dynamic NSG punch/seal: open SSH for runner, deploy, seal after. This failed with `oci network nsg-rules add` exit code 2 (OCI CLI error during rule creation).
+
+**New approach (current):**
+
+1. Deploy with `admin_ssh_cidrs = ["0.0.0.0/0"]` — SSH open to world during deploy
+2. All jobs (infra, build, deploy-app, setup-cloudflare, smoke-test) always succeed
+3. **tighten-ssh-{env}** job runs at END (after smoke tests pass):
+   - Queries NSG for all 0.0.0.0/0 SSH rules
+   - Removes them
+   - Adds single restricted rule: 173.33.214.49/32 (admin IP only)
+
+**Benefits:**
+
+- No OCI CLI errors during deployment
+- SSH always available when needed
+- Security applied after system verified healthy
+- Cleaner, simpler architecture
+
+**Phase B (tunnel SSH)** still runs at the END after tunnel is confirmed active, providing additional access path.
+
+### SSH Action Broken — appleboy/ssh-action Replaced with Native SSH (2026-04-16)
+
+**Problem:** `appleboy/ssh-action@v1` was failing with `no configuration file provided: not found` from drone-ssh.
+
+**Root cause:** The action's drone-ssh binary cannot properly parse multiline SSH keys passed via GitHub Actions outputs. The issue is with the action itself, not the key format.
+
+**Solution:** Replaced `appleboy/ssh-action@v1` with native SSH command:
+
+- Write SSH key to file with carriage returns stripped
+- Use native `ssh -i ~/.ssh/familyshield` with heredoc for deployment script
+- No external action dependency — simpler and more reliable
+
+All three workflows (`deploy-{dev,staging,prod}.yml`) now use native SSH instead of the problematic action.
+
+### Heredoc Variable Expansion — Single-Quoted Heredocs Prevent Variable Interpolation (2026-04-16)
+
+**Problem:** SSH deployment steps failed with `bash: line 8: GHCR_TOKEN: unbound variable` when trying to authenticate with GHCR.
+
+**Root cause:** Single-quoted heredocs (`<<'ENDSSH'`) prevent variable expansion on the local shell. Environment variables like `$GHCR_TOKEN` and `$GHCR_USER` arrived at the remote shell as literal strings (`$GHCR_TOKEN`) instead of their values, causing docker login to fail.
+
+**Solution:** Changed heredoc delimiters from `<<'ENDSSH'` (single-quoted) to `<<ENDSSH` (unquoted). This allows the local shell to expand variables before sending the script to the remote shell.
+
+**Fixed in:**
+
+- `deploy-dev.yml` line 224: deploy-app-dev step
+- `deploy-prod.yml` line 197: deploy-app-prod step
+- `deploy-staging.yml`: Already correct (no change needed)
+
+**Pattern:** When using heredocs in GitHub Actions with SSH for remote script execution, use unquoted heredoc delimiters (`<<EOF`) if the remote script needs variable interpolation. The variables expand locally before SSH transmission, ensuring they're available on the remote shell.
+
+### docker-compose.yml Missing on Fresh VM — Bootstrap Before Deploy (2026-04-16)
+
+**Problem:** SSH deployment step failed with `no configuration file provided: not found` when trying to run `docker compose` commands on a fresh VM.
+
+**Root cause:** The `deploy-app-{env}` jobs tried to use docker-compose before the VM had `docker-compose.yml`. The file is created by IaC's cloud-init on first boot, but cloud-init may not have completed by the time deploy-app runs. Additionally, cloud-init's template rendering may fail silently, leaving the file unrendered.
+
+**Solution:** Added "Bootstrap VM — copy docker-compose.yml if missing" step to each `deploy-app-{env}` job that:
+
+1. SSHes to the VM and checks if `/opt/familyshield/docker-compose.yml` exists
+2. If missing, renders the Terraform template locally with environment-specific variables (`SUPABASE_URL`, `GROQ_API_KEY`, etc.)
+3. Copies the rendered file to the VM via `scp`
+4. Returns immediately if file already exists (idempotent)
+
+**Fixed in:**
+
+- `deploy-dev.yml`: Added bootstrap step
+- `deploy-staging.yml`: Added bootstrap step
+- `deploy-prod.yml`: Added bootstrap step
+
+**Pattern:** Always bootstrap required files before using them in deployment scripts, especially when cloud-init timing is uncertain on fresh VMs. This is particularly important for:
+
+- Configuration files (docker-compose.yml, env files)
+- Application directories that may not exist yet
+- Any file created during first-boot cloud-init that later deployment steps depend on
+
+The bootstrap pattern (check → render → copy) is idempotent and safe to run multiple times.
+
+### Cloudflare API JSON Encoding — Control Characters Break Payload (2026-04-16)
+
+**Problem:** Cloudflare API rejected tunnel creation with error: `Could not parse input. Json deserialize error: control character (\u0000-\u001F) found while parsing a string at line 4 column 0`
+
+**Root cause — Part 1 (JSON construction):** JSON payloads were being constructed using bash string concatenation and command substitution (`cat <<EOF` with `$(...)` expansions). When variables like `tunnel_secret` contain special characters or when command substitution produces unexpected output, the resulting JSON becomes malformed with unprintable control characters that Cloudflare's parser rejects.
+
+**Root cause — Part 2 (base64 line wrapping):** The `base64` command by default wraps output at 76 characters and inserts literal newlines. When the tunnel_secret is 64+ characters, base64 splits it across multiple lines, producing output like `base64data\nmore_data`. This literal `\n` in the middle of the string breaks JSON:
+
+```json
+{"tunnel_secret": "base64data\nmore_data"}  // Invalid — unescaped newline
+```
+
+Cloudflare's JSON parser rejects this as a malformed string.
+
+**Solution — Part 1:** Replaced all JSON payload construction in `scripts/cloudflare-api.sh` with `jq -n` + `--arg` / `--argjson` flags. This ensures:
+
+- All variables are safely escaped as JSON values
+- Special characters don't corrupt the payload
+- JSON is guaranteed to be valid before transmission
+
+**Solution — Part 2:** Fixed base64 line wrapping in `create_tunnel()`:
+
+```bash
+# base64 -w 0 disables line wrapping (default wraps at 76 chars, inserting \n)
+local tunnel_secret_b64=$(echo -n "$tunnel_secret" | base64 -w 0)
+```
+
+Also added defensive whitespace trimming in `setup_cloudflare()` function:
+
+```bash
+# Strip leading/trailing whitespace (handles carriage returns, newlines, etc.)
+tunnel_secret=$(echo "$tunnel_secret" | tr -d '[:space:]')
+```
+
+This ensures the base64-encoded tunnel_secret doesn't contain unwanted line breaks, and input parameters are clean.
+
+**Fixed in:**
+
+- `scripts/cloudflare-api.sh` line 89-95: `create_tunnel()` now uses `jq -n --arg` + whitespace trimming
+- `scripts/cloudflare-api.sh` setup_cloudflare() function: Added parameter normalization and validation
+- `scripts/cloudflare-api.sh` line 258-268: `create_dns_record()` now uses `jq -n --arg --argjson`
+- `scripts/cloudflare-api.sh` line 318-327: `create_access_application()` now uses `jq -n --arg`
+- `scripts/cloudflare-api.sh` line 354-363: `create_ssh_access_app()` now uses `jq -n --arg`
+
+**Pattern:** Never construct JSON via string concatenation. Always use `jq -n` with variable arguments:
+
+```bash
+# ❌ Wrong — unsafe, breaks on special characters
+local payload=$(cat <<EOF
+{"name": "$name", "value": "$value"}
+EOF
+)
+
+# ✅ Right — safe, handles any special characters
+local payload=$(jq -n \
+  --arg name "$name" \
+  --arg value "$value" \
+  '{name: $name, value: $value}')
+```
+
+Use `--argjson` for boolean/numeric values, `--arg` for strings.
+
+### OCI CLI Command Syntax — "nsg rule" command structure (2026-04-16 — FIXED)
+
+**Problem (historical):** The `tighten-ssh-{env}` jobs were trying to use `oci network security-group-rule` (from incorrect documentation) but the OCI CLI returned `Error: No such command 'security-group-rule'`.
+
+**Root cause:** The OCI CLI command structure for network security groups uses `nsg rule` not `security-group-rule`. The correct commands are:
+
+- List: `oci network nsg rule list` (NOT `security-group-rule list`)
+- Delete: `oci network nsg rule delete` (NOT `security-group-rule delete`)
+- Create: `oci network nsg rule create` (NOT `security-group-rule create`)
+
+**Solution (corrected 2026-04-16):** Use the correct OCI CLI command names and parameters:
+
+```bash
+# ❌ Old — incorrect command structure
+oci network security-group-rule list \
+  --network-security-group-id "$NSG_ID"
+oci network security-group-rule delete \
+  --security-group-rule-id "$RULE_ID"
+oci network security-group-rule create \
+  --network-security-group-id "$NSG_ID"
+
+# ✅ New — correct OCI CLI command structure (as of 2026-04-16)
+oci network nsg rule list \
+  --nsg-id "$NSG_ID" \
+  --output json
+
+oci network nsg rule delete \
+  --nsg-rule-id "$RULE_ID" \
+  --force
+
+oci network nsg rule create \
+  --nsg-id "$NSG_ID" \
+  --direction INGRESS \
+  --protocol 6 \
+  --source "$ADMIN_IP" \
+  --source-type CIDR_BLOCK \
+  --tcp-options "destinationPortRange={min:22,max:22}"
+```
+
+Also includes JSON validation before parsing with `jq`:
+
+```bash
+if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
+  echo "⚠️  Failed to query NSG rules — skipping rule removal"
+  SSH_RULES="[]"
+fi
+```
+
+**Fixed in (commit e306349):**
+
+- `.github/workflows/deploy-dev.yml` — tighten-ssh-dev step
+- `.github/workflows/deploy-staging.yml` — tighten-ssh-staging step
+- `.github/workflows/deploy-prod.yml` — tighten-ssh-prod step
+
+**Pattern:** Always check OCI CLI command documentation for correct syntax. The key differences:
+
+```bash
+# Command structure for NSG rules:
+oci network nsg rule list              # ✅ correct
+oci network nsg rule delete            # ✅ correct
+oci network nsg rule create            # ✅ correct
+
+# NOT:
+oci network security-group-rule list   # ❌ wrong — command doesn't exist
+oci network nsg-rules list             # ❌ wrong — subcommand doesn't exist
+```
+if ! echo "$OUTPUT" | jq -e . >/dev/null 2>&1; then
+  # Handle error — output is not valid JSON
+fi
+```
+
+### SSH Key Carriage Returns — appleboy/ssh-action Failure (2026-04-16 — OBSOLETE)
+
+**Problem:** `appleboy/ssh-action@v1` was failing with `no configuration file provided: not found` from drone-ssh.
+
+**Root cause:** GitHub Secrets containing SSH private keys may include carriage returns (`\r`) from Windows line endings. These corrupt the PEM key format that drone-ssh expects.
+
+**Solution:** Added explicit step before each SSH action to sanitize the key:
+
+```bash
+SSH_KEY_CLEAN=$(echo "$SSH_KEY" | tr -d '\r')
+```
+
+All three workflows (`deploy-{dev,staging,prod}.yml`) now include "Prepare SSH key" step that removes carriage returns before passing to appleboy/ssh-action.
 
 ### Cloudflare Tunnel Stays INACTIVE After Setup (historical — fixed 2026-04-15)
 
@@ -608,7 +1008,22 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - `deploy-staging.yml` gate job broken `if:` condition (`workflow_run.conclusion` on a `push` trigger is always null) — fixed: gate job removed; staging triggers on `qa` branch push
   - docker-compose.yml missing on VM (broken cloud-init) → api/portal not running → cloudflared returns 502 → smoke test fails — fixed: "Bootstrap VM" step in all setup-cloudflare jobs
   - All 8 issues with root causes, investigation steps, and fixes documented in `docs/troubleshooting/infrastructure.md`
-- 🔲 First full end-to-end successful dev pipeline run (all 5 jobs green: infra → build → deploy-app → setup-cloudflare → smoke-test)
+- ✅ **SSH security redesigned (2026-04-16):** Deploy-first, secure-last approach replaces failed dynamic punch/seal
+  - Removed dynamic NSG punch/seal logic (was failing with OCI CLI exit code 2)
+  - Deploy with `admin_ssh_cidrs = ["0.0.0.0/0"]` — SSH open to world during all deployment jobs
+  - Added `tighten-ssh-{env}` job at end of pipeline (runs after smoke-test passes)
+  - tighten-ssh removes 0.0.0.0/0 rules and adds admin IP only (173.33.214.49/32)
+  - Phase B (tunnel SSH) unchanged — added at end after tunnel verified active
+  - Eliminates chicken-and-egg lockout risk, guarantees SSH always works during deploy
+- ✅ **Workflow architecture split (2026-04-16):** Separated IaC workflows from app deployment workflows
+  - Created `infra-dev.yml` — triggered on `iac/**` changes to `development`; jobs: tofu apply → setup-cloudflare → smoke-infra → tighten-ssh
+  - Rewrote `deploy-dev.yml` — triggered on `apps/**` changes to `development`; uses Cloudflare tunnel SSH exclusively; jobs: wait-for-infra → verify-tunnel → build-and-push → deploy-app → smoke-test
+  - Created `infra-prod.yml` — triggered on `iac/**` changes to `main`; same as infra-dev + safety-check + create-release
+  - Rewrote `deploy-prod.yml` — triggered on `apps/**` changes to `main`; promote-images instead of build-and-push + CF tunnel SSH
+  - Updated `pr-check.yml` — split into `lint-iac` + `lint-apps` + path-filtered `plan-dev` / `plan-prod`
+  - App workflows never use public IP SSH — work regardless of NSG state (tightened or open)
+  - Mixed commit handling: `wait-for-infra` job polls GitHub API and waits up to 10 min for infra workflow to complete
+- 🔲 First full end-to-end successful dev pipeline run (infra-dev.yml: all 4 jobs green + deploy-dev.yml: all 5 jobs green)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 
 **Application Development:**

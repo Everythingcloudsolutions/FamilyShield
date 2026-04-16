@@ -10,3 +10,7 @@ vcn_cidr    = "10.2.0.0/16"
 # This is the largest allocation within Always Free tier limits
 instance_ocpus  = 2
 instance_memory = 6
+
+# SSH access DURING DEPLOY: wide open (0.0.0.0/0) to avoid deployment failures.
+# After deploy: tighten-ssh job restricts to admin IP only (173.33.214.49/32).
+admin_ssh_cidrs = ["0.0.0.0/0"]
