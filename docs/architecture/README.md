@@ -421,7 +421,8 @@ Each environment has a separate tunnel with the following routes:
 | `nodered-{env}.everythingcloud.ca` | Node-RED | 1880 | HTTP/HTTPS | Automation/rules engine |
 | `ssh.familyshield-{env}.everythingcloud.ca` | SSH | 22 | **TCP** | **Administrative SSH access (zero public IP exposure)** |
 
-**Note:** 
+**Note:**
+
 - Zero Trust access policies are applied to admin UIs (`adguard-*`, `grafana-*`) requiring email-based authentication. Public-facing services (Portal, API) bypass Zero Trust.
 - **SSH route uses TCP tunneling** (not HTTP) — allows `ssh ubuntu@ssh.familyshield-{env}.everythingcloud.ca` with full security benefits of Cloudflare Tunnel.
 - **Public IP (inbound):** ❌ Closed — no SSH access directly to instance IP
@@ -483,11 +484,13 @@ Each environment has a separate tunnel with the following routes:
    - Sets CF Access service token credentials for non-interactive auth
    - **Bootstrap:** Copies `docker-compose.yml` to VM via SCP if missing (idempotent)
    - SSHes to VM via **Cloudflare tunnel only** (never public IP):
+
      ```bash
      ssh -i ~/.ssh/familyshield \
        -o ProxyCommand="cloudflared access ssh --hostname ssh-{env}.everythingcloud.ca" \
        ubuntu@ssh-{env}.everythingcloud.ca
      ```
+
    - Runs: `docker compose pull && docker compose up -d`
    - **Result:** App containers deployed and running on VM
 
