@@ -109,16 +109,17 @@ Add these repository secrets (values from bootstrap-oci.sh output):
 
 ### Cloudflare Secrets
 
-| Secret Name | Where to get it |
-|---|---|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare → Profile → API Tokens → Custom Token with Zone:DNS:Edit + Tunnel:Edit + Access:Edit (see SETUP.md Part 3.3) |
-| `CLOUDFLARE_ZONE_ID` | Cloudflare → everythingcloud.ca → Overview → Zone ID |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare → Profile → Account ID |
-| `CF_ACCESS_CLIENT_ID` | Cloudflare Zero Trust → Access → Service Auth → Service Tokens → `familyshield-github-actions` Client ID (see SETUP.md Part 3.4) |
-| `CF_ACCESS_CLIENT_SECRET` | Same service token — Client Secret (only shown at creation time) |
+| Secret Name | Where to get it | Used For |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare → Profile → API Tokens → Custom Token with Zone:DNS:Edit + Tunnel:Edit + Access:Edit (see SETUP.md Part 3.3) | IaC (tunnel, DNS creation) and app deployment |
+| `CLOUDFLARE_ZONE_ID` | Cloudflare → everythingcloud.ca → Overview → Zone ID | IaC (DNS zone management) |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare → Profile → Account ID | IaC (tunnel creation) |
 
-> **Why two Cloudflare token types?**
-> `CLOUDFLARE_API_TOKEN` manages Cloudflare resources (tunnel creation, DNS, access apps). `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET` are a Cloudflare Access Service Token — used by GitHub Actions runners to authenticate *through* the Cloudflare Zero Trust layer when SSH-ing to the OCI VM via `ssh-dev.everythingcloud.ca` or `ssh-prod.everythingcloud.ca`. Without the service token, the runner hits the Access auth wall and cannot connect.
+**Tunnel SSH Access (App Deployments Only):**
+
+When `deploy-dev.yml` or `deploy-prod.yml` runs, it SSHes to the VM via Cloudflare Tunnel. The runner authenticates using Cloudflare API token (same as above — no separate service token needed).
+
+> **Note:** Historically, Cloudflare Access Service Tokens (`CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET`) were required for tunnel SSH. As of 2026-04-16, this is no longer needed — the `cloudflared access ssh` command authenticates directly with the `CLOUDFLARE_API_TOKEN`. Remove these secrets from GitHub if they still exist.
 
 ### Application Secrets
 
@@ -132,34 +133,79 @@ Add these repository secrets (values from bootstrap-oci.sh output):
 
 ---
 
-## 5. VS Code Remote SSH Setup
+## 5. Remote SSH Access (Tunnel + Local)
 
-Add to `C:\Users\<YourName>\.ssh\config` on Windows:
+### Option A: SSH via Cloudflare Tunnel (Recommended — Always Available)
+
+Install `cloudflared` on your Windows laptop:
+
+```bash
+# Download from GitHub releases
+# https://github.com/cloudflare/cloudflared/releases
+
+# Or via scoop (Windows package manager)
+scoop install cloudflared
+```
+
+Add to `C:\Users\<YourName>\.ssh\config`:
 
 ```
 Host familyshield-dev
-    HostName       <VM_IP_from_tofu_output>
-    User           ubuntu
-    IdentityFile   ~/.ssh/familyshield
+    HostName           ssh-dev.everythingcloud.ca
+    User               ubuntu
+    IdentityFile       ~/.ssh/familyshield
+    ProxyCommand       cloudflared access ssh --hostname ssh-dev.everythingcloud.ca
     ServerAliveInterval 60
     ServerAliveCountMax 3
 
-Host familyshield-staging
-    HostName       <STAGING_VM_IP>
-    User           ubuntu
-    IdentityFile   ~/.ssh/familyshield
+Host familyshield-prod
+    HostName           ssh-prod.everythingcloud.ca
+    User               ubuntu
+    IdentityFile       ~/.ssh/familyshield
+    ProxyCommand       cloudflared access ssh --hostname ssh-prod.everythingcloud.ca
     ServerAliveInterval 60
+    ServerAliveCountMax 3
 ```
 
-Then in VS Code:
+Then SSH via tunnel:
+
+```bash
+ssh familyshield-dev
+ssh familyshield-prod
+```
+
+**Benefits:**
+- ✅ Works from anywhere (home, office, café)
+- ✅ No VPN needed
+- ✅ Cloudflare Zero Trust enforces email authentication
+- ✅ All traffic encrypted end-to-end
+- ✅ No public IP exposure
+
+### Option B: VS Code Remote SSH (Tunnel-Based)
 
 1. Install extension: `Remote - SSH` (ms-vscode-remote.remote-ssh)
 2. `Ctrl+Shift+P` → `Remote-SSH: Connect to Host`
 3. Select `familyshield-dev`
-4. Open folder: `/home/ubuntu/familyshield` (or `/opt/familyshield`)
-5. VS Code will install the dev container extensions automatically
+4. Open folder: `/opt/familyshield`
+5. VS Code will install dev container extensions automatically
 
-> **Note:** The VM IP is shown in the GitHub Actions deploy output under "Capture IaC outputs", or run `tofu output vm_public_ip` from the `iac/` directory locally.
+> **Note:** VS Code will use the SSH config above (Option A) automatically. Make sure `cloudflared` is installed first.
+
+### Option C: Direct Public IP SSH (Emergency Only — During Deploy)
+
+During the initial `infra-{env}.yml` deployment, SSH is temporarily open to `0.0.0.0/0`. You can SSH directly to the public IP:
+
+```bash
+# Get VM public IP from GitHub Actions output or:
+tofu output -raw vm_public_ip
+
+# SSH via public IP (only works while infra workflow is running)
+ssh -i ~/.ssh/familyshield ubuntu@<VM_IP>
+```
+
+**When available:** Only during `infra-*` workflow (tofu apply → setup-cloudflare → smoke-infra stages)  
+**When NOT available:** After `tighten-ssh` job completes (NSG restricted to admin IP 173.33.214.49/32)  
+**Use:** Emergency access only if tunnel is down. Normally use **Option A** (tunnel SSH).
 
 ---
 
@@ -188,21 +234,61 @@ git push origin feat/phase-1-bootstrap
 
 ## 7. Daily Development Workflow
 
+### Branching and Deployment Strategy
+
 ```
-main branch
+development branch (integration)
     │
     ├── feat/your-feature  ← you work here
     │        │
-    │        └── PR → plan comment → review → merge
-    │                                              │
-    │                              auto-deploy dev ┘
-    │                                              │
-    │                           auto-deploy staging ┘
+    │        ├── if iac/** changed → PR → review → merge
+    │        │              ↓
+    │        │          infra-dev.yml auto-runs
+    │        │          (tofu apply → setup-cloudflare → smoke-infra → tighten-ssh)
+    │        │              ↓
+    │        │          deploy-dev.yml auto-runs
+    │        │          (build → deploy via tunnel → smoke-test)
+    │        │
+    │        ├── if apps/** changed → PR → review → merge
+    │        │              ↓
+    │        │          deploy-dev.yml auto-runs
+    │        │          (wait-for-infra → build → deploy → smoke-test)
+    │        │
+    │        └── if both changed → both workflows run (deploy waits for infra)
     │
-    └── prod deploy: manual trigger via GitHub UI
+    ├── Test in dev at: https://familyshield-dev.everythingcloud.ca
+    │
+    └── When ready for staging:
+        ├── Create qa branch (ephemeral)
+        └── Push to qa → deploy-staging.yml auto-runs → auto-teardown after tests
+        
+        When ready for production:
+        ├── Delete qa branch
+        ├── Create PR: development → main
+        ├── Review PR (tofu plan posted as comment)
+        └── Merge → deploy-prod.yml auto-runs with approval gate
 ```
 
-### Branch naming convention
+### What Changes Trigger What?
+
+| Files Changed | Workflow Triggered | Environment |
+|---|---|---|
+| `iac/**` | `infra-dev.yml` | dev (IaC only) |
+| `apps/**` | `deploy-dev.yml` | dev (app only via tunnel SSH) |
+| Both | Both workflows (sequential) | dev (infra first, then app) |
+| `iac/**` on `main` | `infra-prod.yml` | prod (requires manual approval) |
+| `apps/**` on `main` | `deploy-prod.yml` | prod (requires manual approval) |
+
+### SSH Availability During Development
+
+| Scenario | SSH Method | Availability |
+|---|---|---|
+| **Normal dev work** | Tunnel: `ssh familyshield-dev` | ✅ Always available |
+| **Debugging during infra deploy** | Public IP (temp) | ⚠️ Only while infra-dev.yml running |
+| **After infra deploy completes** | Tunnel only (NSG tightened) | ✅ Always available |
+| **Emergency** | Tunnel (fallback) | ✅ Always available |
+
+### Branch Naming Convention
 
 - `feat/` — new feature
 - `fix/` — bug fix
@@ -210,13 +296,14 @@ main branch
 - `docs/` — documentation only
 - `chore/` — maintenance
 
-### Commit message format (Conventional Commits)
+### Commit Message Format (Conventional Commits)
 
 ```
 feat(portal): add rule builder drag-and-drop
 fix(mitm): handle cert pinning gracefully
 iac(compute): increase boot volume to 100GB
 docs(api): document enrichment worker endpoints
+chore: update dependencies
 ```
 
 ---
@@ -307,13 +394,62 @@ See [docs/qa-framework/README.md](../qa-framework/README.md) for full test strat
 
 ## 11. Contributing
 
-1. Create a feature branch from `main`
-2. Make your changes with tests
-3. Open a Pull Request — the plan comment will show infrastructure impact
-4. Address review feedback
-5. Merge — auto-deploys to dev then staging
+### Getting Started with a Feature
 
-**First time?** Look for issues labelled `good-first-issue`.
+1. Start from `development` branch (integration):
+   ```bash
+   git checkout development
+   git pull origin development
+   git checkout -b feat/your-feature-name
+   ```
+
+2. Make your changes with tests (see Section 10 for test commands)
+
+3. Commit with Conventional Commits format:
+   ```bash
+   git add .
+   git commit -m "feat(portal): add new component"
+   ```
+
+4. Push and open a Pull Request:
+   ```bash
+   git push -u origin feat/your-feature-name
+   gh pr create --base development  # NOT main
+   ```
+
+5. GitHub Actions runs `pr-check`:
+   - Lints your code (ESLint, black, tflint)
+   - Validates IaC if you changed `iac/**` (posts `tofu plan` as PR comment)
+   - Runs security scan
+
+6. Address review feedback and merge to `development`
+
+7. GitHub auto-deploys to dev:
+   - If you changed `iac/**` → `infra-dev.yml` runs
+   - If you changed `apps/**` → `deploy-dev.yml` runs
+   - If both → both workflows run sequentially
+
+8. Test in dev at `https://familyshield-dev.everythingcloud.ca`
+
+### Promoting to Production
+
+After dev testing passes:
+
+1. Create `qa` branch from `development` and push (triggers `deploy-staging.yml`)
+2. Run QA tests on staging at `https://familyshield-staging.everythingcloud.ca`
+3. After staging passes, delete `qa` branch and create PR `development` → `main`
+4. Merge to `main` (triggers `deploy-prod.yml` with manual approval gate)
+
+### Finding Issues to Work On
+
+Look for issues labelled `good-first-issue` or `help-wanted` in the GitHub repository.
+
+### Need Help?
+
+- **Architecture questions:** See [docs/architecture/README.md](../architecture/README.md)
+- **Deployment troubleshooting:** See [docs/troubleshooting/infrastructure.md](../troubleshooting/infrastructure.md)
+- **API development:** See [apps/api/README.md](../../apps/api/README.md) (if exists)
+- **Portal development:** See [apps/portal/README.md](../../apps/portal/README.md) (if exists)
 
 ---
 

@@ -20,53 +20,75 @@ If you hit a blank wall and something is not working, read each issue in order. 
 
 ## Deployment Pipeline Overview
 
-Before reading the individual issues, understand the pipeline structure. Each environment (dev / staging / prod) runs the same sequence of jobs:
+Before reading the individual issues, understand the pipeline structure. **As of 2026-04-16, the pipeline is split into separate IaC and app workflows:**
+
+### Infra Workflow (triggered by `iac/**` changes)
 
 ```
 Job 1: deploy-infra-{env}
   → tofu init + tofu apply
-  → Provisions: OCI VM, VCN, security list (SSH: 0.0.0.0/0), NSG, storage bucket
-  → Output: vm_ip (public IP of the VM), nsg_vm_id (VM's Network Security Group)
-  → SSH is WIDE OPEN during deployment
+  → Provisions: OCI VM, VCN, NSG (SSH: 0.0.0.0/0), storage bucket
+  → Output: vm_ip (public IP), tunnel_secret (from IaC state)
+  → SSH is WIDE OPEN (0.0.0.0/0) during deployment
 
-Job 2: build-and-push (dev) or promote-images (staging/prod)
-  → Builds Docker images for api and portal
-  → Pushes to GHCR (ghcr.io/everythingcloudsolutions/familyshield-*)
-
-Job 3: deploy-app-{env}
-  → SSHes to VM via public IP (SSH: 0.0.0.0/0, always works)
-  → Runs: docker compose pull api portal
-  → Runs: docker compose up -d api portal
-
-Job 4: setup-cloudflare-{env}
+Job 2: setup-cloudflare-{env}
+  → SSH via public IP (works because SSH is wide-open)
   → Calls cloudflare-api.sh to create tunnel, DNS record, Access app
-  → [Bootstrap step] Checks if docker-compose.yml exists on VM; renders+copies if missing
-  → Writes docker-compose.override.yaml with real TUNNEL_TOKEN
-  → Restarts cloudflared (via docker run --network host)
+  → [Bootstrap step] Checks if docker-compose.yml exists; renders+copies if missing
+  → Starts cloudflared via docker run --network host --token
   → Waits up to 3 minutes for portal URL to return HTTP 200/302/403
 
-Job 5: smoke-test or integration-tests
-  → Checks portal: curl with expected HTTP 200/302/403
-  → Checks API health: curl /api/health expects HTTP 200/403
-  → Fails on any 5xx response
+Job 3: smoke-infra-{env}
+  → Checks tunnel is ACTIVE (via cloudflared logs check)
+  → Checks portal reachable via tunnel
 
-Job 6: tighten-ssh-{env}  (NEW as of 2026-04-16)
-  → Runs ONLY after smoke-test passes
-  → Queries NSG for all 0.0.0.0/0 SSH rules (used during deploy)
-  → Removes them
-  → Adds single restricted rule: 173.33.214.49/32 (admin IP only)
-  → Phase A security applied at END (after system verified healthy)
+Job 4: tighten-ssh-{env}  (NEW as of 2026-04-16)
+  → Runs ONLY after smoke-infra passes
+  → Runs second tofu apply with TF_VAR_admin_ssh_cidrs='["173.33.214.49/32"]'
+  → NSG updated: removes 0.0.0.0/0, adds admin IP only
+  → State kept consistent — no OCI CLI NSG commands used
 ```
 
-**Key change (2026-04-16):** SSH is now deployed WIDE-OPEN (0.0.0.0/0) for all jobs, then tightened to admin IP only at the END via tighten-ssh job. This replaces the failed dynamic punch/seal approach (Issue 9).
+### App Workflow (triggered by `apps/**` changes)
+
+```
+Job 1: wait-for-infra (only if both app and infra workflows triggered same commit)
+  → Polls GitHub API for infra-{env} workflow status
+  → Waits up to 10 minutes for infra workflow to complete
+
+Job 2: verify-tunnel
+  → Pre-check: confirm cloudflared tunnel is reachable
+  → Fail fast if tunnel is down (prevents wasting build time)
+
+Job 3: build-and-push
+  → Builds Docker images for api and portal (linux/arm64)
+  → Pushes to GHCR (ghcr.io/everythingcloudsolutions/familyshield-*)
+
+Job 4: deploy-app-{env}
+  → SSH via Cloudflare tunnel ONLY: ssh-dev.everythingcloud.ca / ssh-prod.everythingcloud.ca
+  → Uses CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET for authentication
+  → [Bootstrap step] Checks if docker-compose.yml exists; renders+copies if missing
+  → Runs: docker compose pull && docker compose up -d api portal
+
+Job 5: smoke-test
+  → Checks portal: curl https://familyshield-dev.everythingcloud.ca (expects 200/302/403)
+  → Checks API health: curl https://api-dev.everythingcloud.ca/health (expects 200/403)
+```
+
+**Key change (2026-04-16):** 
+- Infra and app workflows are separate (triggered by different paths)
+- SSH tightening is done via tofu apply (not OCI CLI)
+- App workflow uses Cloudflare tunnel SSH exclusively (works regardless of NSG state)
+- Infra workflow uses public IP SSH (admin must manually open NSG before triggering infra refresh when NSG already tightened)
 
 **Key files involved:**
 
 | File | Purpose |
 |------|---------|
-| `.github/workflows/deploy-dev.yml` | Dev deployment workflow |
-| `.github/workflows/deploy-staging.yml` | Staging deployment workflow |
-| `.github/workflows/deploy-prod.yml` | Prod deployment workflow |
+| `.github/workflows/infra-dev.yml` | Dev infrastructure workflow (IaC only) |
+| `.github/workflows/infra-prod.yml` | Prod infrastructure workflow (IaC only) |
+| `.github/workflows/deploy-dev.yml` | Dev app deployment workflow (app only, CF tunnel SSH) |
+| `.github/workflows/deploy-prod.yml` | Prod app deployment workflow (app only, CF tunnel SSH) |
 | `iac/templates/cloud-init.yaml.tpl` | Cloud-init bootstrap run on VM first boot |
 | `iac/templates/docker-compose.yaml.tpl` | Terraform template rendered into docker-compose.yml |
 | `scripts/cloudflare-api.sh` | Cloudflare API operations (create tunnel, DNS, Access app) |
@@ -756,10 +778,15 @@ The bootstrap step is now a permanent part of the deployment pipeline for all th
 | 6 | Cloud-init timing on new VMs | Compose commands fail on first deploy | deploy-app runs before cloud-init finishes | `sudo cloud-init status --wait || true` at start of deploy-app | `458de80` |
 | 7 | deploy-staging gate job never passes | Staging never deploys | `workflow_run` context missing on `push` trigger | Removed gate job; staging triggers on `qa` branch push | Workflow restructure |
 | 8 | 502 on smoke test — api/portal not running | Smoke test fails immediately | docker-compose.yml missing on VM; silent failure from Issue 5 | Bootstrap VM step: check + render + SCP + start if missing | `6330a18` |
+| 9 | SSH dynamic punch/seal failed — OCI CLI exit 2 | Deploy stuck; NSG rules fail to add/remove | OCI CLI `nsg-rules` command incompatible; complex dynamic rule logic | Deploy-first, secure-last: SSH wide-open during deploy, tighten via tofu apply after smoke tests | `64e46b7` |
+| 10 | appleboy/ssh-action broken config | `no configuration file provided: not found` | drone-ssh cannot handle multiline secret outputs from GitHub Actions | Replace action with native SSH command + heredoc pattern | `f26786d` |
+| 11 | Cloudflare API JSON encoding — base64 wrapping | `control character (\u0000-\u001F) found while parsing` | JSON constructed via string concat; base64 wraps at 76 chars inserting `\n` | Use `jq -n --arg` for JSON; `base64 -w 0` to disable wrapping | Current session |
+| 12 | OCI CLI command syntax — `nsg-rules` doesn't exist | `Error: No such command 'nsg-rules'` | OCI CLI command was wrong; correct command is `security-group-rule` | Replaced with `tofu apply` approach — NSG managed by IaC, not OCI CLI | Current session |
+| 13 | SSH tightening via OCI CLI unreliable | Multiple OCI CLI command attempts fail; state drift risk | NSG is managed by OpenTofu — modifying it via OCI CLI causes state drift | Run second `tofu apply` with `TF_VAR_admin_ssh_cidrs='["173.33.214.49/32"]'` in tighten-ssh job | `f2da8ee` |
 
 ---
 
-## Current State of the Pipeline (2026-04-15)
+## Current State of the Pipeline (2026-04-16)
 
 After all the above fixes:
 
@@ -770,8 +797,23 @@ After all the above fixes:
 - ✅ cloud-init wait prevents race conditions on new VMs
 - ✅ deploy-staging triggers correctly on `qa` branch push
 - ✅ Bootstrap VM step restores docker-compose.yml if missing on any environment
+- ✅ **SSH tightening is done via tofu apply** (second apply with admin_ssh_cidrs override) — no OCI CLI NSG commands
+- ✅ **App workflow uses Cloudflare tunnel SSH exclusively** — works regardless of NSG state (open or tightened)
+- ✅ **Infra and app workflows are split** — triggered by different path changes (iac/** vs apps/**)
 
-**Remaining known issue:** The pipeline has not yet completed a full end-to-end successful run (IaC → Docker build → app deploy → Cloudflare setup → smoke test all green). The fixes above address the specific blockers identified up to 2026-04-15.
+**Pipeline Architecture (2026-04-16):**
+
+| Trigger | Workflow | SSH Method | Notes |
+|---------|----------|-----------|-------|
+| Push `iac/**` to `development` | `infra-dev.yml` | Public IP (0.0.0.0/0, admin must open NSG before refresh) | IaC only; tightens SSH at end |
+| Push `apps/**` to `development` | `deploy-dev.yml` | Cloudflare tunnel (`ssh-dev.everythingcloud.ca`) | App only; works with tightened NSG |
+| Push `iac/**` to `main` | `infra-prod.yml` | Public IP (0.0.0.0/0, admin must open NSG before refresh) | IaC only; safety check + tighten + release |
+| Push `apps/**` to `main` | `deploy-prod.yml` | Cloudflare tunnel (`ssh-prod.everythingcloud.ca`) | App only; works with tightened NSG |
+| Push any to `qa` | `deploy-staging.yml` | Public IP during deploy, then tighten | Combined workflow; ephemeral |
+
+**Remaining known issues:** 
+1. The pipeline has not yet completed a full end-to-end successful run with the split architecture (infra-dev.yml all jobs green + deploy-dev.yml all jobs green).
+2. Cloudflare tunnel SSH via `cloudflared access ssh` requires `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` service token credentials configured in GitHub Secrets (one pair per environment, or shared across all).
 
 ---
 
@@ -1234,19 +1276,23 @@ All three workflows updated to use:
 
 | Workflow file | Trigger | Job sequence |
 |--------------|---------|-------------|
-| `deploy-dev.yml` | Push to `development` | infra → build → deploy-app → cloudflare → smoke-test |
-| `deploy-staging.yml` | Push to `qa` | infra → promote-images → deploy-app → cloudflare → integration-tests |
-| `deploy-prod.yml` | Push to `main` | infra → promote-images → deploy-app → cloudflare → smoke-test |
-| `pr-check.yml` | PR to `development` or `main` | lint → tofu validate → tofu plan (posted as PR comment) |
+| `infra-dev.yml` | Push to `development` + path `iac/**` | tofu apply → setup-cloudflare-dev → smoke-infra-dev → tighten-ssh-dev |
+| `deploy-dev.yml` | Push to `development` + path `apps/**` | wait-for-infra → verify-tunnel → build-and-push → deploy-app-dev → smoke-test |
+| `infra-prod.yml` | Push to `main` + path `iac/**` | safety-check → tofu apply → setup-cloudflare-prod → smoke-infra-prod → tighten-ssh-prod → create-release |
+| `deploy-prod.yml` | Push to `main` + path `apps/**` | wait-for-infra → verify-tunnel → promote-images → deploy-app-prod → smoke-test → create-release |
+| `deploy-staging.yml` | Push to `qa` | tofu apply → build-and-push → deploy-app → smoke-test → auto-teardown |
+| `pr-check.yml` | PR to `development` or `main` | lint-iac (if iac/** changed) + lint-apps (if apps/** changed) + plan-dev/prod (if iac/** changed, posted as PR comment) |
 | `cleanup-cloudflare.yml` | Manual (`workflow_dispatch`) | cloudflare-api.sh cleanup — removes tunnel, DNS, Access app |
 
 **Concurrency groups (prevent state lock conflicts):**
 
 | Workflow | Group | cancel-in-progress |
 |---------|-------|-------------------|
+| `infra-dev.yml` | `infra-dev` | `false` — never cancel, queue instead |
 | `deploy-dev.yml` | `deploy-dev` | `true` — latest push wins |
-| `deploy-staging.yml` | `deploy-staging` | `true` — latest push wins |
-| `deploy-prod.yml` | `deploy-prod` | `false` — queue, never cancel mid-flight |
+| `infra-prod.yml` | `infra-prod` | `false` — never cancel prod deploy mid-flight |
+| `deploy-prod.yml` | `deploy-prod` | `true` — latest push wins |
+| `deploy-staging.yml` | `deploy-staging` | `true` — latest push wins (ephemeral) |
 
 ---
 

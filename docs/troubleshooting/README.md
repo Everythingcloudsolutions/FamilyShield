@@ -1253,7 +1253,11 @@ sudo cat /var/log/cloud-init-output.log | tail -50
 
 ### GitHub Actions CI/CD Issues
 
-#### deploy-dev SSH via Cloudflare tunnel times out — all attempts fail
+**Architecture note (2026-04-16):** FamilyShield deployments are now split into two workflows:
+- **Infra workflows** (`infra-dev.yml`, `infra-prod.yml`) — triggered by `iac/**` changes; runs tofu apply → setup-cloudflare → smoke-infra → tighten-ssh
+- **App workflows** (`deploy-dev.yml`, `deploy-prod.yml`) — triggered by `apps/**` changes; uses Cloudflare tunnel SSH exclusively
+
+For the full history of how this architecture was reached, see [Infrastructure Deployment Troubleshooting Log](infrastructure.md).
 
 **Symptom:** The `deploy-app-dev` or `verify-tunnel` job in `deploy-dev.yml` retries SSH 18 times and fails:
 
@@ -1318,67 +1322,83 @@ See **SETUP.md Part 3.4** for the full first-time setup walkthrough.
 
 ---
 
-#### deploy-cloudflare workflow fails or doesn't run
+#### Infra workflow fails (tofu apply or setup-cloudflare steps)
 
-**Symptom:** After `deploy-dev` succeeds, the `deploy-cloudflare` workflow doesn't appear in the Actions tab, or it fails with API errors.
+**Symptom:** `infra-dev.yml` or `infra-prod.yml` fails at one of the four jobs (tofu apply, setup-cloudflare, smoke-infra, tighten-ssh).
 
+**Troubleshooting by job:**
+
+1. **tofu apply fails**
+   - Check for OCI quota exhaustion: `oci compute instance list --compartment-id <compartment>`
+   - Check for state lock: `aws s3 ls s3://familyshield-tfstate/dev/.terraform.lock.hcl`
+   - Check for OCI authentication error: verify OCI_USER_OCID, OCI_FINGERPRINT, OCI_PRIVATE_KEY GitHub Secrets
+   - Full details: see [Infrastructure Deployment Troubleshooting Log](infrastructure.md) — Issues 1–7
+
+2. **setup-cloudflare fails**
+   - Check CLOUDFLARE_API_TOKEN has all THREE scopes (Zone DNS Edit, Tunnel Edit, Access Edit)
+   - Check CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_ZONE_ID are correct
+   - Check VM can be reached via public IP SSH during deployment (NSG is open 0.0.0.0/0)
+   - Full details: see [Infrastructure Deployment Troubleshooting Log](infrastructure.md) — Issue 10
+
+3. **smoke-infra fails (tunnel not ACTIVE)**
+   - Check Cloudflare tunnel token was created successfully
+   - Check cloudflared daemon is running on the VM: `docker logs familyshield-cloudflared`
+   - Full details: see [Infrastructure Deployment Troubleshooting Log](infrastructure.md) — Issue 8
+
+4. **tighten-ssh fails**
+   - This job runs a second `tofu apply` with `TF_VAR_admin_ssh_cidrs='["173.33.214.49/32"]'`
+   - Check for state lock (Terraform may still be locked from previous apply)
+   - Wait 5 minutes and retry — the lock should clear
+   - Full details: see [Infrastructure Deployment Troubleshooting Log](infrastructure.md) — Issue 9
+
+**To re-run infra workflow:**
 ```bash
-# First, verify deploy-dev succeeded
-# Actions → deploy-dev (most recent) → scroll to bottom
-# You should see a green checkmark and tunnel_secret output
+# Manually trigger via GitHub CLI
+gh workflow run infra-dev.yml --ref development
 
-# If deploy-dev succeeded but deploy-cloudflare never started:
-# 1. Wait 2–3 minutes — the workflow is triggered automatically after IaC
-# 2. Refresh the Actions tab
-# 3. If still missing, manually trigger the workflow:
-#    - Go to Actions → Deploy → Cloudflare
-#    - Click "Run workflow" → select environment → select action (setup)
-#    - Click "Run workflow"
-
-# If deploy-cloudflare fails with API errors:
-# Actions → Deploy → Cloudflare → most recent run → expand step
-
-# Common errors:
-
-# 1. "Authentication error (10000): Authentication is required"
-#    → CLOUDFLARE_API_TOKEN is missing or invalid
-#    → Check GitHub Secrets (Settings → Secrets and variables → Actions)
-#    → Must be a Custom Token with THREE scopes:
-#       - Zone | DNS | Edit
-#       - Account | Cloudflare Tunnel | Edit
-#       - Account | Access: Apps and Policies | Edit
-#    → Template tokens (like "Edit zone DNS") don't have Tunnel + Access scopes
-#    → Regenerate token at dash.cloudflare.com/profile/api-tokens
-#    → Update CLOUDFLARE_API_TOKEN secret
-#    → Re-run the workflow
-
-# 2. "error getting tunnel config: Configuration for tunnel not found"
-#    → Previous tunnel may exist with same name
-#    → Manually delete: dash.cloudflare.com → Tunnels → find & delete
-#    → Re-run deploy-cloudflare workflow
-
-# 3. "expected DNS record to not already be present but already exists"
-#    → DNS records exist from a previous deployment
-#    → Manually delete in Cloudflare: DNS → remove old CNAME records
-#    → Re-run deploy-cloudflare workflow
-#    → Or run cleanup-cloudflare workflow first
-
-# 4. "access.api.error.application_already_exists (11010)"
-#    → Access Applications exist from previous deployment
-#    → Manually delete: Cloudflare → Access → Applications → delete old apps
-#    → Re-run deploy-cloudflare workflow
-#    → Or run cleanup-cloudflare workflow first
-
-# To reset Cloudflare resources:
-# 1. Go to Actions → Cleanup → Cloudflare
-# 2. Click "Run workflow" → select environment (dev)
-# 3. Click "Run workflow" — waits for it to complete
-# 4. Then run deploy-cloudflare again
-
-# Check the script logs for details
-# The deploy-cloudflare workflow logs show each Cloudflare API call
-# Look for curl error messages and response codes
+# Or via GitHub UI:
+# Actions → Infra Dev → Run workflow
 ```
+
+---
+
+#### App workflow fails (deploy-dev.yml or deploy-prod.yml)
+
+**Symptom:** `deploy-dev.yml` or `deploy-prod.yml` fails at one of five jobs (wait-for-infra, verify-tunnel, build-and-push, deploy-app, smoke-test).
+
+**Troubleshooting by job:**
+
+1. **wait-for-infra fails**
+   - This job polls GitHub API for infra workflow status if both iac/** and apps/** changed in same commit
+   - Check: has infra-dev.yml finished successfully? (check Actions tab)
+   - If infra failed, app workflow will fail here
+   - Fix: re-run infra-dev.yml first, then app workflow will proceed
+
+2. **verify-tunnel fails**
+   - Pre-check confirms Cloudflare tunnel is reachable before wasting build time
+   - Check: is infra-dev.yml complete and tunnel ACTIVE?
+   - Check: is cloudflared running on the VM? `docker ps | grep cloudflared`
+   - Full details: see [Infrastructure Deployment Troubleshooting Log](infrastructure.md) — Issue 8
+
+3. **build-and-push fails**
+   - TypeScript or Python compilation errors
+   - Check: run `cd apps/api && npm run build` locally to see errors
+   - Check: run `cd apps/mitm && pytest tests/` locally for Python errors
+   - Full details: see CI/CD Issues section below → "Docker image build failures"
+
+4. **deploy-app fails (SSH via tunnel timeout)**
+   - App workflow SSHes to VM via Cloudflare tunnel: `ssh ubuntu@ssh-dev.everythingcloud.ca`
+   - Check: Cloudflare Access Service Token (CF_ACCESS_CLIENT_ID + CF_ACCESS_CLIENT_SECRET) configured in GitHub Secrets?
+   - Check: is the VM reachable? Can you SSH from your laptop?
+   - Full details: see earlier section "deploy-dev SSH via Cloudflare tunnel times out"
+
+5. **smoke-test fails**
+   - Health check endpoints returning 5xx or timeout
+   - Check: are api and portal containers running? `docker ps | grep api && docker ps | grep portal`
+   - Check: container logs for errors: `docker logs familyshield-api`
+   - Full details: see [Infrastructure Deployment Troubleshooting Log](infrastructure.md) — Issue 8
+
+---
 
 #### OCI authentication failures
 

@@ -1,3 +1,13 @@
+# FamilyShield IaC Deployment Analysis — ARCHIVED (2026-04-13)
+
+> **Status:** HISTORICAL — All issues documented below have been resolved as of 2026-04-16
+> 
+> **Why archived:** This analysis documents deployment failures from 2026-04-13 that occurred during the period when the IaC architecture was being debugged. All identified issues (OCI compartment queries, IAM policies, state management) have been fixed and are now working correctly in production.
+>
+> **Current reference:** See [Infrastructure Deployment Troubleshooting Log](infrastructure.md) for the complete history of issues and their resolutions.
+
+---
+
 # FamilyShield IaC Deployment Analysis
 
 **Date:** 2026-04-13  
