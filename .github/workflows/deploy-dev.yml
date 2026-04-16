@@ -106,43 +106,36 @@ jobs:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
         run: |
           SSH_HOST="ssh-dev.everythingcloud.ca"
-          echo "=== cloudflared version ==="
-          cloudflared version
 
-          echo "=== Checking service token credentials are set ==="
-          if [ -z "$CF_ACCESS_CLIENT_ID" ]; then
-            echo "❌ CF_ACCESS_CLIENT_ID is EMPTY — secret not set or wrong name"
-          else
-            echo "✅ CF_ACCESS_CLIENT_ID is set (length: ${#CF_ACCESS_CLIENT_ID})"
-          fi
-          if [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
-            echo "❌ CF_ACCESS_CLIENT_SECRET is EMPTY — secret not set or wrong name"
-          else
-            echo "✅ CF_ACCESS_CLIENT_SECRET is set (length: ${#CF_ACCESS_CLIENT_SECRET})"
-          fi
+          echo "=== Secret check ==="
+          [ -z "$CF_ACCESS_CLIENT_ID" ]     && echo "❌ CF_ACCESS_CLIENT_ID empty"     || echo "✅ CF_ACCESS_CLIENT_ID set (len=${#CF_ACCESS_CLIENT_ID})"
+          [ -z "$CF_ACCESS_CLIENT_SECRET" ] && echo "❌ CF_ACCESS_CLIENT_SECRET empty" || echo "✅ CF_ACCESS_CLIENT_SECRET set (len=${#CF_ACCESS_CLIENT_SECRET})"
+
+          echo "=== HTTP check: unauthenticated (expect 302/403) ==="
+          curl -sI --max-time 10 "https://${SSH_HOST}" | head -5 || true
+
+          echo "=== HTTP check: with service token headers (expect 200/non-redirect) ==="
+          curl -sI --max-time 10 \
+            -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+            -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+            "https://${SSH_HOST}" | head -5 || true
+
+          echo "=== cloudflared access ssh --help ==="
+          cloudflared access ssh --help 2>&1 || true
 
           mkdir -p ~/.ssh
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
 
-          echo "=== DNS resolution for $SSH_HOST ==="
-          nslookup "$SSH_HOST" || true
-
-          echo "=== Testing cloudflared access token (pre-auth check) ==="
-          cloudflared access token --app="https://${SSH_HOST}" \
-            --service-token-id "$CF_ACCESS_CLIENT_ID" \
-            --service-token-secret "$CF_ACCESS_CLIENT_SECRET" \
-            2>&1 | head -20 || true
-
-          echo "=== Attempting SSH (attempt 1 — verbose, no retry) ==="
+          echo "=== SSH attempt (env-var auth, no flags) ==="
           ssh -v -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=15 \
-            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET} --loglevel debug" \
+            -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST}" \
             ubuntu@"${SSH_HOST}" echo "tunnel-ok" 2>&1 \
-            && echo "✅ SSH tunnel is reachable" \
-            || echo "❌ SSH attempt failed (see verbose output above)"
+            && echo "✅ SSH tunnel reachable" \
+            || echo "❌ SSH failed"
 
       - name: Portal health check via tunnel
         run: |
