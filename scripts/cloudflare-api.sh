@@ -349,7 +349,7 @@ create_ssh_access_app() {
   local payload=$(jq -n \
     --arg name "$app_name" \
     --arg domain "$fqdn" \
-    --arg type "ssh" \
+    --arg type "self_hosted" \
     --arg session_duration "8h" \
     '{name: $name, domain: $domain, type: $type, session_duration: $session_duration, tags: ["familyshield", "ssh"]}')
 
