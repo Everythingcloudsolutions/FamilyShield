@@ -17,6 +17,7 @@
 9. [Working with Each Service](#9-working-with-each-service)
 10. [Testing](#10-testing)
 11. [Contributing](#11-contributing)
+12. [Security Hardening Updates (2026-04-16)](#12-security-hardening-updates-2026-04-16)
 
 ---
 
@@ -268,6 +269,48 @@ development branch (integration)
         ├── Review PR (tofu plan posted as comment)
         └── Merge → deploy-prod.yml auto-runs with approval gate
 ```
+
+---
+
+## 12. Security Hardening Updates (2026-04-16)
+
+The following security scaffolding is now part of the application codebase:
+
+### 12.1 Portal Route Protection (Scaffold)
+
+- File: `apps/portal/middleware.ts`
+- Protected routes: `/`, `/alerts`, `/devices`
+- Controlled by env vars:
+   - `PORTAL_BASIC_AUTH_ENABLED`
+   - `PORTAL_BASIC_AUTH_USERNAME`
+   - `PORTAL_BASIC_AUTH_PASSWORD`
+
+If auth is enabled but credentials are missing, portal fails safe with HTTP 503.
+
+See detailed guide: `docs/developer-guide/portal-auth-scaffold.md`
+
+### 12.2 Supabase Schema + RLS Baseline
+
+- Migration folder: `apps/api/supabase/migrations/`
+- Baseline migration:
+   - `20260416_0001_familyshield_core_rls.sql`
+
+This migration creates `devices`, `content_events`, and `alerts` with:
+
+- RLS enabled on all tables
+- Default-deny posture
+- Least-privilege policies scoped by `parent_user_id = auth.uid()`
+
+### 12.3 API Keying Rule for RLS Compatibility
+
+- API worker now prefers `SUPABASE_SERVICE_ROLE_KEY` for server-side writes.
+- Browser paths must continue to use `NEXT_PUBLIC_SUPABASE_ANON_KEY` only.
+
+### 12.4 Supabase Inactive/Recovery Runbook
+
+Portal now shows explicit degraded/offline state when Supabase is inactive instead of crashing.
+
+Activation runbook: `docs/developer-guide/supabase-activation.md`
 
 ### What Changes Trigger What?
 

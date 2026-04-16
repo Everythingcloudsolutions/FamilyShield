@@ -1,6 +1,6 @@
 # FamilyShield — Architecture
 
-> Last updated: 2026-04-16 — Split pipeline architecture (infra vs app workflows), tighten-ssh via tofu apply, Cloudflare tunnel SSH for app deployment
+> Last updated: 2026-04-16 — Split pipeline architecture (infra vs app workflows), tighten-ssh via tofu apply, Cloudflare tunnel SSH for app deployment, portal auth scaffold, and Supabase RLS migration baseline
 > All diagrams render natively in GitHub. For editable source files see `docs/diagrams/`.
 > Editable draw.io files: `docs/diagrams/*.drawio` — open at diagrams.net or VS Code draw.io extension.
 > Editable Excalidraw files: `docs/diagrams/*.excalidraw` — open at excalidraw.com or VS Code Excalidraw extension.
@@ -194,6 +194,33 @@ Each ADR captures *what* was decided, *why*, and *what was rejected*.
 **Rejected:** Custom scripts (brittle, no reasoning), plain LLM prompts (no tool use), commercial AIOps tools (expensive, overkill for one-family platform).
 
 **Decision:** Four Claude Agent SDK agents (`agent-iac`, `agent-cloud`, `agent-api`, `agent-mitm`) — each with a specific set of tools and a system prompt tuned to its domain. Agents can reason about context, chain tool calls, and produce human-readable reports.
+
+---
+
+### ADR-012: Public-Readiness Security Baseline (Auth + RLS + Safe Degraded Mode)
+
+**Status:** Accepted  
+**Date:** 2026-04  
+**Context:** Public-readiness review identified three immediate risks: missing app-layer route protection, missing explicit RLS schema baseline, and brittle portal behavior when Supabase is inactive.
+
+**Decision:**
+
+1. Add portal route protection middleware for sensitive pages (`/`, `/alerts`, `/devices`) with explicit fail-safe behavior when auth is enabled without credentials.
+2. Add app-owned Supabase SQL migration baseline for `devices`, `content_events`, and `alerts` with RLS enabled and default-deny + least-privilege policies.
+3. Keep portal usable during Supabase outages/inactive state by switching to explicit degraded/offline mode messaging instead of hard-failing.
+
+**Security impact:**
+
+- Reduces accidental exposure risk for sensitive parent/child data views.
+- Establishes auditable, versioned RLS policy baseline in repo.
+- Prevents operational confusion during data-plane outages by exposing clear state to users.
+
+**Implementation references:**
+
+- `apps/portal/middleware.ts`
+- `apps/api/supabase/migrations/20260416_0001_familyshield_core_rls.sql`
+- `docs/developer-guide/portal-auth-scaffold.md`
+- `docs/developer-guide/supabase-activation.md`
 
 ---
 

@@ -98,6 +98,8 @@ The parent portal is the website where you manage everything. Think of it like t
 
 > **Note:** The portal uses two-step verification (you will receive a short code by email or text to confirm it is really you). This keeps other people from accessing your family's settings.
 
+> **Security note (2026-04):** In some environments, you may also see a browser authentication prompt before the portal loads. This is an additional protection layer for sensitive parent pages.
+
 ### Creating your family profile
 
 The first time you log in, you will be asked to set up your family.
@@ -247,6 +249,8 @@ Game consoles use a simpler form of monitoring — DNS filtering. This means Fam
 ## 5. Understanding the Dashboard
 
 When you log in to the portal, the first screen you see is the Dashboard. Here is what each section means.
+
+If FamilyShield cannot currently reach the cloud database service, the portal may show a yellow status banner indicating "offline" or "degraded" mode. In this state, existing pages remain available but live data updates may be temporarily unavailable.
 
 ### Devices Online
 

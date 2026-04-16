@@ -39,13 +39,14 @@ function EnrolModal({
   const [error, setError] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+
     if (!isSupabaseConfigured()) {
       setError('Supabase is inactive. Activate Supabase before enrolling devices.')
       setSubmitting(false)
       return
     }
 
-    e.preventDefault()
     setSubmitting(true)
     setError(null)
 
