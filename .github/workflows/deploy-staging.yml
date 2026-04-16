@@ -130,42 +130,48 @@ jobs:
           oci_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
           oci_private_key: ${{ secrets.OCI_PRIVATE_KEY }}
 
-      - name: Prepare SSH key (remove carriage returns)
-        id: ssh_key
+      - name: Deploy containers to staging VM
         env:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-        shell: bash
-        run: |
-          SSH_KEY_CLEAN=$(echo "$SSH_KEY" | tr -d '\r')
-          echo "key<<EOF" >> $GITHUB_OUTPUT
-          echo "$SSH_KEY_CLEAN" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Deploy containers to staging VM
-        uses: appleboy/ssh-action@v1
-        env:
+          VM_IP: ${{ needs.deploy-infra-staging.outputs.vm_ip }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
-        with:
-          host: ${{ needs.deploy-infra-staging.outputs.vm_ip }}
-          username: ubuntu
-          key: ${{ steps.ssh_key.outputs.key }}
-          envs: GHCR_TOKEN,GHCR_USER
-          script: |
-            # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
-            sudo cloud-init status --wait 2>/dev/null || true
-            cd /opt/familyshield
-            # Authenticate with GHCR to pull private images
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            # Ensure Redis is running before API starts (API crashes if Redis unreachable)
-            docker compose up -d redis
-            sleep 5
-            # Pull and restart API + portal
-            docker compose pull api portal
-            docker compose up -d --remove-orphans api portal
-            sleep 10
-            docker compose ps
-            echo "✅ Staging app deploy complete"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Write SSH key to file (strip carriage returns)
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+
+          # SSH to VM and deploy
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            ubuntu@"$VM_IP" bash -s <<'ENDSSH'
+          set -euo pipefail
+
+          # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
+          sudo cloud-init status --wait 2>/dev/null || true
+          cd /opt/familyshield
+
+          # Authenticate with GHCR to pull private images
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          # Ensure Redis is running before API starts (API crashes if Redis unreachable)
+          docker compose up -d redis
+          sleep 5
+
+          # Pull and restart API + portal
+          docker compose pull api portal
+          docker compose up -d --remove-orphans api portal
+
+          sleep 10
+          docker compose ps
+          echo "✅ Staging app deploy complete"
+          ENDSSH
 
   setup-cloudflare-staging:
     name: "Cloudflare setup — staging"

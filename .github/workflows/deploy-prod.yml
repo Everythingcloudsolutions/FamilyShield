@@ -176,32 +176,36 @@ jobs:
             docker push ghcr.io/everythingcloudsolutions/familyshield-$app:latest
           done
 
-      - name: Prepare SSH key (remove carriage returns)
-        id: ssh_key
+      - name: Deploy containers to prod VM
         env:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          VM_IP: ${{ needs.deploy-infra-prod.outputs.vm_ip }}
         shell: bash
         run: |
-          SSH_KEY_CLEAN=$(echo "$SSH_KEY" | tr -d '\r')
-          echo "key<<EOF" >> $GITHUB_OUTPUT
-          echo "$SSH_KEY_CLEAN" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          set -euo pipefail
 
-      - name: Deploy containers to prod VM
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ needs.deploy-infra-prod.outputs.vm_ip }}
-          username: ubuntu
-          key: ${{ steps.ssh_key.outputs.key }}
-          script: |
-            # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
-            sudo cloud-init status --wait 2>/dev/null || true
-            cd /opt/familyshield
-            docker compose pull api portal
-            docker compose up -d --no-deps --remove-orphans api portal
-            sleep 10
-            docker compose ps
-            echo "✅ Prod app deploy complete"
+          # Write SSH key to file (strip carriage returns)
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+
+          # SSH to VM and deploy
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            ubuntu@"$VM_IP" bash -s <<'ENDSSH'
+          set -euo pipefail
+
+          # Wait for cloud-init to complete (writes docker-compose.yml on first boot)
+          sudo cloud-init status --wait 2>/dev/null || true
+          cd /opt/familyshield
+          docker compose pull api portal
+          docker compose up -d --no-deps --remove-orphans api portal
+          sleep 10
+          docker compose ps
+          echo "✅ Prod app deploy complete"
+          ENDSSH
 
   setup-cloudflare-prod:
     name: "Cloudflare setup — prod"
