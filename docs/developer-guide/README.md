@@ -112,15 +112,43 @@ Add these repository secrets (values from bootstrap-oci.sh output):
 
 | Secret Name | Where to get it | Used For |
 |---|---|---|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare → Profile → API Tokens → Custom Token with Zone:DNS:Edit + Tunnel:Edit + Access:Edit (see SETUP.md Part 3.3) | IaC (tunnel, DNS creation) and app deployment |
-| `CLOUDFLARE_ZONE_ID` | Cloudflare → everythingcloud.ca → Overview → Zone ID | IaC (DNS zone management) |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare → Profile → Account ID | IaC (tunnel creation) |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare → Profile → API Tokens → **Custom Token** with **5 scopes** (see below) | IaC — tunnel, DNS, access apps, service token, WAF config |
+| `CLOUDFLARE_ZONE_ID` | Cloudflare → everythingcloud.ca → Overview → Zone ID | DNS zone management |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare → Profile → Account ID | Tunnel + Access creation |
+| `GH_PAT` | GitHub → Settings → Developer settings → Fine-grained PATs (Account: Everythingcloudsolutions, Repo: FamilyShield, Permission: Secrets → Read and Write) | `infra-dev.yml` writes fresh service token to GitHub Secrets after each infra deploy |
 
-**Tunnel SSH Access (App Deployments Only):**
+**Cloudflare API Token — 5 Required Scopes:**
 
-When `deploy-dev.yml` or `deploy-prod.yml` runs, it SSHes to the VM via Cloudflare Tunnel. The runner authenticates using Cloudflare API token (same as above — no separate service token needed).
+Create a **Custom Token** (not a template) with all five:
 
-> **Note:** Historically, Cloudflare Access Service Tokens (`CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET`) were required for tunnel SSH. As of 2026-04-16, this is no longer needed — the `cloudflared access ssh` command authenticates directly with the `CLOUDFLARE_API_TOKEN`. Remove these secrets from GitHub if they still exist.
+```
+Zone → DNS → Edit                           (CNAME record management)
+Account → Cloudflare Tunnel → Edit          (tunnel creation)
+Account → Access: Apps and Policies → Edit  (access application creation)
+Account → Access: Service Tokens → Edit     (service token creation)
+Zone → Config Rules → Edit                  (WAF config ruleset)
+```
+
+The "Edit zone DNS" template only grants the first scope — insufficient.
+
+**Tunnel SSH Access Tokens (auto-managed):**
+
+The infra workflow creates a Cloudflare Access Service Token via OpenTofu and automatically writes it to GitHub Secrets after each successful infra deploy. You do not create these manually.
+
+| Secret Name | Source |
+|---|---|
+| `CF_ACCESS_CLIENT_ID` | Auto-updated by `infra-dev.yml` / `infra-prod.yml` after each Cloudflare IaC apply |
+| `CF_ACCESS_CLIENT_SECRET` | Auto-updated by `infra-dev.yml` / `infra-prod.yml` after each Cloudflare IaC apply |
+
+These are used by `deploy-dev.yml` and `deploy-prod.yml` for Cloudflare tunnel SSH. They must exist before the first app deployment runs. Run `infra-dev.yml` at least once to populate them.
+
+**Bot Fight Mode — Manual Step (one-time):**
+
+Cloudflare's Bot Fight Mode fires before Access policy evaluation and blocks GitHub Actions datacenter IPs with `cf-mitigated: challenge`. It cannot be disabled via API on the free tier.
+
+Disable it once in the Cloudflare dashboard: **Security → Bots → Bot Fight Mode → OFF**
+
+Without this step, `verify-tunnel` in `deploy-dev.yml` will time out with `cf-mitigated: challenge` even when credentials are correct.
 
 ### Application Secrets
 
@@ -176,6 +204,7 @@ ssh familyshield-prod
 ```
 
 **Benefits:**
+
 - ✅ Works from anywhere (home, office, café)
 - ✅ No VPN needed
 - ✅ Cloudflare Zero Trust enforces email authentication
@@ -281,9 +310,9 @@ The following security scaffolding is now part of the application codebase:
 - File: `apps/portal/middleware.ts`
 - Protected routes: `/`, `/alerts`, `/devices`
 - Controlled by env vars:
-   - `PORTAL_BASIC_AUTH_ENABLED`
-   - `PORTAL_BASIC_AUTH_USERNAME`
-   - `PORTAL_BASIC_AUTH_PASSWORD`
+  - `PORTAL_BASIC_AUTH_ENABLED`
+  - `PORTAL_BASIC_AUTH_USERNAME`
+  - `PORTAL_BASIC_AUTH_PASSWORD`
 
 If auth is enabled but credentials are missing, portal fails safe with HTTP 503.
 
@@ -293,7 +322,7 @@ See detailed guide: `docs/developer-guide/portal-auth-scaffold.md`
 
 - Migration folder: `apps/api/supabase/migrations/`
 - Baseline migration:
-   - `20260416_0001_familyshield_core_rls.sql`
+  - `20260416_0001_familyshield_core_rls.sql`
 
 This migration creates `devices`, `content_events`, and `alerts` with:
 
@@ -440,6 +469,7 @@ See [docs/qa-framework/README.md](../qa-framework/README.md) for full test strat
 ### Getting Started with a Feature
 
 1. Start from `development` branch (integration):
+
    ```bash
    git checkout development
    git pull origin development
@@ -449,12 +479,14 @@ See [docs/qa-framework/README.md](../qa-framework/README.md) for full test strat
 2. Make your changes with tests (see Section 10 for test commands)
 
 3. Commit with Conventional Commits format:
+
    ```bash
    git add .
    git commit -m "feat(portal): add new component"
    ```
 
 4. Push and open a Pull Request:
+
    ```bash
    git push -u origin feat/your-feature-name
    gh pr create --base development  # NOT main

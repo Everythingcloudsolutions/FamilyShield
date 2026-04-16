@@ -545,37 +545,85 @@ Each environment has a separate tunnel with the following routes:
 3. **Isolation:** App deployment can be retried without rerunning expensive IaC
 4. **Security:** App workflows never need public IP SSH — tunnel is always available by the time they run
 
-### Cloudflare API Integration
+### Cloudflare IaC Module (`iac/cloudflare/`)
 
-The `scripts/cloudflare-api.sh` script is responsible for all Cloudflare operations:
+Cloudflare resources are managed as Infrastructure as Code using OpenTofu in `iac/cloudflare/`. This module has its own **separate state file** (`cloudflare/{env}/terraform.tfstate` in the same OCI bucket) — isolated from OCI infrastructure state to prevent state contamination.
 
-```bash
-# Setup all Cloudflare resources for an environment
-bash scripts/cloudflare-api.sh setup dev "$tunnel_secret" "admin@example.com"
+**What the module creates:**
 
-# Cleanup (removes tunnel, DNS, access apps)
-bash scripts/cloudflare-api.sh cleanup dev
+| Resource | Type | Purpose |
+|---|---|---|
+| Tunnel | `cloudflare_zero_trust_tunnel_cloudflared` | Named tunnel with 32-byte random secret |
+| Tunnel config | `cloudflare_zero_trust_tunnel_cloudflared_config` | 8 ingress rules + catch-all 404 |
+| DNS records | `cloudflare_record` × 8 | CNAME → tunnel CNAME, `allow_overwrite = true` |
+| Service token | `cloudflare_zero_trust_access_service_token` | Client ID + Secret for CI non-interactive auth |
+| Access apps | `cloudflare_zero_trust_access_application` × 3 | adguard, grafana, ssh — service token policy |
+| WAF config rule | `cloudflare_ruleset` | `security_level = "essentially_off"` + `bic = false` on SSH hostname |
+
+**State isolation:**
+
+```
+familyshield-tfstate/                        (OCI Object Storage bucket)
+├── dev/terraform.tfstate                ← OCI infra state
+├── cloudflare/dev/terraform.tfstate     ← Cloudflare state (separate)
+├── prod/terraform.tfstate
+└── cloudflare/prod/terraform.tfstate
 ```
 
-**Required secrets (GitHub):**
+**Required GitHub Secrets:**
 
-- `CLOUDFLARE_API_TOKEN` — Custom token with scopes: DNS Edit, Tunnel Edit, Access Apps Edit
-- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account ID
-- `CLOUDFLARE_ZONE_ID` — Cloudflare zone ID for `everythingcloud.ca`
+| Secret | Where set | Purpose |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | Manual (5 scopes — see below) | All Cloudflare API calls |
+| `CLOUDFLARE_ACCOUNT_ID` | Manual | Tunnel + Access creation |
+| `CLOUDFLARE_ZONE_ID` | Manual | DNS record management |
+| `GH_PAT` | Manual (fine-grained PAT, Secrets R+W) | Write fresh service token to GitHub Secrets |
+| `CF_ACCESS_CLIENT_ID` | Auto-updated by infra workflow | Tunnel SSH auth in app deploy workflow |
+| `CF_ACCESS_CLIENT_SECRET` | Auto-updated by infra workflow | Tunnel SSH auth in app deploy workflow |
 
-### Why Not Terraform for Cloudflare?
+**Cloudflare API Token — 5 required scopes:**
 
-Terraform/OpenTofu struggles with Cloudflare state management when:
+```
+Zone → DNS → Edit                           (CNAME record management)
+Account → Cloudflare Tunnel → Edit          (tunnel creation)
+Account → Access: Apps and Policies → Edit  (access application creation)
+Account → Access: Service Tokens → Edit     (service token creation)
+Zone → Config Rules → Edit                  (WAF config ruleset)
+```
 
-- Resources are created outside Terraform (e.g., manual Cloudflare dashboard)
-- State gets out of sync with live resources
-- Re-running `tofu apply` tries to recreate already-existing resources (409 conflicts)
+**Bot Fight Mode — must be disabled zone-wide:**
 
-**Solution:** Cloudflare resources are managed via API (`deploy-cloudflare.yml` workflow) entirely separately from IaC. This decoupling allows:
+The WAF config rule disables Security Level and Browser Integrity Check for the SSH hostname. However, **Bot Fight Mode** (free Cloudflare tier) fires *before* Access policy evaluation and blocks GitHub Actions datacenter IPs with `cf-mitigated: challenge` — the service token headers are never seen. Bot Fight Mode cannot be controlled via API on free tier. Disable it manually in the Cloudflare dashboard: **Security → Bots → Bot Fight Mode → OFF**.
 
-- Independent updates without triggering full IaC rebuilds
-- Easy cleanup via API without state conflicts
-- Idempotent operations (rerunning setup skips existing resources)
+**cloudflared ProxyCommand — explicit credential flags required:**
+
+`cloudflared` reads `TUNNEL_SERVICE_TOKEN_ID` / `TUNNEL_SERVICE_TOKEN_SECRET` env vars — **not** `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`. Those names are HTTP header names. Credentials must be passed explicitly:
+
+```bash
+-o ProxyCommand="cloudflared access ssh \
+  --hostname ${SSH_HOST} \
+  --service-token-id ${CF_ACCESS_CLIENT_ID} \
+  --service-token-secret ${CF_ACCESS_CLIENT_SECRET}"
+```
+
+Setting `CF_ACCESS_CLIENT_ID` as an environment variable has no effect on cloudflared.
+
+**First-time setup (migration from cloudflare-api.sh):**
+
+If the environment was previously set up with `scripts/cloudflare-api.sh`, delete those resources before the first `tofu apply` or the apply will fail with resource-already-exists errors:
+
+- **Zero Trust → Networks → Tunnels:** delete `familyshield-{env}`
+- **Zero Trust → Access → Applications:** delete the three dev apps (adguard, grafana, ssh)
+- **DNS records:** handled automatically — `allow_overwrite = true` takes ownership without deletion
+
+### Why the Reversal — OpenTofu for Cloudflare
+
+Earlier (pre-2026-04-16) Cloudflare resources were managed via `scripts/cloudflare-api.sh`. The migration to OpenTofu was made for:
+
+1. **State tracking:** OpenTofu tracks what was created, diffs on apply, safely updates or destroys resources
+2. **Service token lifecycle:** `cloudflare_zero_trust_access_service_token` outputs are captured and written to GitHub Secrets automatically via `gh secret set` — no manual token rotation
+3. **Single source of truth:** IaC for everything — no parallel bash API scripts to maintain
+4. **Idempotency via `allow_overwrite`:** DNS records transfer ownership without manual deletion; no 409 conflicts
 
 ### Workflow Automation Sequence (Split Architecture)
 

@@ -1,7 +1,7 @@
 # FamilyShield — Parent User Guide
 
 > **Last updated:** April 2026
-> **Portal address:** https://familyshield.everythingcloud.ca
+> **Portal address:** <https://familyshield.everythingcloud.ca>
 > **Support:** See [Getting Help](#12-getting-help) at the end of this guide
 
 ---
@@ -65,20 +65,24 @@ Research shows that children respond better to open boundaries than to secret su
 Once the server is running, here is what you need to get started:
 
 **On your phone (parent device):**
+
 - [ ] Any modern smartphone (iPhone or Android)
 - [ ] The **ntfy** app installed (free — this is how you receive alerts)
 - [ ] A web browser (Safari, Chrome, or Edge are all fine)
 
 **What you will need to know:**
+
 - [ ] The email address your account was created with
 - [ ] Your password (set during first-time setup)
 
 **Before enrolling a child's device:**
+
 - [ ] The device your child uses (iPhone, Android, Windows laptop, or Mac)
 - [ ] About 10 minutes per device
 - [ ] Your child present — they need to tap "Allow" or "Trust" at certain steps
 
 **You do not need:**
+
 - Any technical knowledge
 - An IT background
 - To understand how VPNs or DNS work
@@ -92,7 +96,7 @@ Once the server is running, here is what you need to get started:
 The parent portal is the website where you manage everything. Think of it like the Settings app for your child's internet.
 
 1. Open a web browser on your phone or computer.
-2. Go to: **https://familyshield.everythingcloud.ca**
+2. Go to: **<https://familyshield.everythingcloud.ca>**
 3. Enter your email address and password.
 4. Tap or click **Sign In**.
 
@@ -152,10 +156,10 @@ Enrolling a device means connecting that device to FamilyShield so monitoring ca
 
 You also need to install a security certificate (a digital file that allows FamilyShield to check encrypted websites, like YouTube):
 
-12. In the parent portal, tap **Download Certificate** for this device.
-13. Open the downloaded file on the iPhone. You may be prompted to go to **Settings → General → VPN & Device Management** to install it.
-14. Tap **Install**, enter the passcode, and tap **Install** again.
-15. Go to **Settings → General → About → Certificate Trust Settings** and toggle on the FamilyShield certificate.
+1. In the parent portal, tap **Download Certificate** for this device.
+2. Open the downloaded file on the iPhone. You may be prompted to go to **Settings → General → VPN & Device Management** to install it.
+3. Tap **Install**, enter the passcode, and tap **Install** again.
+4. Go to **Settings → General → About → Certificate Trust Settings** and toggle on the FamilyShield certificate.
 
 > **Note:** This certificate only lets FamilyShield identify which YouTube video or Roblox game your child is viewing. It cannot read passwords, payment details, or private messages.
 
@@ -176,10 +180,10 @@ You also need to install a security certificate (a digital file that allows Fami
 
 To install the security certificate on Android:
 
-9. In the parent portal, tap **Download Certificate** for this device.
-10. On the Android device, go to **Settings → Security → Install from storage** (the exact wording varies by phone brand — on Samsung it may be under **Biometrics and Security → Other security settings**).
-11. Select the certificate file you downloaded and follow the prompts to install it.
-12. Give the certificate a name like "FamilyShield" when asked.
+1. In the parent portal, tap **Download Certificate** for this device.
+2. On the Android device, go to **Settings → Security → Install from storage** (the exact wording varies by phone brand — on Samsung it may be under **Biometrics and Security → Other security settings**).
+3. Select the certificate file you downloaded and follow the prompts to install it.
+4. Give the certificate a name like "FamilyShield" when asked.
 
 ---
 
@@ -187,7 +191,7 @@ To install the security certificate on Android:
 
 **What you will need:** The Windows computer your child uses, and about 15 minutes.
 
-1. On the child's Windows computer, open a web browser and go to **https://tailscale.com/download**.
+1. On the child's Windows computer, open a web browser and go to **<https://tailscale.com/download>**.
 2. Download and install the **Windows** version of Tailscale.
 3. Once installed, Tailscale will appear in the system tray (bottom right of the screen, near the clock).
 4. Click the Tailscale icon and choose **Log in**.
@@ -198,13 +202,13 @@ To install the security certificate on Android:
 
 To install the security certificate on Windows:
 
-9. In the parent portal, tap **Download Certificate** for this device.
-10. On the Windows computer, double-click the downloaded certificate file.
-11. A window will open. Click **Install Certificate**.
-12. Choose **Local Machine** and click **Next**.
-13. Choose **Place all certificates in the following store**, then click **Browse** and select **Trusted Root Certification Authorities**.
-14. Click **Next**, then **Finish**.
-15. A confirmation message will appear saying the import was successful.
+1. In the parent portal, tap **Download Certificate** for this device.
+2. On the Windows computer, double-click the downloaded certificate file.
+3. A window will open. Click **Install Certificate**.
+4. Choose **Local Machine** and click **Next**.
+5. Choose **Place all certificates in the following store**, then click **Browse** and select **Trusted Root Certification Authorities**.
+6. Click **Next**, then **Finish**.
+7. A confirmation message will appear saying the import was successful.
 
 ---
 
@@ -222,12 +226,12 @@ To install the security certificate on Windows:
 
 To install the security certificate on Mac:
 
-8. In the parent portal, tap **Download Certificate** for this device.
-9. On the Mac, double-click the downloaded certificate file. It will open in an app called **Keychain Access**.
-10. Double-click the FamilyShield certificate in the list.
-11. Click the arrow next to **Trust** to expand that section.
-12. Change **When using this certificate** to **Always Trust**.
-13. Close the window and enter your Mac password to confirm.
+1. In the parent portal, tap **Download Certificate** for this device.
+2. On the Mac, double-click the downloaded certificate file. It will open in an app called **Keychain Access**.
+3. Double-click the FamilyShield certificate in the list.
+4. Click the arrow next to **Trust** to expand that section.
+5. Change **When using this certificate** to **Always Trust**.
+6. Close the window and enter your Mac password to confirm.
 
 ---
 
@@ -325,17 +329,20 @@ Changing a child's age profile adjusts all the content rules at once.
 Here is a plain-English summary of what each profile does:
 
 **Strict (recommended for ages 6–10)**
+
 - Social media is blocked (YouTube is allowed with strict filtering)
 - Gaming sites are limited to age-rated titles
 - New websites are blocked unless you have approved them
 
 **Moderate (recommended for ages 11–14)**
+
 - Social media is monitored but not blocked
 - YouTube is allowed with moderate filtering
 - Mature content is blocked
 - TikTok remains blocked
 
 **Guided (recommended for ages 15–17)**
+
 - Most content is allowed
 - High-risk content (adult sites, extreme violence) is blocked
 - Alerts sent to parent for medium and high-risk activity
@@ -424,12 +431,14 @@ You can also see all pending requests on your dashboard under **Access Requests*
 ### YouTube
 
 **What FamilyShield can see:**
+
 - The title of every video your child watched
 - The channel name
 - Whether the video was flagged as mature, violent, or sexual by YouTube's own age rating system
 - An AI-generated risk score for each video (low, medium, or high)
 
 **What FamilyShield cannot see:**
+
 - Your child's YouTube account, comments, or subscriptions
 - Videos watched while offline (downloaded videos are not monitored)
 
@@ -441,11 +450,13 @@ If a video scores as high risk, your child's browser or app will block the video
 ### Roblox
 
 **What FamilyShield can see:**
+
 - The name of every game your child played
 - The age rating of each game (as set by Roblox)
 - A risk score based on user reports and game content
 
 **What FamilyShield cannot see:**
+
 - Chat messages between players
 - Your child's Roblox account details
 
@@ -457,10 +468,12 @@ Games rated for ages 17+ will be blocked under the Strict and Moderate profiles.
 ### Twitch
 
 **What FamilyShield can see:**
+
 - The name of the channel your child watched
 - Whether the channel is marked as Mature Content by Twitch
 
 **What FamilyShield cannot see:**
+
 - Chat messages
 - Your child's Twitch account
 
@@ -472,11 +485,13 @@ Channels marked as Mature Content are blocked under Strict and Moderate profiles
 ### Discord
 
 **What FamilyShield can see:**
+
 - Whether your child is connected to Discord
 - The name of the server (community) they joined (if it is a public server)
 - Whether the server has been flagged by community reports for inappropriate content
 
 **What FamilyShield cannot see:**
+
 - Private messages or direct messages
 - The content of any conversations
 
@@ -505,10 +520,12 @@ Parents can choose to unblock TikTok for children aged 15–17 under the Guided 
 ### Instagram
 
 **What FamilyShield can see:**
+
 - Time spent on Instagram
 - Reel or video IDs (when viewed in a browser — not in the app due to app encryption)
 
 **What FamilyShield cannot see:**
+
 - Direct messages
 - Posts viewed in the Instagram app
 
@@ -653,17 +670,18 @@ This guide is available in the FamilyShield documentation on GitHub.
 
 FamilyShield is open source. If you have a question that is not answered here, you can:
 
-- Open an issue on GitHub: https://github.com/Everythingcloudsolutions/FamilyShield
+- Open an issue on GitHub: <https://github.com/Everythingcloudsolutions/FamilyShield>
 - Search existing issues — another parent may have had the same question
 
 ### Contacting support
 
 For direct support, contact:
 
-- **Email:** support@everythingcloudsolutions.ca
+- **Email:** <support@everythingcloudsolutions.ca>
 - **Response time:** Within 2 business days (Canada business hours, Eastern Time)
 
 When contacting support, please include:
+
 - Your child's device type (iPhone, Android, Windows, Mac)
 - A description of what happened
 - Any error messages you saw (a screenshot is helpful)
@@ -674,4 +692,4 @@ When contacting support, please include:
 
 *FamilyShield User Guide — Version 1.0 — April 2026*
 *Everythingcloudsolutions — Canada*
-*https://familyshield.everythingcloud.ca*
+*<https://familyshield.everythingcloud.ca>*

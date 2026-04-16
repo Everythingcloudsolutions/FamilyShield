@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (workflow split; CF tunnel SSH; tighten-ssh via tofu apply; Cloudflare tags removed; cloud-init wait added)
+> Last updated: 2026-04-16 (workflow split; CF tunnel SSH; tighten-ssh via tofu apply; Cloudflare migrated to OpenTofu iac/cloudflare/; Bot Fight Mode; service token; cloudflared credential flags)
 
 ---
 
@@ -896,17 +896,42 @@ Full details in `docs/troubleshooting/infrastructure.md` — Issues 3, 4, and 8.
 
 ### Cloudflare API Token — Missing Scopes
 
-**Error:** `Authentication error (10000)` when creating Argo Tunnel or Access Applications
+**Error:** `Authentication error (10000)` when creating Argo Tunnel or Access Applications, or `Invalid request: tags contain a tag that does not exist (12130)` on service token creation.
 
-**Cause:** The Cloudflare API token must have ALL THREE scopes:
+**Cause:** The `iac/cloudflare/` OpenTofu module requires **ALL FIVE** scopes:
 
 - Zone → DNS → Edit (for CNAME records)
 - Account → Cloudflare Tunnel → Edit (for Argo Tunnel)
 - Account → Access: Apps and Policies → Edit (for Zero Trust apps)
+- Account → Access: Service Tokens → Edit (for CI service token)
+- Zone → Config Rules → Edit (for WAF security level ruleset)
 
-The "Edit zone DNS" template only grants the first scope — insufficient. Must use a **Custom Token** with all 3.
+The "Edit zone DNS" template only grants the first scope — insufficient. The old 3-scope token used by `cloudflare-api.sh` is also insufficient for the new OpenTofu module.
 
-**Fix:** Recreate token in Cloudflare dashboard as Custom Token (see SETUP.md Part 3.3), update `CLOUDFLARE_API_TOKEN` GitHub secret, re-run workflow.
+**Fix:** Recreate token in Cloudflare dashboard as Custom Token with all 5 scopes, update `CLOUDFLARE_API_TOKEN` GitHub secret, re-run `infra-dev.yml`.
+
+### Bot Fight Mode — Blocks GitHub Actions Before Access Policy Evaluation
+
+**Error:** `cf-mitigated: challenge` on SSH endpoint; `verify-tunnel` times out after 5 attempts even with correct service token credentials.
+
+**Cause:** Cloudflare Bot Fight Mode (free tier) fires *before* Access policy evaluation and blocks GitHub Actions datacenter IPs. The WAF config rule (`security_level = "essentially_off"`, `bic = false`) in `iac/cloudflare/waf.tf` handles Security Level and BIC only — it does not disable Bot Fight Mode, which is a separate zone-level toggle not controllable via API on the free tier.
+
+**Fix (one-time, manual):** Cloudflare dashboard → Security → Bots → Bot Fight Mode → OFF. This must be done once per zone; it is not automated.
+
+### cloudflared ProxyCommand — Must Use Explicit Credential Flags
+
+**Error:** `verify-tunnel` makes 5 SSH attempts, all failing silently. cloudflared finds no credentials.
+
+**Cause:** cloudflared reads `TUNNEL_SERVICE_TOKEN_ID` / `TUNNEL_SERVICE_TOKEN_SECRET` env vars — **not** `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`. Those are HTTP header names, not cloudflared env var names. Setting `CF_ACCESS_CLIENT_ID` as an environment variable has no effect on cloudflared.
+
+**Fix:** Pass credentials explicitly via flags in every ProxyCommand:
+
+```bash
+-o ProxyCommand="cloudflared access ssh \
+  --hostname ${SSH_HOST} \
+  --service-token-id ${CF_ACCESS_CLIENT_ID} \
+  --service-token-secret ${CF_ACCESS_CLIENT_SECRET}"
+```
 
 ### OCI IAM — Missing Tenancy Permissions
 
@@ -1002,10 +1027,15 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - Updated `pr-check.yml` — split into `lint-iac` + `lint-apps` + path-filtered `plan-dev` / `plan-prod`
   - App workflows never use public IP SSH — work regardless of NSG state (tightened or open)
   - Mixed commit handling: `wait-for-infra` job polls GitHub API and waits up to 10 min for infra workflow to complete
-- ✅ **Pipeline blockers resolved (2026-04-16, continued):**
-  - OCI CLI NSG commands kept failing (`security-group-rule`, `nsg rule`, `nsg-security-rules`) — replaced with second `tofu apply` using `TF_VAR_admin_ssh_cidrs='["173.33.214.49/32"]'`; keeps state consistent, no OCI CLI NSG commands needed
-  - Cloudflare Access App creation failing with error 12130 — tags must be pre-created; removed tags from all payloads (commit 12ebf77)
-  - Bootstrap VM step failing with `docker: command not found` on fresh VMs — added `sudo cloud-init status --wait` before docker commands (commit 1df4dcd)
+- ✅ **Cloudflare migrated to OpenTofu IaC (2026-04-16):** `iac/cloudflare/` module replaces `scripts/cloudflare-api.sh`
+  - Tunnel, DNS (8 records), Access apps (adguard, grafana, ssh), service token, WAF config rule all managed by OpenTofu
+  - Separate state key: `cloudflare/{env}/terraform.tfstate` in same OCI bucket as OCI infra state
+  - `allow_overwrite = true` on DNS records takes ownership from old API script records (no deletion needed)
+  - Service token (CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET) captured from `tofu output` and auto-written to GitHub Secrets via `GH_PAT`
+  - WAF config rule: `security_level = "essentially_off"` + `bic = false` on SSH hostname (handles Security Level + BIC; Bot Fight Mode requires manual dashboard toggle)
+  - API token now requires 5 scopes: DNS Edit, Tunnel Edit, Access Apps Edit, Service Tokens Edit, Config Rules Edit
+  - cloudflared ProxyCommand must use explicit `--service-token-id` / `--service-token-secret` flags (env var names `CF_ACCESS_CLIENT_ID` are HTTP headers, not cloudflared env vars)
+  - Bot Fight Mode must be disabled zone-wide in Cloudflare dashboard (Security → Bots → Bot Fight Mode → OFF) — free tier, no API control
 - 🔲 First full end-to-end successful dev pipeline run (infra-dev.yml: all 4 jobs green + deploy-dev.yml: all 5 jobs green)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 
