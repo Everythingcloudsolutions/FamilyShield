@@ -260,14 +260,18 @@ jobs:
         shell: bash
         run: |
           if [ -z "$NSG_ID" ] || [ -z "$RULE_ID" ]; then
-            echo "⚠️  NSG_ID or RULE_ID not available — skipping NSG rule removal"
-            exit 0
+            echo "❌ NSG_ID or RULE_ID not available — cannot verify NSG rule removal. Manual cleanup may be required."
+            exit 1
           fi
-          oci network nsg-rules remove \
+
+          if oci network nsg-rules remove \
             --nsg-id "$NSG_ID" \
-            --security-rule-ids "[\"$RULE_ID\"]" || \
-            echo "⚠️  NSG rule removal failed — may need manual cleanup"
-          echo "✅ SSH hole sealed"
+            --security-rule-ids "[\"$RULE_ID\"]"; then
+            echo "✅ SSH hole sealed"
+          else
+            echo "❌ NSG rule removal failed — manual cleanup may be required"
+            exit 1
+          fi
 
   setup-cloudflare-dev:
     name: "Cloudflare setup — dev"
