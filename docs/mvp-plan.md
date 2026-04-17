@@ -138,6 +138,7 @@ OCI ARM VM (ca-toronto-1)
 > **Step 1.8 note — Headscale `--user` flag takes numeric ID, not username:**
 > As of recent headscale versions, `--user` requires the numeric user ID from `headscale users list`, not the name:
 > ```bash
+> docker exec familyshield-headscale headscale users create parent
 > docker exec familyshield-headscale headscale users list
 > # Note the ID column (e.g. 1)
 > docker exec familyshield-headscale headscale preauthkeys create --user 1 --reusable --expiration 8760h
