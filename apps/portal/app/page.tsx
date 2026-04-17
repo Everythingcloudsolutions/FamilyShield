@@ -7,14 +7,17 @@ export const dynamic = 'force-dynamic'
 import { createClient } from '@supabase/supabase-js'
 import { AlertFeed } from '../components/AlertFeed'
 import { DeviceCard } from '../components/DeviceCard'
-import { RiskBadge } from '../components/RiskBadge'
-import type { Alert, Device, RiskLevel } from '../lib/types'
+import type { Alert, Device } from '../lib/types'
 
-async function getServerSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  )
+function getServerSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+  if (!url || !anonKey) {
+    return null
+  }
+
+  return createClient(url, anonKey)
 }
 
 function StatCard({
@@ -41,37 +44,48 @@ function StatCard({
 }
 
 export default async function DashboardPage() {
-  const supabase = await getServerSupabase()
+  const supabase = getServerSupabase()
+  let dataMode: 'live' | 'inactive' | 'degraded' = supabase ? 'live' : 'inactive'
 
-  // Fetch last 20 alerts for initial feed
-  const { data: recentAlerts } = await supabase
-    .from('alerts')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(20)
+  let alertList: Alert[] = []
+  let deviceList: Device[] = []
+  let alertsToday = 0
+  let eventsToday = 0
 
-  // Fetch enrolled devices
-  const { data: devices } = await supabase
-    .from('devices')
-    .select('*')
-    .order('enrolled_at', { ascending: false })
+  if (supabase) {
+    try {
+      const todayStart = new Date()
+      todayStart.setHours(0, 0, 0, 0)
 
-  // Today's stats
-  const todayStart = new Date()
-  todayStart.setHours(0, 0, 0, 0)
+      const [{ data: recentAlerts }, { data: devices }, { count: alertsTodayCount }, { count: eventsTodayCount }] = await Promise.all([
+        supabase
+          .from('alerts')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(20),
+        supabase
+          .from('devices')
+          .select('*')
+          .order('enrolled_at', { ascending: false }),
+        supabase
+          .from('alerts')
+          .select('*', { count: 'exact', head: true })
+          .gte('created_at', todayStart.toISOString()),
+        supabase
+          .from('content_events')
+          .select('*', { count: 'exact', head: true })
+          .gte('captured_at', todayStart.toISOString()),
+      ])
 
-  const { count: alertsToday } = await supabase
-    .from('alerts')
-    .select('*', { count: 'exact', head: true })
-    .gte('created_at', todayStart.toISOString())
+      alertList = (recentAlerts ?? []) as Alert[]
+      deviceList = (devices ?? []) as Device[]
+      alertsToday = alertsTodayCount ?? 0
+      eventsToday = eventsTodayCount ?? 0
+    } catch {
+      dataMode = 'degraded'
+    }
+  }
 
-  const { count: eventsToday } = await supabase
-    .from('content_events')
-    .select('*', { count: 'exact', head: true })
-    .gte('captured_at', todayStart.toISOString())
-
-  const alertList = (recentAlerts ?? []) as Alert[]
-  const deviceList = (devices ?? []) as Device[]
   const criticalCount = alertList.filter((a) => a.risk_level === 'critical').length
 
   return (
@@ -84,6 +98,17 @@ export default async function DashboardPage() {
         </p>
       </div>
 
+      {dataMode !== 'live' && (
+        <div
+          data-testid="supabase-status-banner"
+          className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+        >
+          {dataMode === 'inactive'
+            ? 'Supabase is inactive or not configured. Dashboard is running in offline mode.'
+            : 'Supabase is temporarily unreachable. Showing degraded view with no live data.'}
+        </div>
+      )}
+
       {/* Stats row */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="stats-grid">
         <StatCard
@@ -93,14 +118,14 @@ export default async function DashboardPage() {
         />
         <StatCard
           label="Events today"
-          value={eventsToday ?? 0}
+          value={eventsToday}
           sub="captured"
         />
         <StatCard
           label="Alerts today"
-          value={alertsToday ?? 0}
+          value={alertsToday}
           sub="triggered"
-          accent={(alertsToday ?? 0) > 0 ? 'text-orange-400' : 'text-slate-100'}
+          accent={alertsToday > 0 ? 'text-orange-400' : 'text-slate-100'}
         />
         <StatCard
           label="Critical"

@@ -61,59 +61,111 @@ Before triggering any deployment, verify:
 
 ## Deploying to Each Environment
 
-### Dev Deployment
+### Split Workflow Architecture (2026-04-16)
 
-**Trigger:** Manual via `gh` CLI or GitHub UI
+FamilyShield deployments are now split into separate workflows triggered by different file changes:
+
+- **Infra workflows** (`infra-dev.yml`, `infra-prod.yml`) — triggered by `iac/**` changes
+  - Deploy OCI infrastructure via `tofu apply`
+  - Set up Cloudflare tunnel
+  - Verify tunnel is active
+  - Tighten SSH to admin IP only
+  
+- **App workflows** (`deploy-dev.yml`, `deploy-prod.yml`) — triggered by `apps/**` changes
+  - Build and push Docker images
+  - Deploy containers via Cloudflare tunnel SSH (never public IP)
+  - Smoke test endpoints
+
+Both workflows run independently. If you commit changes to both `iac/` and `apps/` at the same time, both workflows trigger and run in parallel.
+
+### Dev Deployment (Infrastructure)
+
+**Trigger:** Push to `development` with `iac/**` changes
 
 ```bash
-# Option 1: CLI
-gh workflow run deploy-dev.yml --ref development
+# Locally: make iac changes
+# Commit and push to development — infra-dev.yml triggers automatically
+git add iac/
+git commit -m "iac(compute): increase dev VM to 2 OCPU"
+git push origin development
 
-# Option 2: GitHub UI
-# 1. Go to Actions tab
-# 2. Click "Deploy → Dev"
-# 3. Click "Run workflow" → "Run workflow"
+# Or manually trigger
+gh workflow run infra-dev.yml --ref development
 ```
 
-**Expected duration:** 15-20 minutes
+**Expected duration:** 12-15 minutes
 
 **Pipeline jobs:**
 
-1. `deploy-infra-dev` — IaC (10 min) — Creates OCI VM, VCN, storage
-2. `build-and-push` — Docker images (3 min)
-3. `deploy-app-dev` — SSH deploy (2 min)
-4. `setup-cloudflare-dev` — Tunnel + DNS (3 min)
-5. `smoke-test` — Portal HTTP check (1 min)
-6. `tighten-ssh-dev` — Restrict to admin IP (1 min)
+1. `deploy-infra-dev` — OpenTofu apply (8 min) — Creates OCI VM, VCN, NSG with SSH 0.0.0.0/0
+2. `setup-cloudflare-dev` — Cloudflare setup (3 min) — Tunnel + DNS + Access app; bootstrap docker-compose.yml
+3. `smoke-infra-dev` — Tunnel verification (1 min) — Checks tunnel is ACTIVE and portal reachable
+4. `tighten-ssh-dev` — SSH hardening (2 min) — Second tofu apply with `admin_ssh_cidrs = ["173.33.214.49/32"]`
 
 **Post-deployment:**
 
-- Portal: `https://familyshield-dev.everythingcloud.ca` (should load)
-- API: `https://api-dev.everythingcloud.ca/health` (should return 200 or 403)
-- SSH: `ssh -i ~/.ssh/familyshield ubuntu@<vm-ip>` or via Cloudflare tunnel
+- Portal: `https://familyshield-dev.everythingcloud.ca` (check tunnel is active)
+- SSH via tunnel: `ssh -i ~/.ssh/familyshield ubuntu@ssh-dev.everythingcloud.ca` (Cloudflare access wall requires credentials)
+
+### Dev Deployment (Application)
+
+**Trigger:** Push to `development` with `apps/**` changes
+
+```bash
+# Locally: make app changes
+# Commit and push to development — deploy-dev.yml triggers automatically
+git add apps/
+git commit -m "feat(api): add YouTube content enricher"
+git push origin development
+
+# Or manually trigger
+gh workflow run deploy-dev.yml --ref development
+```
+
+**Expected duration:** 8-12 minutes
+
+**Pipeline jobs:**
+
+1. `wait-for-infra` — Concurrency check (if infra-dev also triggered, wait up to 10 min for it to complete)
+2. `verify-tunnel` — Pre-flight check (confirm Cloudflare tunnel is reachable before wasting build time)
+3. `build-and-push` — Docker build (4 min) — Builds api + portal for linux/arm64, pushes to GHCR
+4. `deploy-app-dev` — App deployment (3 min) — SSH via Cloudflare tunnel, restart containers
+5. `smoke-test` — Health check (1 min) — Portal and API health endpoints
+
+**Post-deployment:**
+
+- Portal: `https://familyshield-dev.everythingcloud.ca/` (should load normally)
+- API: `https://familyshield-dev.everythingcloud.ca/api/health` (should return 200 or 403)
 
 ---
 
 ### Staging Deployment (Ephemeral)
 
-Staging is ephemeral and spun up/torn down per QA cycle.
+Staging is ephemeral and spun up/torn down per QA cycle. Uses a **combined workflow** (not split like dev/prod) for simplicity since staging is temporary.
 
-**Trigger:** Create `qa` branch from `development`
+**Trigger:** Push to `qa` branch
 
 ```bash
-# Create and push qa branch
+# Create and push qa branch from development
 git checkout development
 git pull origin development
 git checkout -b qa
 git push -u origin qa
 
-# This auto-triggers deploy-staging.yml
-# GitHub Actions will deploy to staging
+# This auto-triggers deploy-staging.yml (combined IaC + app workflow)
 ```
 
 **Expected duration:** 20-25 minutes
 
-**Pipeline jobs:** Same as dev (6 jobs)
+**Pipeline jobs:** (combined — infra and app in sequence)
+
+1. `deploy-infra-staging` — OCI infrastructure (8 min)
+2. `setup-cloudflare-staging` — Tunnel setup (3 min)
+3. `smoke-infra-staging` — Tunnel check (1 min)
+4. `build-and-push` — Docker images (4 min)
+5. `deploy-app-staging` — App deployment (2 min)
+6. `smoke-test` — Health check (1 min)
+7. `auto-teardown` — Destroy infrastructure (2 min) — runs automatically after tests complete
 
 **After testing:** Delete `qa` branch and create PR `development` → `main` for production
 
@@ -122,13 +174,13 @@ git push origin --delete qa
 gh pr create --base main --head development
 ```
 
-**Staging auto-teardown:** After integration tests complete (pass or fail), the `auto-teardown` job runs automatically and tears down the staging environment + deletes the `qa` branch.
+**Note:** The `auto-teardown` job destroys all staging OCI resources to avoid burning Always Free tier credits. This is intentional and automatic.
 
 ---
 
 ### Production Deployment
 
-Production requires manual approval in GitHub Environment.
+Production uses split workflows (infra and app) with safety checks and manual approval gate.
 
 **Trigger:** Merge PR from `development` → `main`
 
@@ -136,18 +188,39 @@ Production requires manual approval in GitHub Environment.
 # Create PR after staging passes
 gh pr create --base main --head development
 
-# Approve PR in GitHub UI
-# Merge to main — this triggers deploy-prod.yml
+# Review PR in GitHub UI
+# Merge to main — this triggers both infra-prod.yml and deploy-prod.yml
 ```
 
-**Expected duration:** 20-25 minutes (same as staging)
+**Expected duration:** 20-25 minutes (combined for infra + app)
 
-**Approval gate:** GitHub Environment `prod` requires manual approval (configured in repo Settings → Environments)
+**Safety checks:**
+
+1. `infra-prod.yml`: `safety-check` job requires you to manually type `DEPLOY` in the workflow_dispatch input
+2. GitHub Environment `prod` approval gate (configure in repo Settings → Environments)
+
+**Pipeline jobs (Infra):**
+
+1. `safety-check` — Manual confirmation (must type "DEPLOY")
+2. `deploy-infra-prod` — OCI infrastructure (8 min)
+3. `setup-cloudflare-prod` — Tunnel setup (3 min)
+4. `smoke-infra-prod` — Tunnel check (1 min)
+5. `tighten-ssh-prod` — SSH hardening (1 min)
+6. `create-release` — GitHub Release for deployment record
+
+**Pipeline jobs (App):**
+
+1. `wait-for-infra` — Wait for infra workflow (up to 10 min)
+2. `verify-tunnel` — Pre-flight tunnel check (1 min)
+3. `promote-images` — Tag dev images as prod (2 min)
+4. `deploy-app-prod` — App deployment (2 min)
+5. `smoke-test` — Health check (1 min)
+6. `create-release` — GitHub Release for deployment record
 
 **Post-deployment:**
 
 - Portal: `https://familyshield.everythingcloud.ca`
-- API: `https://api.everythingcloud.ca/health`
+- API: `https://familyshield.everythingcloud.ca/api/health`
 
 ---
 
@@ -156,28 +229,36 @@ gh pr create --base main --head development
 ### Via GitHub UI
 
 1. Go to **Actions** tab
-2. Select the workflow (Deploy → Dev / Staging / Prod)
+2. Select the workflow (`infra-*` or `deploy-*`)
 3. Click the running workflow
 4. Watch each job progress in real-time
 
 ### Via `gh` CLI
 
 ```bash
-# Watch deploy-dev in real-time
+# Watch infra-dev in real-time
+gh run list --workflow infra-dev.yml --limit 1 --json status,conclusion,createdAt --watch
+
+# Watch deploy-dev in real-time (app-only workflow)
 gh run list --workflow deploy-dev.yml --limit 1 --json status,conclusion,createdAt --watch
 
 # Get logs for specific job
 gh run view <run-id> --log --log-failed
 ```
 
-### Key Success Indicators
+### Key Success Indicators — Infra Workflow
 
-- ✅ `deploy-infra-*` completes — VM created, IaC outputs captured
-- ✅ `build-and-push` completes — Docker images pushed to GHCR
-- ✅ `deploy-app-*` completes — API and Portal containers running
-- ✅ `setup-cloudflare-*` completes — Tunnel token written, cloudflared restarted
-- ✅ `smoke-test` returns 200 — Portal is reachable and responding
-- ✅ `tighten-ssh-*` completes — SSH restricted to admin IP only
+- ✅ `deploy-infra-*` completes — VM created, IaC outputs captured, SSH open to 0.0.0.0/0
+- ✅ `setup-cloudflare-*` completes — Tunnel token written, cloudflared started via docker run --network host
+- ✅ `smoke-infra-*` completes — Tunnel is ACTIVE, portal reachable via tunnel
+- ✅ `tighten-ssh-*` completes — Second tofu apply runs, SSH restricted to admin IP only (173.33.214.49/32)
+
+### Key Success Indicators — App Workflow
+
+- ✅ `verify-tunnel` completes — Pre-check confirms cloudflared tunnel is reachable
+- ✅ `build-and-push` completes — Docker images built for linux/arm64, pushed to GHCR
+- ✅ `deploy-app-*` completes — SSH via Cloudflare tunnel succeeds, containers restarted
+- ✅ `smoke-test` returns 200 — Portal accessible via tunnel, API health check passes
 
 ---
 
@@ -351,21 +432,61 @@ docker compose up -d --force-recreate
 
 ### Failure: `tighten-ssh-*` fails
 
-**Cause:** OCI CLI command error or NSG not found
+**Cause:** The `tighten-ssh-*` job runs a second `tofu apply` to tighten SSH. It can fail if:
+- OCI credentials are invalid or expired
+- Terraform state is corrupted or locked
+- Incorrect `admin_ssh_cidrs` variable value
 
-**Common error:** `Error: No such command 'nsg-rules'`  
-**Fix:** Update to `oci network security-group-rule` commands (see docs/troubleshooting/infrastructure.md Issue 12)
+**Common error:** `Error: Error acquiring state lock`  
+**Fix:** Another deployment is holding the lock. Wait 5 minutes and retry. The tighten-ssh job does NOT use OCI CLI NSG commands — it uses `tofu apply` instead, which keeps the NSG in IaC state and avoids state drift.
+
+**Debug:** Check if NSG rules are correct:
+
+```bash
+# SSH to VM (during deployment when SSH is still open)
+ssh ubuntu@<vm-ip>
+
+# Query current NSG rules (check if already tightened or still open)
+sudo ip route  # shows current firewall (if UFW active)
+
+# After tighten-ssh completes, you can verify via Cloudflare tunnel
+ssh -i ~/.ssh/familyshield ubuntu@ssh-dev.everythingcloud.ca
+```
+
+**Manual fix (if needed):** Re-run `tighten-ssh-{env}` job manually by triggering a new deploy workflow commit.
 
 ---
 
 ## Deployment Runbook (Quick Reference)
 
-### Deploy to Dev
+### Deploy Infra to Dev
 
 ```bash
-gh workflow run deploy-dev.yml --ref development
-# Wait 15-20 min
+# Trigger: Push to development with iac/** changes
+git add iac/
+git commit -m "iac(compute): update dev VM settings"
+git push origin development
+
+# Or manually trigger
+gh workflow run infra-dev.yml --ref development
+
+# Wait 12-15 min (infra-dev.yml: tofu apply → setup-cloudflare → smoke-infra → tighten-ssh)
 # Verify: curl https://familyshield-dev.everythingcloud.ca
+```
+
+### Deploy App to Dev
+
+```bash
+# Trigger: Push to development with apps/** changes
+git add apps/
+git commit -m "feat(api): add YouTube enricher"
+git push origin development
+
+# Or manually trigger
+gh workflow run deploy-dev.yml --ref development
+
+# Wait 8-12 min (deploy-dev.yml: build-and-push → deploy-app → smoke-test)
+# Verify: curl https://familyshield-dev.everythingcloud.ca/api/health
 ```
 
 ### Deploy to Staging (Ephemeral QA)
@@ -373,19 +494,25 @@ gh workflow run deploy-dev.yml --ref development
 ```bash
 git checkout development && git pull
 git checkout -b qa && git push -u origin qa
-# Wait 20-25 min for auto-deploy
-# Run manual QA tests
-# auto-teardown job removes staging at end
+
+# Wait 20-25 min for auto-deploy (combined infra + app workflow)
+# Run manual QA tests against https://familyshield-staging.everythingcloud.ca
+# auto-teardown job removes staging environment automatically
 ```
 
 ### Deploy to Production
 
 ```bash
 gh pr create --base main --head development
-# Approve PR in GitHub UI
-# Merge to main — auto-triggers deploy-prod.yml
-# Wait 20-25 min
-# Verify: curl https://familyshield.everythingcloud.ca
+# Review PR in GitHub UI (tofu plan posted as comment)
+# Approve and merge to main
+
+# This triggers:
+# - infra-prod.yml (requires manual "DEPLOY" confirmation) → sets up infrastructure
+# - deploy-prod.yml (separate app workflow) → deploys containers
+
+# Wait 20-25 min total
+# Verify: curl https://familyshield.everythingcloud.ca/api/health
 ```
 
 ---
@@ -428,6 +555,88 @@ sudo tail -f /var/log/cloud-init-output.log
 cd /opt/familyshield
 docker compose up -d
 ```
+
+---
+
+## Manual Utility Workflows
+
+### deploy-platform-services.yml — Configuration Sync Without Rebuild
+
+This workflow is a **manual utility** (not auto-triggered) for syncing configuration files and restarting services without a full Docker rebuild.
+
+**When to use:**
+
+- You changed `apps/platform-config/` (headscale config, grafana provisioning, ntfy setup, etc.)
+- You want to test config changes quickly without waiting for Docker builds (8-12 min)
+- You changed mitmproxy addon code only (not `requirements.txt`) and want to iterate fast
+
+**When NOT to use:**
+
+- You changed `apps/api/` or `apps/portal/` code — use `deploy-dev.yml` instead
+- You changed `requirements.txt` in mitmproxy — use `deploy-dev.yml` (needs rebuild)
+- You changed infrastructure (`iac/`) — use `infra-dev.yml` instead
+
+**How to trigger:**
+
+GitHub UI:
+1. Go to **Actions** tab
+2. Select **Deploy Platform Services**
+3. Click **Run workflow**
+4. Select environment: `dev`, `staging`, or `prod`
+5. Click **Run workflow**
+
+Or via CLI:
+
+```bash
+gh workflow run deploy-platform-services.yml \
+  --ref development \
+  -f environment=dev
+```
+
+**Expected duration:** 3-5 minutes
+
+**Pipeline jobs:**
+
+1. `bootstrap-vm` — Pre-checks, waits for cloud-init to complete
+2. `sync-config` — SCP assets to `/opt/familyshield/apps/platform-config/`
+3. `restart-services` — `docker compose restart` (or individual services if specified)
+4. `verify-health` — Basic health check
+
+**Post-workflow:**
+
+- Configuration files are updated on the VM
+- Services restart with new configs
+- No new Docker images built or pushed
+- Portal may be briefly unavailable during restart (10-30 sec)
+
+**Example: Update Headscale Configuration**
+
+```bash
+# 1. Edit the config locally
+vim apps/platform-config/headscale/headscale.yaml
+
+# 2. Commit (will auto-trigger deploy-dev.yml — full rebuild)
+git add apps/platform-config/headscale/headscale.yaml
+git commit -m "fix(headscale): disable MagicDNS to fix startup error"
+git push origin development
+
+# OR for quick iteration (no commit yet):
+# Use deploy-platform-services.yml manual workflow (see above)
+```
+
+**Troubleshooting deploy-platform-services:**
+
+**Failure: "Cannot overwrite file exists" or "Permission denied"**
+
+This happens when the bootstrap (infra workflow) creates directories as root with tight permissions, and the utility workflow tries to overwrite as `ubuntu` user.
+
+**Fix:** The workflow handles this — it adds `sudo tar --overwrite` and `sudo chown -R ubuntu:ubuntu` to reset permissions. If it still fails, run it again or check the SSH key is valid.
+
+**Failure: "docker compose: command not found"**
+
+This means docker-compose.yml is missing on the VM or cloud-init hasn't completed.
+
+**Fix:** The `bootstrap-vm` step includes `sudo cloud-init status --wait`, so this should not happen. If it does, run `infra-dev.yml` first to ensure the VM is fully initialized.
 
 ---
 

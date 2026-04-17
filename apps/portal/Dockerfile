@@ -19,13 +19,14 @@ WORKDIR /app
 
 RUN apk add --no-cache dumb-init
 
-# Copy Next.js standalone output — no npm install in arm64
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-
-# Non-root user
+# Non-root user — created before COPY so --chown works
 RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
+
+# Copy Next.js standalone output with correct ownership so nodejs user can write cache
+COPY --from=builder --chown=nodejs:nodejs /app/public ./public
+COPY --from=builder --chown=nodejs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nodejs:nodejs /app/.next/static ./.next/static
+
 USER nodejs
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

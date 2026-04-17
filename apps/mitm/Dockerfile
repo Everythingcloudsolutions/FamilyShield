@@ -15,8 +15,12 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
   CMD wget -q -O - http://localhost:8080/ || exit 1
 
 # Run mitmproxy in transparent mode with our addon
+# --web-port 8080  = web UI (mapped to host:8888 via docker-compose)
+# --listen-port 8081 = proxy port (mapped to host:8889 via docker-compose)
+# These must be different ports — mitmweb defaults both to 8080 which causes EADDRINUSE.
 CMD ["mitmweb", \
-     "--mode", "transparent", \
-     "--web-host", "0.0.0.0", \
-     "--web-port", "8080", \
-     "--scripts", "/addon/familyshield_addon.py"]
+  "--mode", "transparent", \
+  "--web-host", "0.0.0.0", \
+  "--web-port", "8080", \
+  "--listen-port", "8081", \
+  "--scripts", "/addon/familyshield_addon.py"]

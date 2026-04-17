@@ -77,6 +77,13 @@ write_files:
       bantime = 3600
 
 runcmd:
+  # Disable systemd-resolved stub listener — frees port 53 for AdGuard Home
+  # Ubuntu 22.04 binds 0.0.0.0:53 by default; AdGuard needs that port
+  - mkdir -p /etc/systemd/resolved.conf.d
+  - 'echo -e "[Resolve]\nDNSStubListener=no" > /etc/systemd/resolved.conf.d/no-stub.conf'
+  - systemctl restart systemd-resolved
+  - ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+
   # Setup UFW
   - bash /tmp/setup-ufw.sh
 

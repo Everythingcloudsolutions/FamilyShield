@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (workflow split: infra-dev/prod separate from deploy-dev/prod; CF tunnel SSH for app deploys)
+> Last updated: 2026-04-17 (mitmproxy port isolation; Portal E2E tests; Docker build locally; Supabase schema setup)
 
 ---
 
@@ -131,13 +131,41 @@ pytest -v            # Run all tests with verbose output
 pytest tests/test_addon.py::TestClass::test_method  # Run single test
 ```
 
-**Portal (Next.js) — once scaffolded:**
+**Portal (Next.js):**
 
 ```bash
 cd apps/portal
 npm install
-npm run dev          # Dev server on http://localhost:3000
-npm test             # Run test suite
+npm run dev          # Dev server on http://localhost:3000 (requires running API at localhost:3001)
+npm test             # Run Jest unit tests
+npm run test:e2e     # Run Playwright E2E tests (dashboard, alerts, devices)
+npm run test:e2e -- --debug  # Run E2E with headed browser
+npm run lint         # Run ESLint
+```
+
+**Note:** Portal requires API running locally (`npm run dev` in `apps/api/`) and Supabase project configured in `.env.local`.
+
+**Local Docker builds (before pushing to GHCR):**
+
+```bash
+# API Docker image (arm64)
+cd apps/api
+docker build --platform linux/arm64 -t familyshield-api:dev .
+docker run --env-file .env.docker familyshield-api:dev npm run dev
+
+# Portal Docker image (static Next.js)
+cd apps/portal
+docker build -t familyshield-portal:dev .
+docker run -p 3000:3000 familyshield-portal:dev
+```
+
+**Supabase schema setup:**
+
+```bash
+# Create tables in Supabase (one-time per environment)
+# Tables: content_events, alerts, devices, alert_rules, users
+# Run migrations via Supabase Studio or SQL editor
+# Enable RLS on all tables before deploying to production
 ```
 
 **IaC validation (OpenTofu):**
@@ -389,9 +417,7 @@ The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 10. **Generate SSH key** — for VS Code Remote SSH access
 11. **Summary** — output all GitHub secrets to configure
 
-**Critical Detail:** Step 6 creates a bootstrap IAM policy that allows the GitHub Actions user to manage resources in the tenancy. Step 7 creates three compartments that IaC queries for and uses. Without these, `tofu apply` will fail with 404-NotAuthorizedOrNotFound errors. Step 8 creates a single shared bucket with prefixes (Option A architecture).
-
-**Idempotency:** The script is idempotent — re-running it will skip existing resources and only create missing ones. Safe to run multiple times.
+**Critical:** Steps 6–8 create IAM policy (tenant-wide), three compartments (dev/staging/prod), and state bucket. Without these, `tofu apply` fails. Script is idempotent — safe to re-run.
 
 ---
 
@@ -665,6 +691,17 @@ This is the minimum hardening sequence Claude Code should recommend and preserve
 
 ## Known Issues & Troubleshooting
 
+### mitmproxy — Port Isolation (2026-04-17)
+
+**Fix:** Updated mitmproxy CMD to use separate ports for web UI (8081) and listen mode (8888/8889). This prevents port conflicts when running mitmproxy locally alongside other services.
+
+```yaml
+# apps/mitm/Dockerfile
+CMD ["mitmproxy", "--listen-port", "8888", "--mode", "transparent", "--web-port", "8081"]
+```
+
+If you run mitmproxy locally, ensure ports 8888, 8889, and 8081 are not in use.
+
 ### SSH Security — Deploy-First, Secure-Last (2026-04-16)
 
 **Why SSH deployed wide-open, then tightened?**
@@ -808,76 +845,55 @@ local payload=$(jq -n \
 
 Use `--argjson` for boolean/numeric values, `--arg` for strings.
 
-### OCI CLI Command Syntax — "nsg rule" command structure (2026-04-16 — FIXED)
+### OCI NSG — tighten-ssh via tofu apply (2026-04-16)
 
-**Problem (historical):** The `tighten-ssh-{env}` jobs were trying to use `oci network security-group-rule` (from incorrect documentation) but the OCI CLI returned `Error: No such command 'security-group-rule'`.
+**Problem:** Three iterations of OCI CLI commands all failed (`security-group-rule`, `nsg rule`, `nsg-security-rules`) — the correct command either doesn't exist in the runner's OCI CLI version or produces unexpected errors.
 
-**Root cause:** The OCI CLI command structure for network security groups uses `nsg rule` not `security-group-rule`. The correct commands are:
+**Root cause (architectural):** The NSG is managed by OpenTofu state. Using OCI CLI to modify it directly causes state drift — OpenTofu believes the NSG has `0.0.0.0/0` while the actual resource has been tightened. Any subsequent `tofu apply` would revert the tightening.
 
-- List: `oci network nsg rule list` (NOT `security-group-rule list`)
-- Delete: `oci network nsg rule delete` (NOT `security-group-rule delete`)
-- Create: `oci network nsg rule create` (NOT `security-group-rule create`)
+**Solution:** `tighten-ssh-dev` and `tighten-ssh-prod` now run a second `tofu apply` with `TF_VAR_admin_ssh_cidrs='["173.33.214.49/32"]'`. This:
+- Keeps the NSG in sync with OpenTofu state
+- Uses no OCI CLI NSG commands at all
+- Is idempotent — re-running has no effect if already tightened
 
-**Solution (corrected 2026-04-16):** Use the correct OCI CLI command names and parameters:
+```yaml
+env:
+  TF_VAR_admin_ssh_cidrs: '["173.33.214.49/32"]'
+run: |
+  tofu init ...
+  tofu apply -var="environment=dev" -var-file="environments/dev/terraform.tfvars" -auto-approve -no-color
+```
+
+The `admin_ssh_cidrs` variable (default `["0.0.0.0/0"]`) is defined in `iac/variables.tf`. The first `tofu apply` in `deploy-infra-{env}` deploys with the default (open). The second `tofu apply` in `tighten-ssh-{env}` overrides it to admin IP only.
+
+### Cloudflare Access App — Tags Error 12130 (2026-04-16 — FIXED)
+
+**Error:** `access.api.error.invalid_request: tags contain a tag that does not exist, tags must be created before assigning to an application`
+
+**Root cause:** `scripts/cloudflare-api.sh` was passing `tags: ["familyshield", "admin"]` and `tags: ["familyshield", "ssh"]` in Access Application payloads. Cloudflare requires tags to be pre-created in the Zero Trust dashboard before they can be assigned to an application. Since these tags never existed, the API returned error 12130 and the apps were never created.
+
+**Fix (commit 12ebf77):** Removed the `tags` field entirely from all Access Application payloads in `create_access_application()` and `create_ssh_access_app()`. Tags are cosmetic organization — removing them has no functional impact on tunnel routing or Zero Trust policies.
+
+**Pattern:** Never pass `tags` to Cloudflare Access Application API calls unless those exact tag names have been manually pre-created in Zero Trust → Settings → Tags.
+
+### Bootstrap Step — docker: command not found on Fresh VM (2026-04-16 — FIXED)
+
+**Error:** `bash: line 3: docker: command not found` when the `Bootstrap VM` step in `setup-cloudflare-{env}` tries to run docker commands on a freshly provisioned VM.
+
+**Root cause:** The bootstrap step SSHes to the VM and immediately runs `docker compose up` etc. On a fresh VM, cloud-init is still running and hasn't finished installing Docker, docker-compose, and other packages. The step was racing against cloud-init.
+
+**Fix (commit 1df4dcd):** Added `sudo cloud-init status --wait || true` as the first command in the bootstrap SSH heredoc (in both `infra-dev.yml` and `infra-prod.yml`). This blocks until cloud-init finishes before any docker commands run.
 
 ```bash
-# ❌ Old — incorrect command structure
-oci network security-group-rule list \
-  --network-security-group-id "$NSG_ID"
-oci network security-group-rule delete \
-  --security-group-rule-id "$RULE_ID"
-oci network security-group-rule create \
-  --network-security-group-id "$NSG_ID"
-
-# ✅ New — correct OCI CLI command structure (as of 2026-04-16)
-oci network nsg rule list \
-  --nsg-id "$NSG_ID" \
-  --output json
-
-oci network nsg rule delete \
-  --nsg-rule-id "$RULE_ID" \
-  --force
-
-oci network nsg rule create \
-  --nsg-id "$NSG_ID" \
-  --direction INGRESS \
-  --protocol 6 \
-  --source "$ADMIN_IP" \
-  --source-type CIDR_BLOCK \
-  --tcp-options "destinationPortRange={min:22,max:22}"
+ubuntu@"$VM_IP" bash -s <<ENDSSH
+set -euo pipefail
+sudo cloud-init status --wait || true   # ← wait for Docker to be installed
+cd /opt/familyshield
+echo "${GHCR_TOKEN}" | docker login ghcr.io ...
+ENDSSH
 ```
 
-Also includes JSON validation before parsing with `jq`:
-
-```bash
-if ! echo "$SSH_RULES" | jq -e . >/dev/null 2>&1; then
-  echo "⚠️  Failed to query NSG rules — skipping rule removal"
-  SSH_RULES="[]"
-fi
-```
-
-**Fixed in (commit e306349):**
-
-- `.github/workflows/deploy-dev.yml` — tighten-ssh-dev step
-- `.github/workflows/deploy-staging.yml` — tighten-ssh-staging step
-- `.github/workflows/deploy-prod.yml` — tighten-ssh-prod step
-
-**Pattern:** Always check OCI CLI command documentation for correct syntax. The key differences:
-
-```bash
-# Command structure for NSG rules:
-oci network nsg rule list              # ✅ correct
-oci network nsg rule delete            # ✅ correct
-oci network nsg rule create            # ✅ correct
-
-# NOT:
-oci network security-group-rule list   # ❌ wrong — command doesn't exist
-oci network nsg-rules list             # ❌ wrong — subcommand doesn't exist
-```
-if ! echo "$OUTPUT" | jq -e . >/dev/null 2>&1; then
-  # Handle error — output is not valid JSON
-fi
-```
+The `|| true` ensures the step doesn't fail if cloud-init has already completed (exit code 2 = "done") or if the command itself is unavailable.
 
 ### SSH Key Carriage Returns — appleboy/ssh-action Failure (2026-04-16 — OBSOLETE)
 
@@ -917,17 +933,42 @@ Full details in `docs/troubleshooting/infrastructure.md` — Issues 3, 4, and 8.
 
 ### Cloudflare API Token — Missing Scopes
 
-**Error:** `Authentication error (10000)` when creating Argo Tunnel or Access Applications
+**Error:** `Authentication error (10000)` when creating Argo Tunnel or Access Applications, or `Invalid request: tags contain a tag that does not exist (12130)` on service token creation.
 
-**Cause:** The Cloudflare API token must have ALL THREE scopes:
+**Cause:** The `iac/cloudflare/` OpenTofu module requires **ALL FIVE** scopes:
 
 - Zone → DNS → Edit (for CNAME records)
 - Account → Cloudflare Tunnel → Edit (for Argo Tunnel)
 - Account → Access: Apps and Policies → Edit (for Zero Trust apps)
+- Account → Access: Service Tokens → Edit (for CI service token)
+- Zone → Config Rules → Edit (for WAF security level ruleset)
 
-The "Edit zone DNS" template only grants the first scope — insufficient. Must use a **Custom Token** with all 3.
+The "Edit zone DNS" template only grants the first scope — insufficient. The old 3-scope token used by `cloudflare-api.sh` is also insufficient for the new OpenTofu module.
 
-**Fix:** Recreate token in Cloudflare dashboard as Custom Token (see SETUP.md Part 3.3), update `CLOUDFLARE_API_TOKEN` GitHub secret, re-run workflow.
+**Fix:** Recreate token in Cloudflare dashboard as Custom Token with all 5 scopes, update `CLOUDFLARE_API_TOKEN` GitHub secret, re-run `infra-dev.yml`.
+
+### Bot Fight Mode — Blocks GitHub Actions Before Access Policy Evaluation
+
+**Error:** `cf-mitigated: challenge` on SSH endpoint; `verify-tunnel` times out after 5 attempts even with correct service token credentials.
+
+**Cause:** Cloudflare Bot Fight Mode (free tier) fires *before* Access policy evaluation and blocks GitHub Actions datacenter IPs. The WAF config rule (`security_level = "essentially_off"`, `bic = false`) in `iac/cloudflare/waf.tf` handles Security Level and BIC only — it does not disable Bot Fight Mode, which is a separate zone-level toggle not controllable via API on the free tier.
+
+**Fix (one-time, manual):** Cloudflare dashboard → Security → Bots → Bot Fight Mode → OFF. This must be done once per zone; it is not automated.
+
+### cloudflared ProxyCommand — Must Use Explicit Credential Flags
+
+**Error:** `verify-tunnel` makes 5 SSH attempts, all failing silently. cloudflared finds no credentials.
+
+**Cause:** cloudflared reads `TUNNEL_SERVICE_TOKEN_ID` / `TUNNEL_SERVICE_TOKEN_SECRET` env vars — **not** `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`. Those are HTTP header names, not cloudflared env var names. Setting `CF_ACCESS_CLIENT_ID` as an environment variable has no effect on cloudflared.
+
+**Fix:** Pass credentials explicitly via flags in every ProxyCommand:
+
+```bash
+-o ProxyCommand="cloudflared access ssh \
+  --hostname ${SSH_HOST} \
+  --service-token-id ${CF_ACCESS_CLIENT_ID} \
+  --service-token-secret ${CF_ACCESS_CLIENT_SECRET}"
+```
 
 ### OCI IAM — Missing Tenancy Permissions
 
@@ -999,30 +1040,15 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - Resource allocation: Dev (1C/6GB) + Staging ephemeral (1C/6GB) + Prod (2C/6GB) = within 4C/24GB Always Free
   - Per-environment state buckets: `familyshield-tfstate-{environment}`
   - Bucket import logic handles existing resources without 409 conflicts
-- ✅ **Deployment pipeline stabilised (2026-04-15):** All three workflows (dev/staging/prod) now follow the same 6-job pattern with all pipeline blockers resolved:
-  - `cloudflare-api.sh` output pollution (diagnostic functions to stdout) — fixed: all diagnostics redirect to `>&2`; `local var=$(cmd)` split into two statements
-  - Tunnel token never written to VM — fixed: cloudflared now starts via `docker run --network host --token` (zero docker-compose.yml dependency)
-  - SSH key `printf` missing trailing newline → `libcrypto` error — fixed: `echo "$KEY" | tr -d '\r'` in all three workflows
-  - Concurrent runs causing Terraform state lock conflicts — fixed: `concurrency:` groups on all three workflows (`cancel-in-progress: true` dev/staging, `false` prod)
-  - Race condition on new VM boot: deploy-app runs before cloud-init finishes writing docker-compose.yml — fixed: `sudo cloud-init status --wait || true` added to all deploy-app scripts
-  - `deploy-staging.yml` gate job broken `if:` condition (`workflow_run.conclusion` on a `push` trigger is always null) — fixed: gate job removed; staging triggers on `qa` branch push
-  - docker-compose.yml missing on VM (broken cloud-init) → api/portal not running → cloudflared returns 502 → smoke test fails — fixed: "Bootstrap VM" step in all setup-cloudflare jobs
-  - All 8 issues with root causes, investigation steps, and fixes documented in `docs/troubleshooting/infrastructure.md`
-- ✅ **SSH security redesigned (2026-04-16):** Deploy-first, secure-last approach replaces failed dynamic punch/seal
-  - Removed dynamic NSG punch/seal logic (was failing with OCI CLI exit code 2)
-  - Deploy with `admin_ssh_cidrs = ["0.0.0.0/0"]` — SSH open to world during all deployment jobs
-  - Added `tighten-ssh-{env}` job at end of pipeline (runs after smoke-test passes)
-  - tighten-ssh removes 0.0.0.0/0 rules and adds admin IP only (173.33.214.49/32)
-  - Phase B (tunnel SSH) unchanged — added at end after tunnel verified active
-  - Eliminates chicken-and-egg lockout risk, guarantees SSH always works during deploy
-- ✅ **Workflow architecture split (2026-04-16):** Separated IaC workflows from app deployment workflows
-  - Created `infra-dev.yml` — triggered on `iac/**` changes to `development`; jobs: tofu apply → setup-cloudflare → smoke-infra → tighten-ssh
-  - Rewrote `deploy-dev.yml` — triggered on `apps/**` changes to `development`; uses Cloudflare tunnel SSH exclusively; jobs: wait-for-infra → verify-tunnel → build-and-push → deploy-app → smoke-test
-  - Created `infra-prod.yml` — triggered on `iac/**` changes to `main`; same as infra-dev + safety-check + create-release
-  - Rewrote `deploy-prod.yml` — triggered on `apps/**` changes to `main`; promote-images instead of build-and-push + CF tunnel SSH
-  - Updated `pr-check.yml` — split into `lint-iac` + `lint-apps` + path-filtered `plan-dev` / `plan-prod`
-  - App workflows never use public IP SSH — work regardless of NSG state (tightened or open)
-  - Mixed commit handling: `wait-for-infra` job polls GitHub API and waits up to 10 min for infra workflow to complete
+- ✅ **Deployment pipeline stabilised (2026-04-15):** All three workflows follow the same 6-job pattern; 8 blockers resolved (output pollution, token delivery, SSH key encoding, state lock, cloud-init race, staging gate, docker-compose bootstrap). Full details in `docs/troubleshooting/infrastructure.md`.
+- ✅ **SSH security redesigned (2026-04-16):** Deploy-first, secure-last approach. Deploy with `0.0.0.0/0`, then `tighten-ssh-{env}` job restricts to admin IP (173.33.214.49/32) after smoke tests pass.
+- ✅ **Workflow architecture split (2026-04-16):** IaC and app workflows separate. Infra triggers on `iac/**`, app triggers on `apps/**`. App workflows use CF tunnel SSH (work regardless of NSG state). Mixed commits: `wait-for-infra` polls GitHub API for up to 10 min.
+- ✅ **Cloudflare migrated to OpenTofu IaC (2026-04-16):** `iac/cloudflare/` module manages tunnel, DNS, access apps, service token, WAF rules
+  - Separate state: `cloudflare/{env}/terraform.tfstate`
+  - Service token auto-written to GitHub Secrets
+  - Requires 5-scope API token (DNS, Tunnel, Access Apps, Service Tokens, Config Rules)
+  - cloudflared uses explicit `--service-token-id` / `--service-token-secret` flags (not env vars)
+  - Bot Fight Mode requires manual dashboard toggle (free tier, no API control)
 - 🔲 First full end-to-end successful dev pipeline run (infra-dev.yml: all 4 jobs green + deploy-dev.yml: all 5 jobs green)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 

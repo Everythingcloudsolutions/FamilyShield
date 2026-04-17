@@ -14,5 +14,6 @@ process.env.GROQ_API_KEY = 'test-groq-api-key';
 process.env.ANTHROPIC_API_KEY = 'test-anthropic-api-key';
 process.env.SUPABASE_URL = 'http://localhost:54321';
 process.env.SUPABASE_ANON_KEY = 'test-supabase-anon-key';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-supabase-service-role-key';
 process.env.REDIS_URL = 'redis://localhost:6379';
 process.env.NODE_ENV = 'test';

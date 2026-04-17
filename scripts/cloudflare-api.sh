@@ -306,8 +306,9 @@ create_access_application() {
 
   header "Creating Access Application: $app_name ($fqdn)"
 
-  # Check if already exists
-  local existing=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
+  # List all apps and filter by exact name — ?name= query param is unreliable
+  local existing
+  existing=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps" | jq -r --arg n "$app_name" '.result[] | select(.name == $n) | .id' 2>/dev/null | head -1 || echo "")
 
   if [ -n "$existing" ] && [ "$existing" != "null" ]; then
     info "Access app already exists: $existing"
@@ -315,16 +316,28 @@ create_access_application() {
     return 0
   fi
 
-  local payload=$(jq -n \
+  local payload
+  payload=$(jq -n \
     --arg name "$app_name" \
     --arg domain "$fqdn" \
     --arg type "self_hosted" \
     --arg session_duration "8h" \
     '{name: $name, domain: $domain, type: $type, session_duration: $session_duration}')
 
-  local response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
+  local response
+  response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
 
-  local app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+  # If app already existed (pre-created manually or race), fetch its ID
+  if echo "$response" | jq -e '.errors[]? | .message | test("already_exists")' >/dev/null 2>&1; then
+    existing=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps" | jq -r --arg n "$app_name" '.result[] | select(.name == $n) | .id' 2>/dev/null | head -1 || echo "")
+    [ -n "$existing" ] && [ "$existing" != "null" ] || die "App already exists but could not retrieve ID: $app_name"
+    info "Access app already exists (found after conflict): $existing"
+    echo "$existing"
+    return 0
+  fi
+
+  local app_id
+  app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
 
   [ -n "$app_id" ] && [ "$app_id" != "null" ] || die "Failed to create access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
 
@@ -339,8 +352,9 @@ create_ssh_access_app() {
 
   header "Creating SSH Access Application: $app_name"
 
-  # Check if already exists
-  local existing=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
+  # List all apps and filter by exact name — ?name= query param is unreliable
+  local existing
+  existing=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps" | jq -r --arg n "$app_name" '.result[] | select(.name == $n) | .id' 2>/dev/null | head -1 || echo "")
 
   if [ -n "$existing" ] && [ "$existing" != "null" ]; then
     info "SSH Access app already exists: $existing"
@@ -348,20 +362,28 @@ create_ssh_access_app() {
     return 0
   fi
 
-  local payload=$(jq -n \
+  local payload
+  payload=$(jq -n \
     --arg name "$app_name" \
     --arg domain "$fqdn" \
     --arg type "self_hosted" \
     --arg session_duration "8h" \
     '{name: $name, domain: $domain, type: $type, session_duration: $session_duration}')
 
-  local response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
+  local response
+  response=$(cf_api POST "/accounts/$ACCOUNT_ID/access/apps" "$payload")
 
-  # Debug: always print the response so we can diagnose issues
-  echo "DEBUG create_ssh_access_app response:" >&2
-  echo "$response" | jq '.' >&2
+  # If app already existed (pre-created manually or race), fetch its ID
+  if echo "$response" | jq -e '.errors[]? | .message | test("already_exists")' >/dev/null 2>&1; then
+    existing=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps" | jq -r --arg n "$app_name" '.result[] | select(.name == $n) | .id' 2>/dev/null | head -1 || echo "")
+    [ -n "$existing" ] && [ "$existing" != "null" ] || die "App already exists but could not retrieve ID: $app_name"
+    info "SSH Access app already exists (found after conflict): $existing"
+    echo "$existing"
+    return 0
+  fi
 
-  local app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
+  local app_id
+  app_id=$(echo "$response" | jq -r '.result.id // empty' 2>/dev/null || echo "")
 
   [ -n "$app_id" ] && [ "$app_id" != "null" ] || die "Failed to create SSH access app: $(echo "$response" | jq -r '.errors[0].message // .errors // .' 2>/dev/null)"
 
@@ -374,11 +396,13 @@ delete_access_application() {
 
   header "Deleting Access Application: $app_name"
 
-  local app_id=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps?name=$app_name" | jq -r '.result[0].id // empty' 2>/dev/null || echo "")
+  local app_id
+  app_id=$(cf_api GET "/accounts/$ACCOUNT_ID/access/apps" | jq -r --arg n "$app_name" '.result[] | select(.name == $n) | .id' 2>/dev/null | head -1 || echo "")
 
   [ -z "$app_id" ] || [ "$app_id" = "null" ] && { info "Access app not found: $app_name"; return 0; }
 
-  local response=$(cf_api DELETE "/accounts/$ACCOUNT_ID/access/apps/$app_id" "")
+  local response
+  response=$(cf_api DELETE "/accounts/$ACCOUNT_ID/access/apps/$app_id" "")
 
   if echo "$response" | jq -e '.success == false' >/dev/null 2>&1; then
     die "Failed to delete access app: $(echo "$response" | jq -r '.errors[0].message // .' 2>/dev/null)"

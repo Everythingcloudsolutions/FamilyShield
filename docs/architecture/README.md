@@ -1,6 +1,6 @@
 # FamilyShield — Architecture
 
-> Last updated: 2026-04-14 — Added ADR-001b for resource allocation strategy (Dev/Staging/Prod sizing)
+> Last updated: 2026-04-16 — Split pipeline architecture (infra vs app workflows), tighten-ssh via tofu apply, Cloudflare tunnel SSH for app deployment, portal auth scaffold, and Supabase RLS migration baseline
 > All diagrams render natively in GitHub. For editable source files see `docs/diagrams/`.
 > Editable draw.io files: `docs/diagrams/*.drawio` — open at diagrams.net or VS Code draw.io extension.
 > Editable Excalidraw files: `docs/diagrams/*.excalidraw` — open at excalidraw.com or VS Code Excalidraw extension.
@@ -197,6 +197,33 @@ Each ADR captures *what* was decided, *why*, and *what was rejected*.
 
 ---
 
+### ADR-012: Public-Readiness Security Baseline (Auth + RLS + Safe Degraded Mode)
+
+**Status:** Accepted  
+**Date:** 2026-04  
+**Context:** Public-readiness review identified three immediate risks: missing app-layer route protection, missing explicit RLS schema baseline, and brittle portal behavior when Supabase is inactive.
+
+**Decision:**
+
+1. Add portal route protection middleware for sensitive pages (`/`, `/alerts`, `/devices`) with explicit fail-safe behavior when auth is enabled without credentials.
+2. Add app-owned Supabase SQL migration baseline for `devices`, `content_events`, and `alerts` with RLS enabled and default-deny + least-privilege policies.
+3. Keep portal usable during Supabase outages/inactive state by switching to explicit degraded/offline mode messaging instead of hard-failing.
+
+**Security impact:**
+
+- Reduces accidental exposure risk for sensitive parent/child data views.
+- Establishes auditable, versioned RLS policy baseline in repo.
+- Prevents operational confusion during data-plane outages by exposing clear state to users.
+
+**Implementation references:**
+
+- `apps/portal/middleware.ts`
+- `apps/api/supabase/migrations/20260416_0001_familyshield_core_rls.sql`
+- `docs/developer-guide/portal-auth-scaffold.md`
+- `docs/developer-guide/supabase-activation.md`
+
+---
+
 ---
 
 ## C4 Model
@@ -315,55 +342,47 @@ C4Component
 
 ---
 
-## Deployment Diagram — Three-Stage Pipeline
+## Deployment Diagram — Split Pipeline Architecture (Infra vs App)
 
-FamilyShield uses a three-stage deployment approach to manage infrastructure, networking, and applications independently:
+FamilyShield uses a split deployment model where infrastructure and application deployments are separate workflows, triggered by different file changes:
 
 ```mermaid
 flowchart TB
   subgraph github["GitHub (Private Repo)"]
-    code["Source code"]
+    iac_files["iac/** changes"]
+    app_files["apps/** changes"]
     secrets["Repository Secrets"]
     ghcr["GHCR — Docker images"]
   end
 
-  subgraph stage1["STAGE 1 — Infrastructure (IaC)"]
-    deploy_dev["deploy-dev.yml"]
-    deploy_stg["deploy-staging.yml"]
-    deploy_prod["deploy-prod.yml"]
+  subgraph infra["INFRA WORKFLOW — infra-{env}.yml<br/>(triggered by iac/**, runs FIRST)"]
+    infra_tofu["1. tofu apply<br/>(create OCI VM, NSG with 0.0.0.0/0)"]
+    infra_cf["2. setup-cloudflare<br/>(tunnel + DNS, SSH via public IP)"]
+    infra_smoke["3. smoke-infra<br/>(verify tunnel ACTIVE)"]
+    infra_tighten["4. tighten-ssh<br/>(second tofu apply: NSG → admin IP only)"]
   end
 
-  subgraph stage2["STAGE 2 — Cloudflare (API)"]
-    cf_dev["deploy-cloudflare.yml"]
-    cf_stg["deploy-cloudflare.yml"]
-    cf_prod["deploy-cloudflare.yml"]
-  end
-
-  subgraph stage3["STAGE 3 — App Deployment"]
-    build["build-and-push<br/>(Docker images)"]
-    app_dev["deploy-app-dev.yml"]
-    app_stg["deploy-app-staging.yml"]
-    app_prod["deploy-app-prod.yml"]
+  subgraph app["APP WORKFLOW — deploy-{env}.yml<br/>(triggered by apps/**, runs AFTER infra completes)"]
+    app_wait["1. wait-for-infra<br/>(if infra also triggered: poll GitHub API)"]
+    app_verify["2. verify-tunnel<br/>(pre-check CF tunnel reachable)"]
+    app_build["3. build-and-push<br/>(Docker images to GHCR, linux/arm64)"]
+    app_deploy["4. deploy-app<br/>(SSH via CF tunnel, docker compose up)"]
+    app_smoke["5. smoke-test<br/>(health check endpoints)"]
   end
 
   subgraph oci["OCI Toronto — ca-toronto-1"]
     subgraph dev_comp["Compartment: familyshield-dev"]
-      dev_vm["ARM VM\n4 OCPU / 24GB\nVM.Standard.A1.Flex"]
+      dev_vm["ARM VM\n1 OCPU / 6GB"]
       dev_bucket["Object Storage\nTerraform state"]
     end
-    subgraph stg_comp["Compartment: familyshield-staging"]
-      stg_vm["ARM VM"]
-    end
     subgraph prd_comp["Compartment: familyshield-prod"]
-      prd_vm["ARM VM"]
+      prd_vm["ARM VM\n2 OCPU / 6GB"]
     end
   end
 
   subgraph cloudflare["Cloudflare API"]
     dns["DNS records<br/>everythingcloud.ca"]
-    tunnel_dev["Tunnel: familyshield-dev"]
-    tunnel_stg["Tunnel: familyshield-staging"]
-    tunnel_prod["Tunnel: familyshield-prod"]
+    tunnel["Tunnels<br/>(outbound-only)"]
     zt["Zero Trust<br/>Access Apps"]
   end
 
@@ -373,44 +392,27 @@ flowchart TB
     anthropic["Anthropic<br/>(fallback)"]
   end
 
-  code --> deploy_dev
-  code --> deploy_stg
-  code --> deploy_prod
-  secrets --> deploy_dev
-  secrets --> cf_dev
-  secrets --> build
+  iac_files -->|"push"| infra_tofu
+  secrets -->|"OCI creds"| infra_tofu
+  
+  infra_tofu -->|"creates VM"| dev_comp
+  infra_tofu -->|"SSH: public IP (0.0.0.0/0 open)"| infra_cf
+  infra_cf -->|"tunnel ready"| infra_smoke
+  infra_smoke -->|"tunnel verified"| infra_tighten
+  infra_tighten -->|"SSH: admin IP only (173.33.214.49/32)"| zt
 
-  deploy_dev -->|"tofu apply<br/>(auto)"| dev_comp
-  deploy_stg -->|"tofu apply<br/>(auto after dev)"| stg_comp
-  deploy_prod -->|"tofu apply<br/>(manual approve)"| prd_comp
-
-  dev_comp -->|"success"| cf_dev
-  stg_comp -->|"success"| cf_stg
-  prd_comp -->|"success"| cf_prod
-
-  cf_dev -->|"creates"| tunnel_dev
-  cf_stg -->|"creates"| tunnel_stg
-  cf_prod -->|"creates"| tunnel_prod
-
-  tunnel_dev --> dns
-  tunnel_stg --> dns
-  tunnel_prod --> dns
-  dns --> zt
-
-  deploy_dev -->|"parallel"| build
-  build --> ghcr
-
-  ghcr -->|"pull"| app_dev
-  ghcr -->|"pull"| app_stg
-  ghcr -->|"pull"| app_prod
-
-  cf_dev -->|"tunnel ready"| app_dev
-  cf_stg -->|"tunnel ready"| app_stg
-  cf_prod -->|"tunnel ready"| app_prod
-
-  app_dev -->|"deploy"| dev_vm
-  app_stg -->|"deploy"| stg_vm
-  app_prod -->|"deploy"| prd_vm
+  app_files -->|"push"| app_wait
+  secrets -->|"CF creds, GHCR token"| app_build
+  
+  infra_tighten -->|"triggers (workflow_run)"| app_wait
+  infra_tighten -->|"also triggers parallel"| app_wait
+  app_wait -->|"wait if infra running"| app_verify
+  app_verify -->|"tunnel reachable?"| app_build
+  app_build --> ghcr
+  ghcr -->|"pull images"| app_deploy
+  app_deploy -->|"SSH via CF tunnel<br/>(ssh-dev.everythingcloud.ca)"| dev_vm
+  app_deploy -->|"docker compose up"| dev_vm
+  app_deploy -->|"success"| app_smoke
 
   dev_vm --> supabase
   dev_vm --> groq
@@ -419,9 +421,11 @@ flowchart TB
 
 **Key characteristics:**
 
-- **Stage 1 (IaC):** Creates OCI infrastructure independently — no state conflicts, runs first
-- **Stage 2 (Cloudflare):** Triggered after IaC succeeds — creates tunnel, DNS, access apps via API (not Terraform)
-- **Stage 3 (App):** Parallel Docker build + deployment after Stage 2 completes
+- **Separate triggers:** `iac/**` paths trigger `infra-*.yml`; `apps/**` paths trigger `deploy-*.yml`
+- **Infra workflow:** Uses public IP SSH (only works when NSG is open). Tightens SSH at end via second `tofu apply`
+- **App workflow:** Uses Cloudflare tunnel SSH exclusively (`ssh-{env}.everythingcloud.ca`). Works regardless of NSG state
+- **Mixed commits:** If both `iac/**` and `apps/**` change, both workflows trigger. `deploy-*` waits for `infra-*` via `wait-for-infra` job
+- **Sequential on staging/prod:** App workflow explicitly waits for infra workflow to finish before proceeding
 
 ---
 
@@ -444,128 +448,228 @@ Each environment has a separate tunnel with the following routes:
 | `nodered-{env}.everythingcloud.ca` | Node-RED | 1880 | HTTP/HTTPS | Automation/rules engine |
 | `ssh.familyshield-{env}.everythingcloud.ca` | SSH | 22 | **TCP** | **Administrative SSH access (zero public IP exposure)** |
 
-**Note:** 
+**Note:**
+
 - Zero Trust access policies are applied to admin UIs (`adguard-*`, `grafana-*`) requiring email-based authentication. Public-facing services (Portal, API) bypass Zero Trust.
 - **SSH route uses TCP tunneling** (not HTTP) — allows `ssh ubuntu@ssh.familyshield-{env}.everythingcloud.ca` with full security benefits of Cloudflare Tunnel.
 - **Public IP (inbound):** ❌ Closed — no SSH access directly to instance IP
 - **Tunnel SSH:** ✅ Enabled — all management access routes through secure outbound tunnel
 
-### Deployment Sequence (with SSH Tunnel Routing)
+### Deployment Sequence (Split Infra + App Workflows)
 
-**Phase 1: IaC Deployment (deploy-dev.yml)**
-- OCI VM is created in `familyshield-dev` compartment
-- `tunnel_secret` is generated as a random password by Terraform
-- VM is configured with `cloud-init` script
-- **SSH in this phase:** Public IP only (tunnel not created yet)
-- Docker images built for api and portal
-- Services deployed via SSH to public IP (temporary, app containers ready)
+**Phase A: Infrastructure Deployment (infra-{env}.yml)**
 
-**Phase 2: Cloudflare Tunnel Setup (deploy-cloudflare.yml — auto-triggered after Phase 1)**
-- Triggered automatically after deploy-dev.yml succeeds
-- Retrieves `tunnel_secret` from IaC outputs (Terraform state)
-- Calls Cloudflare API to create tunnel:
-  - Tunnel name: `familyshield-{env}`
-  - Tunnel secret (base64 encoded)
-  - **SSH route:** `ssh.familyshield-{env}.everythingcloud.ca` → `localhost:22` on VM (TCP tunneling)
-  - HTTP ingress routes for portal, API, admin UIs
-- Creates DNS CNAME records pointing to tunnel (including SSH hostname)
-- Creates Access Application policies for admin UIs
-- **Result:** Tunnel is ready, SSH hostname is now resolvable and routed through Cloudflare
+1. **tofu apply (IaC)**
+   - Creates OCI VM, VCN, NSG, object storage
+   - NSG created with `admin_ssh_cidrs = ["0.0.0.0/0"]` (SSH wide-open)
+   - `tunnel_secret` generated as random password
+   - **SSH in this step:** Public IP only (tunnel not created yet)
 
-**Phase 3: SSH Tunnel Verification (post-deploy-tunnel-ssh-dev.yml — auto-triggered after Phase 2)**
-- Polls Cloudflare API to verify tunnel exists
-- **Tests SSH access via tunnel hostname:** `ssh ubuntu@ssh.familyshield-{env}.everythingcloud.ca`
-- Verifies OS is accessible via tunnel (uname, hostname)
-- **Confirms:** All future SSH management goes through Cloudflare Tunnel (zero public IP exposure)
-- **Result:** Tunnel-based SSH is operational
+2. **setup-cloudflare (Tunnel + DNS)**
+   - SSHes to VM via **public IP** (open during deploy)
+   - Retrieves `tunnel_secret` from IaC outputs (Terraform state)
+   - Calls Cloudflare API to create tunnel:
+     - Tunnel name: `familyshield-{env}`
+     - HTTP ingress routes for portal, API, admin UIs
+     - **SSH ingress route:** `ssh.familyshield-{env}.everythingcloud.ca` → `localhost:22` on VM (TCP tunneling)
+   - Creates DNS CNAME records pointing to tunnel (including SSH hostname)
+   - Creates Access Application policies for admin UIs
+   - **Bootstrap:** Writes `docker-compose.yml` to VM if missing (cloud-init may have failed)
 
-### SSH Access Transition
+3. **smoke-infra (Tunnel Verification)**
+   - Polls Cloudflare API to verify tunnel status is ACTIVE
+   - Verifies portal URL is reachable over HTTP via tunnel
+   - **Result:** Tunnel is operational, portal accessible
 
-| Phase | Timing | SSH Method | IP Exposure |
-|---|---|---|---|
-| Phase 1 (IaC) | deploy-dev.yml running | Public IP (direct) | ⚠️ Temporary (instance bootstrap only) |
-| Phase 2 (Tunnel setup) | deploy-cloudflare.yml running | Tunnel (DNS + routing) | ✅ Ready |
-| **Phase 3+ (Production)** | **After tunnel verified** | **Tunnel hostname** | **✅ Zero public exposure** |
+4. **tighten-ssh (NSG Hardening)**
+   - Runs a second `tofu apply` with `TF_VAR_admin_ssh_cidrs='["173.33.214.49/32"]'`
+   - This overrides the default `0.0.0.0/0` with admin IP only (173.33.214.49/32)
+   - NSG state remains consistent with OpenTofu — no OCI CLI NSG commands used
+   - **Result:** Public IP SSH is now restricted; only admin IP (or tunnel) can access
 
-**From Phase 3 onward:**
-- All SSH to the VM uses: `ssh ubuntu@ssh.familyshield-{env}.everythingcloud.ca`
-- Public IP is unreachable for SSH (can block with OCI security list if desired)
-- All management traffic routes through Cloudflare Tunnel outbound connection
-- **Attack surface:** Reduced to zero — no exposed SSH port on public IP
+**Phase B: Application Deployment (deploy-{env}.yml — auto-triggered after Phase A succeeds)**
 
-### Cloudflare API Integration
+1. **wait-for-infra (Mixed Commit Handling)**
+   - If triggered by push (not `workflow_run`), polls GitHub API
+   - Waits up to 10 minutes for `infra-*` workflow to finish if it's in progress
+   - Ensures sequential execution when both `iac/**` and `apps/**` changed in same commit
+   - **Result:** No race conditions, predictable order
 
-The `scripts/cloudflare-api.sh` script is responsible for all Cloudflare operations:
+2. **verify-tunnel (Pre-check)**
+   - Tests Cloudflare tunnel is reachable before wasting build time
+   - Runs: `cloudflared access ssh --hostname ssh-{env}.everythingcloud.ca`
+   - Fails fast with clear error if tunnel is down
+   - **Result:** Early feedback if infrastructure is broken
 
-```bash
-# Setup all Cloudflare resources for an environment
-bash scripts/cloudflare-api.sh setup dev "$tunnel_secret" "admin@example.com"
+3. **build-and-push (Docker Build)**
+   - Builds `api` + `portal` Docker images for `linux/arm64`
+   - Pushes to GHCR (GitHub Container Registry)
+   - **Result:** Images ready for deployment
 
-# Cleanup (removes tunnel, DNS, access apps)
-bash scripts/cloudflare-api.sh cleanup dev
+4. **deploy-app-{env} (Application Deployment)**
+   - Installs `cloudflared` on runner
+   - Sets CF Access service token credentials for non-interactive auth
+   - **Bootstrap:** Copies `docker-compose.yml` to VM via SCP if missing (idempotent)
+   - SSHes to VM via **Cloudflare tunnel only** (never public IP):
+
+     ```bash
+     ssh -i ~/.ssh/familyshield \
+       -o ProxyCommand="cloudflared access ssh --hostname ssh-{env}.everythingcloud.ca" \
+       ubuntu@ssh-{env}.everythingcloud.ca
+     ```
+
+   - Runs: `docker compose pull && docker compose up -d`
+   - **Result:** App containers deployed and running on VM
+
+5. **smoke-test (Health Check)**
+   - Tests portal and API endpoints via tunnel URLs
+   - Expected: HTTP 200 or 403 (403 is expected for protected endpoints)
+   - **Result:** Confirms app is reachable and responsive
+
+**SSH Access Paths During Deployment:**
+
+| Phase | Timing | SSH Method | Why | NSG State |
+|---|---|---|---|---|
+| **Phase A.1** | tofu apply | Public IP (direct) | Tunnel doesn't exist yet | SSH 0.0.0.0/0 |
+| **Phase A.2** | setup-cloudflare | Public IP (direct) | Still deploying, tunnel needs bootstrap | SSH 0.0.0.0/0 |
+| **Phase A.3** | smoke-infra | Tunnel (API verify) | Tunnel created, but not yet tightened | SSH 0.0.0.0/0 |
+| **Phase A.4** | tighten-ssh | None (OCI API only) | NSG rule removed/updated via tofu apply | SSH 173.33.214.49/32 |
+| **Phase B** | deploy-app onwards | Tunnel (persistent) | App deploys via cloudflared only | SSH 173.33.214.49/32 |
+
+---
+
+**Why Split Workflows?**
+
+1. **Independent triggers:** Infra changes trigger `infra-*.yml`; app changes trigger `deploy-*.yml`
+2. **Efficiency:** No need to rebuild OCI VM when only app code changed
+3. **Isolation:** App deployment can be retried without rerunning expensive IaC
+4. **Security:** App workflows never need public IP SSH — tunnel is always available by the time they run
+
+### Cloudflare IaC Module (`iac/cloudflare/`)
+
+Cloudflare resources are managed as Infrastructure as Code using OpenTofu in `iac/cloudflare/`. This module has its own **separate state file** (`cloudflare/{env}/terraform.tfstate` in the same OCI bucket) — isolated from OCI infrastructure state to prevent state contamination.
+
+**What the module creates:**
+
+| Resource | Type | Purpose |
+|---|---|---|
+| Tunnel | `cloudflare_zero_trust_tunnel_cloudflared` | Named tunnel with 32-byte random secret |
+| Tunnel config | `cloudflare_zero_trust_tunnel_cloudflared_config` | 8 ingress rules + catch-all 404 |
+| DNS records | `cloudflare_record` × 8 | CNAME → tunnel CNAME, `allow_overwrite = true` |
+| Service token | `cloudflare_zero_trust_access_service_token` | Client ID + Secret for CI non-interactive auth |
+| Access apps | `cloudflare_zero_trust_access_application` × 3 | adguard, grafana, ssh — service token policy |
+| WAF config rule | `cloudflare_ruleset` | `security_level = "essentially_off"` + `bic = false` on SSH hostname |
+
+**State isolation:**
+
+```
+familyshield-tfstate/                        (OCI Object Storage bucket)
+├── dev/terraform.tfstate                ← OCI infra state
+├── cloudflare/dev/terraform.tfstate     ← Cloudflare state (separate)
+├── prod/terraform.tfstate
+└── cloudflare/prod/terraform.tfstate
 ```
 
-**Required secrets (GitHub):**
+**Required GitHub Secrets:**
 
-- `CLOUDFLARE_API_TOKEN` — Custom token with scopes: DNS Edit, Tunnel Edit, Access Apps Edit
-- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account ID
-- `CLOUDFLARE_ZONE_ID` — Cloudflare zone ID for `everythingcloud.ca`
+| Secret | Where set | Purpose |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | Manual (5 scopes — see below) | All Cloudflare API calls |
+| `CLOUDFLARE_ACCOUNT_ID` | Manual | Tunnel + Access creation |
+| `CLOUDFLARE_ZONE_ID` | Manual | DNS record management |
+| `GH_PAT` | Manual (fine-grained PAT, Secrets R+W) | Write fresh service token to GitHub Secrets |
+| `CF_ACCESS_CLIENT_ID` | Auto-updated by infra workflow | Tunnel SSH auth in app deploy workflow |
+| `CF_ACCESS_CLIENT_SECRET` | Auto-updated by infra workflow | Tunnel SSH auth in app deploy workflow |
 
-### Why Not Terraform for Cloudflare?
+**Cloudflare API Token — 5 required scopes:**
 
-Terraform/OpenTofu struggles with Cloudflare state management when:
+```
+Zone → DNS → Edit                           (CNAME record management)
+Account → Cloudflare Tunnel → Edit          (tunnel creation)
+Account → Access: Apps and Policies → Edit  (access application creation)
+Account → Access: Service Tokens → Edit     (service token creation)
+Zone → Config Rules → Edit                  (WAF config ruleset)
+```
 
-- Resources are created outside Terraform (e.g., manual Cloudflare dashboard)
-- State gets out of sync with live resources
-- Re-running `tofu apply` tries to recreate already-existing resources (409 conflicts)
+**Bot Fight Mode — must be disabled zone-wide:**
 
-**Solution:** Cloudflare resources are managed via API (`deploy-cloudflare.yml` workflow) entirely separately from IaC. This decoupling allows:
+The WAF config rule disables Security Level and Browser Integrity Check for the SSH hostname. However, **Bot Fight Mode** (free Cloudflare tier) fires *before* Access policy evaluation and blocks GitHub Actions datacenter IPs with `cf-mitigated: challenge` — the service token headers are never seen. Bot Fight Mode cannot be controlled via API on free tier. Disable it manually in the Cloudflare dashboard: **Security → Bots → Bot Fight Mode → OFF**.
 
-- Independent updates without triggering full IaC rebuilds
-- Easy cleanup via API without state conflicts
-- Idempotent operations (rerunning setup skips existing resources)
+**cloudflared ProxyCommand — explicit credential flags required:**
 
-### Workflow Automation Sequence (SSH Zero-Exposure Architecture)
+`cloudflared` reads `TUNNEL_SERVICE_TOKEN_ID` / `TUNNEL_SERVICE_TOKEN_SECRET` env vars — **not** `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`. Those names are HTTP header names. Credentials must be passed explicitly:
 
-The deployment is automated across three coordinated workflows:
+```bash
+-o ProxyCommand="cloudflared access ssh \
+  --hostname ${SSH_HOST} \
+  --service-token-id ${CF_ACCESS_CLIENT_ID} \
+  --service-token-secret ${CF_ACCESS_CLIENT_SECRET}"
+```
+
+Setting `CF_ACCESS_CLIENT_ID` as an environment variable has no effect on cloudflared.
+
+**First-time setup (migration from cloudflare-api.sh):**
+
+If the environment was previously set up with `scripts/cloudflare-api.sh`, delete those resources before the first `tofu apply` or the apply will fail with resource-already-exists errors:
+
+- **Zero Trust → Networks → Tunnels:** delete `familyshield-{env}`
+- **Zero Trust → Access → Applications:** delete the three dev apps (adguard, grafana, ssh)
+- **DNS records:** handled automatically — `allow_overwrite = true` takes ownership without deletion
+
+### Why the Reversal — OpenTofu for Cloudflare
+
+Earlier (pre-2026-04-16) Cloudflare resources were managed via `scripts/cloudflare-api.sh`. The migration to OpenTofu was made for:
+
+1. **State tracking:** OpenTofu tracks what was created, diffs on apply, safely updates or destroys resources
+2. **Service token lifecycle:** `cloudflare_zero_trust_access_service_token` outputs are captured and written to GitHub Secrets automatically via `gh secret set` — no manual token rotation
+3. **Single source of truth:** IaC for everything — no parallel bash API scripts to maintain
+4. **Idempotency via `allow_overwrite`:** DNS records transfer ownership without manual deletion; no 409 conflicts
+
+### Workflow Automation Sequence (Split Architecture)
+
+The deployment is automated across two coordinated workflows:
 
 ```mermaid
 graph TD
-    A["deploy-dev.yml (Phase 1: IaC)"] -->|Success| B["deploy-cloudflare.yml (Phase 2: Tunnel)"]
-    B -->|Success| C["post-deploy-tunnel-ssh-dev.yml (Phase 3: Verify)"]
+    A["infra-dev.yml (PHASE A)"] -->|"Success"| B["deploy-dev.yml (PHASE B)"]
     
-    A1["• OCI VM creation<br/>• Docker build + push<br/>• SSH: Public IP (temp)"] -.-> A
-    B1["• Cloudflare tunnel creation<br/>• DNS records (8 routes)<br/>• SSH hostname registered"] -.-> B
-    C1["• SSH via tunnel: Test<br/>• OS health check: OK<br/>• Result: Zero-exposure verified"] -.-> C
+    A1["1. tofu apply<br/>2. setup-cloudflare<br/>3. smoke-infra<br/>4. tighten-ssh<br/>(SSH: public IP → admin IP only)"] -.-> A
     
-    C -->|Confirmed| D["🔐 All SSH now via tunnel<br/>Public IP: ❌ Closed<br/>Tunnel SSH: ✅ Active"]
+    B1["1. wait-for-infra<br/>2. verify-tunnel<br/>3. build-and-push<br/>4. deploy-app-dev<br/>5. smoke-test<br/>(SSH: tunnel only)"] -.-> B
+    
+    B -->|"Confirmed"| C["🔐 Deployment Complete<br/>NSG: Admin IP only<br/>App: Running via tunnel<br/>Public IP: Unreachable"]
 ```
 
 **Automation Trigger Chain:**
+
 1. Developer: `git push origin feature-branch` + PR merge to `development`
-2. GitHub: `deploy-dev.yml` runs (IaC + app deployment via public IP)
-3. GitHub: `deploy-cloudflare.yml` triggers **automatically** (workflow_run on success)
-4. GitHub: `post-deploy-tunnel-ssh-dev.yml` triggers **automatically** (workflow_run on success)
-5. **Result:** Tunnel is ready, SSH verified, zero public exposure confirmed
+2. GitHub detects changed files:
+   - If `iac/**` changed → `infra-dev.yml` runs
+   - If `apps/**` changed → `deploy-dev.yml` runs  
+   - If both changed → both run (deploy-dev waits for infra-dev via job dependency)
+3. Infra workflow completes (4 jobs):
+   - VM created with SSH 0.0.0.0/0
+   - Tunnel setup + smoke test
+   - SSH tightened to admin IP only (173.33.214.49/32)
+4. Infra workflow success → `infra-dev.yml` automatically triggers `deploy-dev.yml` via `workflow_run`
+5. App workflow completes (5 jobs):
+   - Verifies tunnel ready
+   - Builds Docker images
+   - Deploys via tunnel SSH (never public IP)
+   - Smoke test passes
+6. **Result:** Tunnel SSH is the only active path; public IP is restricted
 
 **Status:** ✅ Fully automated — no manual steps required after merge
 
-### Optional: Hardening Public IP (Security Hardening)
+**Concurrency Model:**
 
-After Phase 3 completes and tunnel SSH is verified, you can **optionally** lock down the public IP further:
+| Environment | Trigger | Concurrency Group | Cancel-in-Progress |
+|---|---|---|---|
+| **Dev** | `push` + `workflow_dispatch` | `deploy-dev` | ✅ True (faster iteration) |
+| **Staging** | `push` on `qa` branch + `workflow_dispatch` | `deploy-staging` | ✅ True (ephemeral) |
+| **Prod** | `push` to `main` + `workflow_dispatch` | `deploy-prod` | ❌ False (never cancel mid-deploy) |
 
-**Option 1: Block SSH on public IP (OCI Security List)**
-```bash
-# Deny incoming SSH to public IP
-# Keep: HTTPS (443) for Cloudflare tunnel agent heartbeat
-# Block: SSH (22) — all management now via tunnel
-```
-
-**Option 2: Keep public IP for emergency access**
-- Leave SSH open but document in runbook as "emergency access only"
-- Normally use tunnel SSH; only use direct IP if tunnel is down
-
-**Current state:** Public IP is open but not advertised. Tunnel SSH is the documented (and automated) path.
+Each environment has independent concurrency so prod deployments are never interrupted by dev/staging runs.
 
 ---
 

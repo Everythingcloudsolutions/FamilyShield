@@ -13,10 +13,12 @@
 5. [VS Code Remote SSH Setup](#5-vs-code-remote-ssh-setup)
 6. [First Deploy (dev environment)](#6-first-deploy)
 7. [Daily Development Workflow](#7-daily-development-workflow)
-8. [Architecture Overview](#8-architecture-overview)
-9. [Working with Each Service](#9-working-with-each-service)
-10. [Testing](#10-testing)
-11. [Contributing](#11-contributing)
+8. [Workflow Decision Matrix and Scenarios](#8-workflow-decision-matrix-and-scenarios)
+9. [Architecture Overview](#9-architecture-overview)
+10. [Working with Each Service](#10-working-with-each-service)
+11. [Testing](#11-testing)
+12. [Contributing](#12-contributing)
+13. [Security Hardening Updates (2026-04-16)](#13-security-hardening-updates-2026-04-16)
 
 ---
 
@@ -109,16 +111,45 @@ Add these repository secrets (values from bootstrap-oci.sh output):
 
 ### Cloudflare Secrets
 
-| Secret Name | Where to get it |
-|---|---|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare → Profile → API Tokens → Custom Token with Zone:DNS:Edit + Tunnel:Edit + Access:Edit (see SETUP.md Part 3.3) |
-| `CLOUDFLARE_ZONE_ID` | Cloudflare → everythingcloud.ca → Overview → Zone ID |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare → Profile → Account ID |
-| `CF_ACCESS_CLIENT_ID` | Cloudflare Zero Trust → Access → Service Auth → Service Tokens → `familyshield-github-actions` Client ID (see SETUP.md Part 3.4) |
-| `CF_ACCESS_CLIENT_SECRET` | Same service token — Client Secret (only shown at creation time) |
+| Secret Name | Where to get it | Used For |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare → Profile → API Tokens → **Custom Token** with **5 scopes** (see below) | IaC — tunnel, DNS, access apps, service token, WAF config |
+| `CLOUDFLARE_ZONE_ID` | Cloudflare → everythingcloud.ca → Overview → Zone ID | DNS zone management |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare → Profile → Account ID | Tunnel + Access creation |
+| `GH_PAT` | GitHub → Settings → Developer settings → Fine-grained PATs (Account: Everythingcloudsolutions, Repo: FamilyShield, Permission: Secrets → Read and Write) | `infra-dev.yml` writes fresh service token to GitHub Secrets after each infra deploy |
 
-> **Why two Cloudflare token types?**
-> `CLOUDFLARE_API_TOKEN` manages Cloudflare resources (tunnel creation, DNS, access apps). `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET` are a Cloudflare Access Service Token — used by GitHub Actions runners to authenticate *through* the Cloudflare Zero Trust layer when SSH-ing to the OCI VM via `ssh-dev.everythingcloud.ca` or `ssh-prod.everythingcloud.ca`. Without the service token, the runner hits the Access auth wall and cannot connect.
+**Cloudflare API Token — 5 Required Scopes:**
+
+Create a **Custom Token** (not a template) with all five:
+
+```
+Zone → DNS → Edit                           (CNAME record management)
+Account → Cloudflare Tunnel → Edit          (tunnel creation)
+Account → Access: Apps and Policies → Edit  (access application creation)
+Account → Access: Service Tokens → Edit     (service token creation)
+Zone → Config Rules → Edit                  (WAF config ruleset)
+```
+
+The "Edit zone DNS" template only grants the first scope — insufficient.
+
+**Tunnel SSH Access Tokens (auto-managed):**
+
+The infra workflow creates a Cloudflare Access Service Token via OpenTofu and automatically writes it to GitHub Secrets after each successful infra deploy. You do not create these manually.
+
+| Secret Name | Source |
+|---|---|
+| `CF_ACCESS_CLIENT_ID` | Auto-updated by `infra-dev.yml` / `infra-prod.yml` after each Cloudflare IaC apply |
+| `CF_ACCESS_CLIENT_SECRET` | Auto-updated by `infra-dev.yml` / `infra-prod.yml` after each Cloudflare IaC apply |
+
+These are used by `deploy-dev.yml` and `deploy-prod.yml` for Cloudflare tunnel SSH. They must exist before the first app deployment runs. Run `infra-dev.yml` at least once to populate them.
+
+**Bot Fight Mode — Manual Step (one-time):**
+
+Cloudflare's Bot Fight Mode fires before Access policy evaluation and blocks GitHub Actions datacenter IPs with `cf-mitigated: challenge`. It cannot be disabled via API on the free tier.
+
+Disable it once in the Cloudflare dashboard: **Security → Bots → Bot Fight Mode → OFF**
+
+Without this step, `verify-tunnel` in `deploy-dev.yml` will time out with `cf-mitigated: challenge` even when credentials are correct.
 
 ### Application Secrets
 
@@ -126,40 +157,87 @@ Add these repository secrets (values from bootstrap-oci.sh output):
 |---|---|
 | `ADGUARD_ADMIN_PASSWORD` | Choose a strong password |
 | `SUPABASE_URL` | Supabase → Project Settings → API |
-| `SUPABASE_ANON_KEY` | Supabase → Project Settings → API |
+| `SUPABASE_ANON_KEY` | Supabase → Project Settings → API → `anon` `public` key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API → `service_role` `secret` key |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
 | `ANTHROPIC_API_KEY` | console.anthropic.com → API Keys |
 
 ---
 
-## 5. VS Code Remote SSH Setup
+## 5. Remote SSH Access (Tunnel + Local)
 
-Add to `C:\Users\<YourName>\.ssh\config` on Windows:
+### Option A: SSH via Cloudflare Tunnel (Recommended — Always Available)
+
+Install `cloudflared` on your Windows laptop:
+
+```bash
+# Download from GitHub releases
+# https://github.com/cloudflare/cloudflared/releases
+
+# Or via scoop (Windows package manager)
+scoop install cloudflared
+```
+
+Add to `C:\Users\<YourName>\.ssh\config`:
 
 ```
 Host familyshield-dev
-    HostName       <VM_IP_from_tofu_output>
-    User           ubuntu
-    IdentityFile   ~/.ssh/familyshield
+    HostName           ssh-dev.everythingcloud.ca
+    User               ubuntu
+    IdentityFile       ~/.ssh/familyshield
+    ProxyCommand       cloudflared access ssh --hostname ssh-dev.everythingcloud.ca
     ServerAliveInterval 60
     ServerAliveCountMax 3
 
-Host familyshield-staging
-    HostName       <STAGING_VM_IP>
-    User           ubuntu
-    IdentityFile   ~/.ssh/familyshield
+Host familyshield-prod
+    HostName           ssh-prod.everythingcloud.ca
+    User               ubuntu
+    IdentityFile       ~/.ssh/familyshield
+    ProxyCommand       cloudflared access ssh --hostname ssh-prod.everythingcloud.ca
     ServerAliveInterval 60
+    ServerAliveCountMax 3
 ```
 
-Then in VS Code:
+Then SSH via tunnel:
+
+```bash
+ssh familyshield-dev
+ssh familyshield-prod
+```
+
+**Benefits:**
+
+- ✅ Works from anywhere (home, office, café)
+- ✅ No VPN needed
+- ✅ Cloudflare Zero Trust enforces email authentication
+- ✅ All traffic encrypted end-to-end
+- ✅ No public IP exposure
+
+### Option B: VS Code Remote SSH (Tunnel-Based)
 
 1. Install extension: `Remote - SSH` (ms-vscode-remote.remote-ssh)
 2. `Ctrl+Shift+P` → `Remote-SSH: Connect to Host`
 3. Select `familyshield-dev`
-4. Open folder: `/home/ubuntu/familyshield` (or `/opt/familyshield`)
-5. VS Code will install the dev container extensions automatically
+4. Open folder: `/opt/familyshield`
+5. VS Code will install dev container extensions automatically
 
-> **Note:** The VM IP is shown in the GitHub Actions deploy output under "Capture IaC outputs", or run `tofu output vm_public_ip` from the `iac/` directory locally.
+> **Note:** VS Code will use the SSH config above (Option A) automatically. Make sure `cloudflared` is installed first.
+
+### Option C: Direct Public IP SSH (Emergency Only — During Deploy)
+
+During the initial `infra-{env}.yml` deployment, SSH is temporarily open to `0.0.0.0/0`. You can SSH directly to the public IP:
+
+```bash
+# Get VM public IP from GitHub Actions output or:
+tofu output -raw vm_public_ip
+
+# SSH via public IP (only works while infra workflow is running)
+ssh -i ~/.ssh/familyshield ubuntu@<VM_IP>
+```
+
+**When available:** Only during `infra-*` workflow (tofu apply → setup-cloudflare → smoke-infra stages)  
+**When NOT available:** After `tighten-ssh` job completes (NSG restricted to admin IP 173.33.214.49/32)  
+**Use:** Emergency access only if tunnel is down. Normally use **Option A** (tunnel SSH).
 
 ---
 
@@ -188,21 +266,103 @@ git push origin feat/phase-1-bootstrap
 
 ## 7. Daily Development Workflow
 
+### Branching and Deployment Strategy
+
 ```
-main branch
+development branch (integration)
     │
     ├── feat/your-feature  ← you work here
     │        │
-    │        └── PR → plan comment → review → merge
-    │                                              │
-    │                              auto-deploy dev ┘
-    │                                              │
-    │                           auto-deploy staging ┘
+    │        ├── if iac/** changed → PR → review → merge
+    │        │              ↓
+    │        │          infra-dev.yml auto-runs
+    │        │          (tofu apply → setup-cloudflare → smoke-infra → tighten-ssh)
+    │        │              ↓
+    │        │          deploy-dev.yml auto-runs
+    │        │          (build → deploy via tunnel → smoke-test)
+    │        │
+    │        ├── if apps/** changed → PR → review → merge
+    │        │              ↓
+    │        │          deploy-dev.yml auto-runs
+    │        │          (wait-for-infra → build → deploy → smoke-test)
+    │        │
+    │        └── if both changed → both workflows run (deploy waits for infra)
     │
-    └── prod deploy: manual trigger via GitHub UI
+    ├── Test in dev at: https://familyshield-dev.everythingcloud.ca
+    │
+    └── When ready for staging:
+        ├── Create qa branch (ephemeral)
+        └── Push to qa → deploy-staging.yml auto-runs → auto-teardown after tests
+        
+        When ready for production:
+        ├── Delete qa branch
+        ├── Create PR: development → main
+        ├── Review PR (tofu plan posted as comment)
+        └── Merge → deploy-prod.yml auto-runs with approval gate
 ```
 
-### Branch naming convention
+---
+
+## 13. Security Hardening Updates (2026-04-16)
+
+The following security scaffolding is now part of the application codebase:
+
+### 12.1 Portal Route Protection (Scaffold)
+
+- File: `apps/portal/middleware.ts`
+- Protected routes: `/`, `/alerts`, `/devices`
+- Controlled by env vars:
+  - `PORTAL_BASIC_AUTH_ENABLED`
+  - `PORTAL_BASIC_AUTH_USERNAME`
+  - `PORTAL_BASIC_AUTH_PASSWORD`
+
+If auth is enabled but credentials are missing, portal fails safe with HTTP 503.
+
+See detailed guide: `docs/developer-guide/portal-auth-scaffold.md`
+
+### 12.2 Supabase Schema + RLS Baseline
+
+- Migration folder: `apps/api/supabase/migrations/`
+- Baseline migration:
+  - `20260416_0001_familyshield_core_rls.sql`
+
+This migration creates `devices`, `content_events`, and `alerts` with:
+
+- RLS enabled on all tables
+- Default-deny posture
+- Least-privilege policies scoped by `parent_user_id = auth.uid()`
+
+### 12.3 API Keying Rule for RLS Compatibility
+
+- API worker now prefers `SUPABASE_SERVICE_ROLE_KEY` for server-side writes.
+- Browser paths must continue to use `NEXT_PUBLIC_SUPABASE_ANON_KEY` only.
+
+### 12.4 Supabase Inactive/Recovery Runbook
+
+Portal now shows explicit degraded/offline state when Supabase is inactive instead of crashing.
+
+Activation runbook: `docs/developer-guide/supabase-activation.md`
+
+### What Changes Trigger What?
+
+| Files Changed | Workflow Triggered | Environment |
+|---|---|---|
+| `iac/**` | `infra-dev.yml` | dev (IaC only) |
+| `apps/**` | `deploy-dev.yml` | dev (app only via tunnel SSH) |
+| Both | Both workflows (sequential) | dev (infra first, then app) |
+| `iac/**` on `main` | `infra-prod.yml` | prod (requires manual approval) |
+| `apps/**` on `main` | `deploy-prod.yml` | prod (requires manual approval) |
+
+### SSH Availability During Development
+
+| Scenario | SSH Method | Availability |
+|---|---|---|
+| **Normal dev work** | Tunnel: `ssh familyshield-dev` | ✅ Always available |
+| **Debugging during infra deploy** | Public IP (temp) | ⚠️ Only while infra-dev.yml running |
+| **After infra deploy completes** | Tunnel only (NSG tightened) | ✅ Always available |
+| **Emergency** | Tunnel (fallback) | ✅ Always available |
+
+### Branch Naming Convention
 
 - `feat/` — new feature
 - `fix/` — bug fix
@@ -210,18 +370,294 @@ main branch
 - `docs/` — documentation only
 - `chore/` — maintenance
 
-### Commit message format (Conventional Commits)
+### Commit Message Format (Conventional Commits)
 
 ```
 feat(portal): add rule builder drag-and-drop
 fix(mitm): handle cert pinning gracefully
 iac(compute): increase boot volume to 100GB
 docs(api): document enrichment worker endpoints
+chore: update dependencies
 ```
 
 ---
 
-## 8. Architecture Overview
+## 8. Workflow Decision Matrix and Scenarios
+
+This section clarifies **when to use which workflow** based on what you changed. This is the operational answer to: "I made a code change — what do I do now?"
+
+### Quick Reference: What Changed → What Workflow
+
+| What You Changed | Where | Workflow | Triggered? | Purpose |
+|---|---|---|---|---|
+| **App code** | `apps/api/src/` or `apps/portal/` or `apps/mitm/` | `deploy-dev.yml` | ✅ Auto on push to `development` | Build new Docker images, deploy via tunnel |
+| **App config** | `apps/platform-config/` (headscale.yaml, grafana, etc.) | `deploy-platform-services.yml` | 🔲 Manual dispatch or use next section | Sync config files to VM without rebuilding images |
+| **Infrastructure** | `iac/` modules, tfvars, or templates | `infra-dev.yml` | ✅ Auto on push to `development` | Run `tofu apply`, set up Cloudflare tunnel, harden SSH |
+| **Both app + infra** | Any files in both `apps/` and `iac/` | Both workflows | ✅ Auto — sequential | Infra runs first (creates VM), then app runs (deploys to it) |
+| **Docs only** | `docs/`, `README.md`, `.github/workflows/` | `pr-check` (lint only) | ✅ Auto on PR | No deployment triggered |
+
+### Scenario 1: You Modified the API Enricher (YouTube Scraper)
+
+**Changed files:**
+```
+apps/api/src/enrichers/youtube.ts
+apps/api/src/llm/router.ts
+```
+
+**Workflow to use:** `deploy-dev.yml` (automatic on push to `development`)
+
+**Why:** These are app code changes. You need to:
+1. Rebuild the Docker image with new code
+2. Push to GHCR
+3. Pull and restart the API container on the VM
+
+**What deploy-dev.yml does:**
+```
+wait-for-infra (checks if infra also running)
+  ↓
+verify-tunnel (pre-flight: is tunnel reachable?)
+  ↓
+build-and-push (docker build api:arm64 → GHCR)
+  ↓
+deploy-app-dev (SSH via tunnel → pull image → docker compose up -d)
+  ↓
+smoke-test (check /api/health endpoint)
+```
+
+**Expected time:** 8-12 minutes  
+**Success indicator:** Portal loads, `curl https://familyshield-dev.everythingcloud.ca/api/health` returns 200
+
+---
+
+### Scenario 2: You Updated Headscale Configuration (DNS/VPN)
+
+**Changed files:**
+```
+apps/platform-config/headscale/headscale.yaml
+```
+
+**Workflow to use:** `deploy-platform-services.yml` (manual dispatch)
+
+**Why:** Configuration files don't need a full Docker rebuild. You just need to:
+1. Copy the new config to VM
+2. Restart the headscale container
+
+**How to trigger:**
+
+Go to GitHub → Actions → `Deploy Platform Services` → `Run workflow`:
+
+- Select environment: `dev`
+- Services to restart: `headscale` (or choose all)
+- Click **Run workflow**
+
+**What deploy-platform-services.yml does:**
+```
+Sync apps/platform-config/ to VM
+  ↓
+Restart selected services (headscale, adguard, grafana, etc.)
+```
+
+**Expected time:** 3-5 minutes  
+**Success indicator:** `docker logs familyshield-headscale | tail` shows no errors, tunnel shows ACTIVE
+
+---
+
+### Scenario 3: You Fixed a Bug in the mitmproxy Addon
+
+**Changed files:**
+```
+apps/mitm/familyshield_addon.py
+apps/mitm/requirements.txt
+```
+
+**Option A (Full Rebuild - Recommended):**
+
+Use `deploy-dev.yml` — triggers automatically when you push.
+
+**Why:** mitmproxy addon is built into the Docker image. Changes require full rebuild to update the image.
+
+**Expected time:** 8-12 minutes
+
+**Option B (Quick Development Iteration - Temporary):**
+
+Use `deploy-platform-services.yml` manually if:
+- You only changed Python logic (not requirements.txt)
+- You want to test without waiting for Docker build
+
+**Warning:** This copies the source code to the VM but does NOT rebuild the Docker image. The container might have an older version. Use only for quick debugging — always use deploy-dev.yml for final commits.
+
+---
+
+### Scenario 4: You Changed OCI Network Settings (NSG, Subnet)
+
+**Changed files:**
+```
+iac/modules/oci-network/
+iac/environments/dev/terraform.tfvars (updated CIDR blocks, etc.)
+```
+
+**Workflow to use:** `infra-dev.yml` (automatic on push to `development`)
+
+**Why:** These are infrastructure changes managed by OpenTofu. You need to:
+1. Run `tofu plan` (shows what will change)
+2. Run `tofu apply` (creates/updates OCI resources)
+3. Set up Cloudflare tunnel on the new/updated VM
+4. Harden SSH after verification
+
+**What infra-dev.yml does:**
+```
+deploy-infra-dev (tofu apply — 8 min)
+  ↓
+setup-cloudflare-dev (create tunnel, start cloudflared — 3 min)
+  ↓
+smoke-infra-dev (verify tunnel is ACTIVE — 1 min)
+  ↓
+tighten-ssh-dev (restrict SSH to admin IP — 2 min)
+```
+
+**Expected time:** 12-15 minutes  
+**Success indicator:** New NSG rules are in place, tunnel is ACTIVE, portal loads
+
+---
+
+### Scenario 5: You Changed Both API Code AND Added a New Terraform Module
+
+**Changed files:**
+```
+apps/api/src/enrichers/new-platform.ts
+iac/modules/new-service/main.tf
+```
+
+**Workflow to use:** Both workflows trigger automatically in sequence
+
+**What happens:**
+
+```
+Push to development
+  ├── iac/** detected → infra-dev.yml starts
+  │   └─ (tofu apply — may take 12-15 min)
+  │
+  └── apps/** detected → deploy-dev.yml starts
+      └─ Immediately polls: "Is infra-dev still running?"
+      
+      If infra-dev is running:
+        Wait up to 10 minutes for it to finish
+        
+      Once infra-dev completes:
+        build-and-push (Docker build)
+        deploy-app-dev (Deploy via tunnel)
+        smoke-test
+```
+
+**Expected total time:** 20-25 minutes (15 min infra + 8 min app, mostly parallel)  
+**Success indicator:** Both workflows show green checkmarks, portal is accessible
+
+---
+
+### Scenario 6: You Added a New GitHub Actions Workflow File
+
+**Changed files:**
+```
+.github/workflows/new-workflow.yml
+```
+
+**Workflow to use:** `pr-check` runs (lint only, no deployment)
+
+**Why:** Workflow files don't trigger deployments — they ARE part of the deployment system. Changes to `.github/workflows/` are validated but not deployed.
+
+**Expected time:** 2-3 minutes (lint only)  
+**Success indicator:** `pr-check` passes (lint, no deployment)
+
+---
+
+### When to Use `deploy-platform-services.yml` (Manual Utility Workflow)
+
+This workflow is for **configuration-only changes** when you want to avoid a full Docker rebuild:
+
+| Scenario | Use `deploy-platform-services` | Reason |
+|---|---|---|
+| Changed `apps/platform-config/headscale/headscale.yaml` | ✅ Yes | Config-only change; no rebuild needed |
+| Changed `apps/platform-config/grafana/provisioning/` | ✅ Yes | Grafana configs; no rebuild needed |
+| Changed `apps/platform-config/ntfy/*.conf` | ✅ Yes | ntfy config; no rebuild needed |
+| Changed `apps/mitm/familyshield_addon.py` and `requirements.txt` | ⚠️ Depends | If `requirements.txt` changed: use `deploy-dev.yml` (rebuilds image). If only `.py`: can use `deploy-platform-services` for quick test. |
+| Changed `apps/api/src/enrichers/youtube.ts` | ❌ No | App code change — use `deploy-dev.yml` |
+| Changed `iac/modules/oci-compute/` | ❌ No | Infrastructure change — use `infra-dev.yml` |
+
+**How to trigger manually:**
+
+```bash
+# GitHub UI: Actions → Deploy Platform Services → Run workflow
+# Or via CLI:
+gh workflow run deploy-platform-services.yml \
+  --ref development \
+  -f environment=dev
+```
+
+---
+
+### Decision Tree: "I made a change, what do I do?"
+
+```
+Did I change...?
+
+├─ iac/ (IaC code, tfvars, templates)
+│  └─→ USE: infra-dev.yml or infra-prod.yml
+│      Auto-triggered on push
+│
+├─ apps/ (app code, Docker code)
+│  ├─ If also changed iac/: Both workflows trigger (sequential)
+│  └─ If apps/ only: USE: deploy-dev.yml or deploy-prod.yml
+│     Auto-triggered on push
+│
+├─ apps/platform-config/ (config files only, no code)
+│  └─→ USE: deploy-platform-services.yml (manual dispatch)
+│      For quick config sync without rebuild
+│
+├─ docs/ or .github/workflows/
+│  └─→ USE: pr-check (validation only, no deploy)
+│      Auto-triggered on PR
+│
+└─ Multiple different things?
+   └─→ Merge to main branch via PR, and both workflows run
+```
+
+---
+
+### Success Indicators by Workflow
+
+#### ✅ infra-dev.yml completed successfully:
+
+- All 4 jobs are green (deploy-infra, setup-cloudflare, smoke-infra, tighten-ssh)
+- Portal is reachable at `https://familyshield-dev.everythingcloud.ca`
+- Tunnel is ACTIVE (visible in Cloudflare dashboard)
+- SSH is restricted to admin IP (not 0.0.0.0/0 anymore)
+
+#### ✅ deploy-dev.yml completed successfully:
+
+- All 5 jobs are green (verify-tunnel, build-and-push, deploy-app, smoke-test)
+- Portal loads normally
+- API endpoint `/api/health` returns 200 or 403
+
+#### ✅ deploy-platform-services.yml completed successfully:
+
+- Config files are synced to `/opt/familyshield/apps/platform-config/`
+- Restarted service shows no errors in logs
+- (e.g., for headscale: tunnel still ACTIVE, `docker ps` shows headscale running)
+
+---
+
+### Common Mistakes
+
+| Mistake | What Happens | Fix |
+|---|---|---|
+| Changing `apps/api/` but waiting for infra-dev workflow | You're waiting for the wrong workflow. App code changes trigger `deploy-dev`, not `infra-dev` | Look for `deploy-dev.yml` in Actions tab instead |
+| Changing `iac/modules/` but triggering `deploy-dev` manually | The change won't be deployed to the VM (old IaC still in place) | Push to development branch; `infra-dev.yml` auto-triggers on `iac/**` changes |
+| Merging to `main` without testing in `development` first | Your production environment may be broken | Always test in dev first: feature branch → dev PR → test → staging → main |
+| Running `deploy-platform-services` with Docker code changes | Config syncs but new Docker image never builds | Use `deploy-dev` instead for code changes |
+
+---
+
+## 9. Architecture Overview
 
 See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wire diagrams, and flow diagrams.
 
@@ -254,7 +690,7 @@ See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wi
 
 ---
 
-## 9. Working with Each Service
+## 10. Working with Each Service
 
 ### AdGuard Home
 
@@ -282,7 +718,7 @@ See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wi
 
 ---
 
-## 10. Testing
+## 11. Testing
 
 ```bash
 # Unit tests (API)
@@ -305,15 +741,67 @@ See [docs/qa-framework/README.md](../qa-framework/README.md) for full test strat
 
 ---
 
-## 11. Contributing
+## 12. Contributing
 
-1. Create a feature branch from `main`
-2. Make your changes with tests
-3. Open a Pull Request — the plan comment will show infrastructure impact
-4. Address review feedback
-5. Merge — auto-deploys to dev then staging
+### Getting Started with a Feature
 
-**First time?** Look for issues labelled `good-first-issue`.
+1. Start from `development` branch (integration):
+
+   ```bash
+   git checkout development
+   git pull origin development
+   git checkout -b feat/your-feature-name
+   ```
+
+2. Make your changes with tests (see Section 10 for test commands)
+
+3. Commit with Conventional Commits format:
+
+   ```bash
+   git add .
+   git commit -m "feat(portal): add new component"
+   ```
+
+4. Push and open a Pull Request:
+
+   ```bash
+   git push -u origin feat/your-feature-name
+   gh pr create --base development  # NOT main
+   ```
+
+5. GitHub Actions runs `pr-check`:
+   - Lints your code (ESLint, black, tflint)
+   - Validates IaC if you changed `iac/**` (posts `tofu plan` as PR comment)
+   - Runs security scan
+
+6. Address review feedback and merge to `development`
+
+7. GitHub auto-deploys to dev:
+   - If you changed `iac/**` → `infra-dev.yml` runs
+   - If you changed `apps/**` → `deploy-dev.yml` runs
+   - If both → both workflows run sequentially
+
+8. Test in dev at `https://familyshield-dev.everythingcloud.ca`
+
+### Promoting to Production
+
+After dev testing passes:
+
+1. Create `qa` branch from `development` and push (triggers `deploy-staging.yml`)
+2. Run QA tests on staging at `https://familyshield-staging.everythingcloud.ca`
+3. After staging passes, delete `qa` branch and create PR `development` → `main`
+4. Merge to `main` (triggers `deploy-prod.yml` with manual approval gate)
+
+### Finding Issues to Work On
+
+Look for issues labelled `good-first-issue` or `help-wanted` in the GitHub repository.
+
+### Need Help?
+
+- **Architecture questions:** See [docs/architecture/README.md](../architecture/README.md)
+- **Deployment troubleshooting:** See [docs/troubleshooting/infrastructure.md](../troubleshooting/infrastructure.md)
+- **API development:** See [apps/api/README.md](../../apps/api/README.md) (if exists)
+- **Portal development:** See [apps/portal/README.md](../../apps/portal/README.md) (if exists)
 
 ---
 

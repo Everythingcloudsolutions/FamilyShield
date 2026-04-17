@@ -169,5 +169,7 @@ locals {
     supabase_service_role_key = var.supabase_service_role_key
     groq_api_key              = var.groq_api_key
     anthropic_api_key         = var.anthropic_api_key
+    influxdb_password         = var.influxdb_password
+    grafana_password          = var.grafana_password
   }
 }

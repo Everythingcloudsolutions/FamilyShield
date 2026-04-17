@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "command": "C:\\Program Files\\nodejs\\npx.cmd",
+      "args": [
+        "-y",
+        "@supabase/mcp-server-supabase@latest"
+      ],
+      "env": {
+        "SUPABASE_ACCESS_TOKEN": ""
+      }
+    },
+    "grafana": {
+      "command": "mcp-grafana",
+      "env": {
+        "GRAFANA_URL": "http://localhost:3002",
+        "GRAFANA_API_KEY": ""
+      }
+    },
+    "redis": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-redis",
+        "redis://localhost:6379"
+      ]
+    }
+  }
+}

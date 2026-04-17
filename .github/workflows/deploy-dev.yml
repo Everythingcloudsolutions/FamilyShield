@@ -106,48 +106,34 @@ jobs:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
         run: |
           SSH_HOST="ssh-dev.everythingcloud.ca"
-          echo "Checking SSH tunnel reachability: $SSH_HOST"
 
           mkdir -p ~/.ssh
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
 
-          # Try up to 5 times with service token auth
+          # cloudflared reads TUNNEL_SERVICE_TOKEN_ID / TUNNEL_SERVICE_TOKEN_SECRET
+          # CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET are the HTTP header names — not cloudflared env vars
+          # Passing credentials explicitly via flags is the only reliable method
           for attempt in {1..5}; do
-            RESULT=$(ssh -i ~/.ssh/familyshield \
+            echo "Checking SSH tunnel reachability: $SSH_HOST (attempt $attempt/5)"
+            SSH_OUT=$(ssh -v -i ~/.ssh/familyshield \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=10 \
+              -o ConnectTimeout=15 \
               -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
-              ubuntu@"${SSH_HOST}" echo "tunnel-ok" 2>/dev/null || echo "")
-
-            if [ "$RESULT" = "tunnel-ok" ]; then
-              echo "✅ SSH tunnel is reachable (attempt $attempt)"
+              ubuntu@"${SSH_HOST}" echo "tunnel-ok" 2>&1)
+            EXIT=$?
+            if [ $EXIT -eq 0 ]; then
+              echo "✅ SSH tunnel reachable"
               exit 0
             fi
-
-            echo "   Attempt $attempt/5 — waiting 15s..."
-            sleep 15
+            echo "   Exit $EXIT — last lines:"
+            echo "$SSH_OUT" | tail -5
+            [ $attempt -lt 5 ] && sleep 15
           done
-
-          # Non-fatal — proceed with portal HTTP check as fallback
-          echo "ℹ️  SSH tunnel pre-check inconclusive — will verify via portal health check"
-
-      - name: Portal health check via tunnel
-        run: |
-          PORTAL_URL="https://familyshield-dev.everythingcloud.ca"
-          for attempt in {1..6}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$PORTAL_URL" || echo "000")
-            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
-              echo "✅ Tunnel active — portal reachable (HTTP $STATUS)"
-              exit 0
-            fi
-            echo "   Attempt $attempt/6 — HTTP $STATUS, waiting 10s..."
-            sleep 10
-          done
-          echo "❌ Tunnel not reachable — infra may be down or tunnel not yet active"
-          echo "   Run infra-dev.yml first, then retry this workflow"
+          echo "❌ SSH tunnel not reachable after 5 attempts"
           exit 1
+
 
   build-and-push:
     name: "Build & Push Docker images"
@@ -155,7 +141,7 @@ jobs:
     needs: verify-tunnel
     strategy:
       matrix:
-        app: [api, portal]
+        app: [api, portal, mitm]
     steps:
       - uses: actions/checkout@v4
 
@@ -214,20 +200,22 @@ jobs:
 
           tar -czf /tmp/familyshield-runtime-assets.tgz apps/mitm apps/platform-config
 
-          # SCP through Cloudflare tunnel
-          scp -i ~/.ssh/familyshield \
+          # Transfer via SSH stdin pipe — avoids SFTP protocol (scp uses SFTP by default
+          # on Ubuntu 22.04, which Cloudflare Access rejects with "websocket: bad handshake")
+          ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
-            /tmp/familyshield-runtime-assets.tgz \
-            ubuntu@"${SSH_HOST}":/tmp/familyshield-runtime-assets.tgz
+            ubuntu@"${SSH_HOST}" \
+            "cat > /tmp/familyshield-runtime-assets.tgz" \
+            < /tmp/familyshield-runtime-assets.tgz
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
             ubuntu@"${SSH_HOST}" \
-            "mkdir -p /opt/familyshield && tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
+            "mkdir -p /opt/familyshield && sudo tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
 
           echo "✅ Runtime assets synced"
 
@@ -248,17 +236,16 @@ jobs:
           set -euo pipefail
           cd /opt/familyshield
 
-          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+          echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
-          # Ensure Redis is up before API starts
-          docker compose up -d redis
-          sleep 5
+          # Pull only the images that changed (GHCR — requires auth)
+          sudo docker compose pull api portal
 
-          docker compose pull api portal
-          docker compose up -d --remove-orphans api portal
+          # Bring up all services — starts any stopped containers, recreates only changed ones
+          sudo docker compose up -d --remove-orphans
 
-          sleep 10
-          docker compose ps
+          sleep 15
+          sudo docker compose ps
           echo "✅ Deploy complete"
           ENDSSH
 
@@ -269,8 +256,8 @@ jobs:
     steps:
       - name: Check portal and API health
         env:
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID_DEV }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET_DEV }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           BASE_URL="https://familyshield-dev.everythingcloud.ca"
 

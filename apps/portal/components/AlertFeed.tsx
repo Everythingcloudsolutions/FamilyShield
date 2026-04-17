@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { getSupabase } from '../lib/supabase'
+import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
 import { RiskBadge } from './RiskBadge'
 import type { Alert, Platform } from '../lib/types'
 
@@ -46,6 +46,10 @@ export function AlertFeed({ initialAlerts }: AlertFeedProps) {
   const [alerts, setAlerts] = useState<Alert[]>(initialAlerts.slice(0, 20))
 
   useEffect(() => {
+    if (!isSupabaseConfigured()) {
+      return
+    }
+
     const channel = getSupabase()
       .channel('alerts-feed')
       .on(
