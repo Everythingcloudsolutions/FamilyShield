@@ -265,16 +265,9 @@ services:
       - ./apps/platform-config/ntfy:/etc/ntfy:ro
 
   # ── 11. Cloudflare Tunnel daemon ──────────────────────────────────────────
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: familyshield-cloudflared
-    restart: unless-stopped
-    networks:
-      familyshield:
-        ipv4_address: 172.20.0.11
-    command: tunnel --no-autoupdate run
-    environment:
-      - TUNNEL_TOKEN=${tunnel_token}
-    depends_on:
-      - adguard
-      - api
+  # NOTE: cloudflared is intentionally NOT managed by docker-compose.
+  # It is started via `docker run --restart unless-stopped --token $TUNNEL_TOKEN`
+  # in the infra workflow's setup-cloudflare job. The real tunnel token is only
+  # known after Cloudflare IaC runs — it cannot be baked into this compose file.
+  # Docker's own restart policy keeps it running across container restarts and reboots.
+  # Running `docker compose up/restart` will NOT touch the tunnel container.
