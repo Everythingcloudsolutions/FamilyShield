@@ -121,7 +121,7 @@ jobs:
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           TF_VAR_influxdb_password: ${{ secrets.INFLUXDB_PASSWORD }}
-          TF_VAR_influxdb_admin_token: ${{ secrets.INFLUXDB_ADMIN_TOKEN }}
+          TF_VAR_influxdb_admin_token: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN }}
           TF_VAR_grafana_password: ${{ secrets.GRAFANA_PASSWORD }}
 
       - name: Apply IaC → prod
@@ -144,7 +144,7 @@ jobs:
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           TF_VAR_influxdb_password: ${{ secrets.INFLUXDB_PASSWORD }}
-          TF_VAR_influxdb_admin_token: ${{ secrets.INFLUXDB_ADMIN_TOKEN }}
+          TF_VAR_influxdb_admin_token: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN }}
           TF_VAR_grafana_password: ${{ secrets.GRAFANA_PASSWORD }}
 
       - name: Capture IaC outputs
@@ -450,7 +450,7 @@ jobs:
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           TF_VAR_influxdb_password: ${{ secrets.INFLUXDB_PASSWORD }}
-          TF_VAR_influxdb_admin_token: ${{ secrets.INFLUXDB_ADMIN_TOKEN }}
+          TF_VAR_influxdb_admin_token: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN }}
           TF_VAR_grafana_password: ${{ secrets.GRAFANA_PASSWORD }}
           TF_VAR_admin_ssh_cidrs: '["173.33.214.49/32"]'
         shell: bash

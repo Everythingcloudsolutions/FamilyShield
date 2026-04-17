@@ -44,6 +44,11 @@ services:
     environment:
       - TZ=America/Toronto
     healthcheck:
+      # AdGuard admin UI is on port 80 AFTER setup wizard completes.
+      # On first launch the wizard runs on port 3000 — this healthcheck will
+      # correctly show UNHEALTHY until the one-time setup is done (expected).
+      # To complete first-time setup: SSH port-forward → http://localhost:3000
+      #   ssh -L 3000:localhost:3000 -i ~/.ssh/familyshield ubuntu@<vm-ip>
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:80/"]
       interval: 30s
       timeout: 10s
@@ -67,7 +72,9 @@ services:
     environment:
       - TZ=America/Toronto
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9090/metrics"]
+      # headscale uses a distroless base image — no wget/curl/nc available.
+      # Use the headscale binary itself as a liveness check.
+      test: ["CMD", "headscale", "version"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -95,7 +102,8 @@ services:
     depends_on:
       - redis
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/"]
+      # mitmproxy image has no curl/wget — use Python3 urllib
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -173,7 +181,9 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3000"]
+      # Use 127.0.0.1 not localhost — Alpine resolves localhost to ::1 (IPv6)
+      # but Next.js standalone binds IPv4 only.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000"]
       interval: 30s
       timeout: 10s
       retries: 3

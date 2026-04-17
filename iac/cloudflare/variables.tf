@@ -31,3 +31,8 @@ variable "root_domain" {
   type        = string
   default     = "everythingcloud.ca"
 }
+
+variable "admin_email" {
+  description = "Admin email address allowed to access protected services (AdGuard, Grafana) via Cloudflare Access OTP"
+  type        = string
+}

@@ -1,12 +1,11 @@
-# iac/cloudflare/environments/dev/terraform.tfvars
-# Dev environment — Cloudflare resources
+# iac/cloudflare/environments/prod/terraform.tfvars
+# Prod environment — Cloudflare resources
 # Sensitive values are injected via TF_VAR_* GitHub Secrets (not hardcoded here)
 
-environment = "dev"
+environment = "prod"
 root_domain = "everythingcloud.ca"
 
 # Admin email — Cloudflare Access will send a one-time PIN to this address
-# Set to your Cloudflare account email (or any email you want to use for OTP login)
 admin_email = "mohit.goyal@everything.net.in"
 
 # cloudflare_api_token    — set via TF_VAR_cloudflare_api_token GitHub Secret

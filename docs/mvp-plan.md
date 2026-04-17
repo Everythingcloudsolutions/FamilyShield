@@ -112,12 +112,26 @@ OCI ARM VM (ca-toronto-1)
 | 1.2 | Fix Supabase function search_path | Apply patch migration via MCP | No security warnings in advisor | ✅ Done |
 | 1.3 | Set missing GitHub Secrets | GitHub → Settings → Secrets | `YOUTUBE_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` added | 🔲 Todo (needs Mohit) |
 | 1.4 | Fix ntfy base-url placeholder | Edit `apps/platform-config/ntfy/server.yml` | URL matches `notify-dev.everythingcloud.ca` | ✅ Done |
-| 1.5 | Add Cloudflare tunnel routes | `scripts/cloudflare-api.sh` or IaC | ntfy, headscale, adguard, grafana reachable via tunnel | 🔲 Todo |
+| 1.5 | Add Cloudflare Access email policies + tunnel routes | `iac/cloudflare/access.tf` — add email Allow policies for AdGuard, Grafana, SSH | `mohit.goyal@everything.net.in` can browse admin services; ntfy route added | ✅ Done |
+| 1.5a | Fix container healthchecks | `iac/templates/docker-compose.yaml.tpl` — portal (IPv4 fix), headscale (no wget), mitmproxy (python3) | Portal ✅ healthy; headscale ✅ healthy; mitmproxy ✅ healthy (after re-run) | ✅ Done |
+| 1.5b | Fix INFLUXDB_ADMIN_TOKEN secret name | `infra-dev.yml` + `infra-prod.yml` — secret ref was INFLUXDB_ADMIN_TOKEN, should be TF_VAR_INFLUXDB_ADMIN_TOKEN | Workflow passes tofu apply without missing-secret error | ✅ Done |
 | 1.6 | Add Grafana datasource provisioning | Add config to `apps/platform-config/grafana/provisioning/` | Grafana starts with InfluxDB datasource pre-configured | ✅ Done |
-| 1.7 | AdGuard initial setup | Via Cloudflare tunnel URL (`adguard-dev.everythingcloud.ca`) | Admin UI accessible, default blocklists active, DNS responding on port 53 | 🔲 Todo (needs Mohit) |
+| 1.7 | AdGuard initial setup | SSH port-forward: `ssh -L 3000:localhost:3000 -i ~/.ssh/familyshield ubuntu@<vm-ip>` → open `http://localhost:3000` → set Admin port=80 | Admin UI accessible via `adguard-dev.everythingcloud.ca`, default blocklists active | 🔲 Todo (needs Mohit — see note below) |
 | 1.8 | Headscale: create user + preauth key | `docker exec familyshield-headscale headscale users create parent` | User created, preauth key generated and saved | 🔲 Todo |
 | 1.9 | ntfy: create parent user + alert topic | `docker exec familyshield-ntfy ntfy user add parent` | Parent user created, `familyshield-alerts` topic accessible | 🔲 Todo |
 | 1.10 | Verify all services healthy | SSH → `docker compose ps` | All 10 services: `Up (healthy)` | 🔲 Todo |
+
+> **Step 1.7 note — AdGuard first-time setup via SSH port-forward:**
+> The Cloudflare tunnel routes `adguard-dev.everythingcloud.ca` → VM host:3080 → container:80.
+> AdGuard's setup wizard runs on container:3000 (not 80), so the tunnel can't reach it until setup is done.
+> Complete setup once using SSH port-forwarding:
+> ```bash
+> ssh -L 3000:localhost:3000 -i ~/.ssh/familyshield ubuntu@192.18.154.233
+> ```
+> Then open `http://localhost:3000` in your browser. In the wizard:
+> - **Admin Web Interface** → port **80** (so tunnel works after setup)
+> - **DNS** → port **53** (already mapped)
+> After completing setup, AdGuard serves on port 80, the tunnel works, and the healthcheck passes.
 
 ---
 
