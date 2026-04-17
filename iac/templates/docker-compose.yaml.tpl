@@ -11,16 +11,10 @@ networks:
       config:
         - subnet: 172.20.0.0/24
 
-volumes:
-  adguard_work:
-  adguard_conf:
-  headscale_data:
-  influxdb_data:
-  grafana_data:
-  mitmproxy_data:
-  redis_data:
-  ntfy_cache:
-  ntfy_data:
+# All service data is stored on the OCI persistent block volume at /opt/familyshield-data.
+# This volume survives VM recreation — AdGuard config, Headscale keys, InfluxDB data, etc. persist.
+# DO NOT use Docker named volumes for stateful services — those live on the boot volume and are wiped.
+# The infra workflow (infra-dev/prod.yml) formats + mounts the volume on first deploy.
 
 services:
 
@@ -39,8 +33,8 @@ services:
       - "443:443/tcp"     # DoH
       - "853:853/tcp"     # DoT
     volumes:
-      - adguard_work:/opt/adguardhome/work
-      - adguard_conf:/opt/adguardhome/conf
+      - /opt/familyshield-data/adguard/work:/opt/adguardhome/work
+      - /opt/familyshield-data/adguard/conf:/opt/adguardhome/conf
     environment:
       - TZ=America/Toronto
     healthcheck:
@@ -66,7 +60,7 @@ services:
       - "8080:8080"       # Control plane (via Cloudflare Tunnel)
       - "9090:9090"       # Metrics
     volumes:
-      - headscale_data:/var/lib/headscale
+      - /opt/familyshield-data/headscale:/var/lib/headscale
       - ./apps/platform-config/headscale/headscale.yaml:/etc/headscale/config.yaml:ro
     command: serve
     environment:
@@ -93,7 +87,7 @@ services:
       - "8888:8080"       # mitmproxy web UI (Cloudflare Tunnel)
       - "8889:8081"       # Transparent proxy port
     volumes:
-      - mitmproxy_data:/home/mitmproxy/.mitmproxy
+      - /opt/familyshield-data/mitmproxy:/home/mitmproxy/.mitmproxy
       # Note: addon code is baked into the image (COPY in Dockerfile).
       # No host volume mount — the ./apps/mitm directory does not exist on the server.
     environment:
@@ -118,7 +112,7 @@ services:
       familyshield:
         ipv4_address: 172.20.0.5
     volumes:
-      - redis_data:/data
+      - /opt/familyshield-data/redis:/data
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -219,7 +213,7 @@ services:
     ports:
       - "8086:8086"
     volumes:
-      - influxdb_data:/var/lib/influxdb2
+      - /opt/familyshield-data/influxdb:/var/lib/influxdb2
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
@@ -246,7 +240,7 @@ services:
     ports:
       - "3002:3000"       # Admin UI (via Cloudflare Tunnel → Zero Trust)
     volumes:
-      - grafana_data:/var/lib/grafana
+      - /opt/familyshield-data/grafana:/var/lib/grafana
       - ./apps/platform-config/grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${grafana_password}
@@ -277,8 +271,8 @@ services:
       - NTFY_AUTH_DEFAULT_ACCESS=deny-all
     volumes:
       - ./apps/platform-config/ntfy:/etc/ntfy:ro
-      - ntfy_cache:/var/cache/ntfy
-      - ntfy_data:/var/lib/ntfy
+      - /opt/familyshield-data/ntfy/cache:/var/cache/ntfy
+      - /opt/familyshield-data/ntfy/data:/var/lib/ntfy
 
   # ── 11. Cloudflare Tunnel daemon ──────────────────────────────────────────
   # NOTE: cloudflared is intentionally NOT managed by docker-compose.

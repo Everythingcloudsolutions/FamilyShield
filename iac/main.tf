@@ -111,10 +111,9 @@ module "compute" {
   # image_id intentionally NOT set — compute module dynamically queries for Ubuntu 22.04 ARM image
   cloud_init_script = templatefile("${path.module}/templates/cloud-init.yaml.tpl", {
     environment = var.environment
-    docker_compose_b64 = base64encode(templatefile(
-      "${path.module}/templates/docker-compose.yaml.tpl",
-      local.docker_compose_vars
-    ))
+    # docker_compose_b64 intentionally NOT passed here.
+    # The real docker-compose.yml is written by the infra workflow via SSH after tofu apply.
+    # This keeps cloud-init user_data static so app config changes do NOT recreate the VM.
   })
   tags = local.common_tags
 }
@@ -148,6 +147,51 @@ resource "random_password" "tunnel_secret" {
   special = false
 }
 
+###############################################################################
+# Persistent Data Volume — OCI Block Storage (Always Free tier)
+# Survives VM recreation — all service data (AdGuard, Headscale, InfluxDB, etc.)
+# lives here, not on the boot volume which is wiped on every VM recreate.
+#
+# OCI Always Free storage limit: 200 GB total across all block + boot volumes.
+# boot volume (50 GB) + data volume (50 GB) = 100 GB — well within the free limit.
+#
+# Device path on VM: /dev/oracleoci/oraclevdb (paravirtualized OCI symlink)
+# Mount point: /opt/familyshield-data
+# File system: ext4, labelled "familyshield-data"
+# fstab: UUID-based, _netdev,nofail — survives reboots safely
+###############################################################################
+
+resource "oci_core_volume" "data" {
+  compartment_id      = module.compartments.compartment_id
+  availability_domain = module.compute.availability_domain
+  display_name        = "familyshield-data-${var.environment}"
+  size_in_gbs         = 50
+
+  freeform_tags = local.common_tags
+
+  lifecycle {
+    # CRITICAL: Never delete the data volume. All service configs live here.
+    # AdGuard setup, Headscale users/keys, ntfy users, InfluxDB data, Grafana dashboards.
+    # To intentionally delete: remove this block, run tofu apply, then destroy manually.
+    prevent_destroy = true
+  }
+}
+
+resource "oci_core_volume_attachment" "data" {
+  attachment_type = "paravirtualized"
+  instance_id     = module.compute.instance_id
+  volume_id       = oci_core_volume.data.id
+  display_name    = "familyshield-data-attachment-${var.environment}"
+  device          = "/dev/oracleoci/oraclevdb"
+
+  # Encrypt data in transit between VM and block volume (free, always recommended)
+  is_pv_encryption_in_transit_enabled = true
+
+  timeouts {
+    create = "15m"
+  }
+}
+
 locals {
   common_tags = {
     project     = "familyshield"
@@ -155,22 +199,5 @@ locals {
     managed_by  = "opentofu"
     repo        = "github.com/Everythingcloudsolutions/FamilyShield"
     year        = "2026"
-  }
-
-  docker_compose_vars = {
-    environment      = var.environment
-    adguard_password = var.adguard_admin_password
-    # tunnel_token is set by deploy-cloudflare.yml workflow via SSM Parameter or Object Storage
-    # It's not available at IaC time, so we use a placeholder here
-    tunnel_token              = "TUNNEL_TOKEN_PLACEHOLDER_${var.environment}"
-    headscale_domain          = "vpn.familyshield-${var.environment}.everythingcloud.ca"
-    supabase_url              = var.supabase_url
-    supabase_anon_key         = var.supabase_anon_key
-    supabase_service_role_key = var.supabase_service_role_key
-    groq_api_key              = var.groq_api_key
-    anthropic_api_key         = var.anthropic_api_key
-    influxdb_password         = var.influxdb_password
-    influxdb_admin_token      = var.influxdb_admin_token
-    grafana_password          = var.grafana_password
   }
 }

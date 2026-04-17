@@ -232,6 +232,7 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           INFLUXDB_PASSWORD: ${{ secrets.INFLUXDB_PASSWORD || 'FamilyShield-Influx-Prod' }}
+          INFLUXDB_ADMIN_TOKEN: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN || 'FamilyShield-InfluxDB-Token-Prod' }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD || 'FamilyShield-Grafana-Prod' }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
@@ -251,6 +252,7 @@ jobs:
             -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
             -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
             -e "s|\${influxdb_password}|$INFLUXDB_PASSWORD|g" \
+            -e "s|\${influxdb_admin_token}|$INFLUXDB_ADMIN_TOKEN|g" \
             -e "s|\${grafana_password}|$GRAFANA_PASSWORD|g" \
             -e 's|\$\${|\${|g' \
             iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
@@ -295,6 +297,40 @@ jobs:
             ubuntu@"$VM_IP" bash -s <<ENDSSH
           set -euo pipefail
           sudo cloud-init status --wait || true
+
+          # ── Mount persistent data volume ─────────────────────────────────────────
+          # tofu apply has completed by the time this runs — the OCI volume IS attached.
+          # cloud-init may have raced with the attachment; we guarantee the mount here.
+          if sudo test -b "/dev/oracleoci/oraclevdb"; then
+            if ! sudo mountpoint -q "/opt/familyshield-data" 2>/dev/null; then
+              if ! sudo blkid /dev/oracleoci/oraclevdb | grep -q TYPE; then
+                echo "📦 First boot — formatting persistent data volume..."
+                sudo mkfs.ext4 -L familyshield-data -F /dev/oracleoci/oraclevdb
+              fi
+              sudo mkdir -p /opt/familyshield-data
+              sudo mount /dev/oracleoci/oraclevdb /opt/familyshield-data
+              DEVICE_UUID=\$(sudo blkid -s UUID -o value /dev/oracleoci/oraclevdb)
+              grep -q "\$DEVICE_UUID" /etc/fstab || echo "UUID=\$DEVICE_UUID /opt/familyshield-data ext4 defaults,_netdev,nofail 0 2" | sudo tee -a /etc/fstab > /dev/null
+              echo "✅ Persistent data volume mounted at /opt/familyshield-data"
+            else
+              echo "✅ Persistent data volume already mounted"
+            fi
+          else
+            echo "⚠️  Block device /dev/oracleoci/oraclevdb not found — containers will use boot volume (fallback)"
+          fi
+
+          # Create service data directories on persistent volume (idempotent — safe on every run)
+          sudo mkdir -p \
+            /opt/familyshield-data/adguard/work \
+            /opt/familyshield-data/adguard/conf \
+            /opt/familyshield-data/headscale \
+            /opt/familyshield-data/influxdb \
+            /opt/familyshield-data/grafana \
+            /opt/familyshield-data/mitmproxy \
+            /opt/familyshield-data/redis \
+            /opt/familyshield-data/ntfy/cache \
+            /opt/familyshield-data/ntfy/data
+          sudo chown -R ubuntu:ubuntu /opt/familyshield-data
 
           # Free port 53 from systemd-resolved (Ubuntu 22.04 default — conflicts with AdGuard)
           sudo mkdir -p /etc/systemd/resolved.conf.d
