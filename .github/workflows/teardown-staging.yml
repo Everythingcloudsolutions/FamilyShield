@@ -103,14 +103,29 @@ jobs:
              echo '✅ All containers stopped'" \
             || echo "⚠️  SSH unreachable — VM may already be gone, continuing"
 
-      - name: Cleanup Cloudflare resources (tunnel, DNS, access)
+      - name: Destroy Cloudflare resources via tofu destroy
+        working-directory: iac/cloudflare
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          OCI_NAMESPACE: ${{ secrets.OCI_NAMESPACE }}
+          TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TF_VAR_cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          TF_VAR_environment: staging
         run: |
-          bash scripts/cloudflare-api.sh cleanup staging || true
-          echo "✅ Cloudflare cleanup complete (or resources already absent)"
+          tofu init \
+            -backend-config="bucket=familyshield-tfstate" \
+            -backend-config="key=cloudflare/staging/terraform.tfstate" \
+            -backend-config="endpoint=https://${OCI_NAMESPACE}.compat.objectstorage.ca-toronto-1.oraclecloud.com" \
+            -backend-config="region=ca-toronto-1" \
+            -backend-config="skip_region_validation=true" \
+            -backend-config="skip_credentials_validation=true" \
+            -backend-config="skip_metadata_api_check=true" \
+            -backend-config="use_path_style=true" \
+            -reconfigure
+          tofu destroy -var="environment=staging" -auto-approve -no-color || true
+          echo "✅ Cloudflare resources destroyed"
 
   # ── Job 2: Destroy all OCI infrastructure via tofu destroy ───────────────
   destroy-infra:

@@ -43,22 +43,27 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
 
     ingress_rule {
       hostname = "mitmproxy-${var.environment}.${var.root_domain}"
-      service  = "http://localhost:8080"
+      service  = "http://localhost:8888"   # docker-compose: 8888:8080 (web UI)
     }
 
     ingress_rule {
       hostname = "vpn.familyshield-${var.environment}.${var.root_domain}"
-      service  = "http://localhost:8080"
+      service  = "http://localhost:8080"   # headscale control plane
     }
 
     ingress_rule {
       hostname = "grafana-${var.environment}.${var.root_domain}"
-      service  = "http://localhost:3000"
+      service  = "http://localhost:3002"   # docker-compose: 3002:3000
     }
 
     ingress_rule {
       hostname = "nodered-${var.environment}.${var.root_domain}"
       service  = "http://localhost:1880"
+    }
+
+    ingress_rule {
+      hostname = "notify-${var.environment}.${var.root_domain}"
+      service  = "http://localhost:2586"   # docker-compose: 2586:80
     }
 
     ingress_rule {

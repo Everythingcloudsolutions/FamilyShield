@@ -12,6 +12,7 @@ locals {
     "mitmproxy-${var.environment}",
     "grafana-${var.environment}",
     "nodered-${var.environment}",
+    "notify-${var.environment}",
     "ssh-${var.environment}",
     "vpn.familyshield-${var.environment}",
   ]
