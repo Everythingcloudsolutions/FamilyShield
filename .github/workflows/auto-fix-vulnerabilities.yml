@@ -435,12 +435,12 @@ jobs:
                       const portalSummary = '${{ needs.fix-portal.outputs.fix_summary }}';
                       const apiSummary    = '${{ needs.fix-api.outputs.fix_summary }}';
                       const mitmSummary   = '${{ needs.fix-mitm.outputs.fix_summary }}';
-                      const portalTests   = '${{ needs.fix-portal.outputs.tests_passed }}' === 'true' ? '✅ passed' : '⏭️ skipped';
-                      const apiTests      = '${{ needs.fix-api.outputs.tests_passed }}' === 'true' ? '✅ passed' : '⏭️ skipped';
-                      const mitmTests     = '${{ needs.fix-mitm.outputs.tests_passed }}' === 'true' ? '✅ passed' : '⏭️ skipped';
+                      const portalTests   = '${{ needs.fix-portal.outputs.tests_passed }}' === 'true' ? '\u2705 passed' : '\u23ed skipped';
+                      const apiTests      = '${{ needs.fix-api.outputs.tests_passed }}' === 'true' ? '\u2705 passed' : '\u23ed skipped';
+                      const mitmTests     = '${{ needs.fix-mitm.outputs.tests_passed }}' === 'true' ? '\u2705 passed' : '\u23ed skipped';
 
                       const body = [
-                        '## 🔒 Automated Security Fix',
+                        '## \ud83d\udd12 Automated Security Fix',
                         '',
                         'This PR was opened automatically by the **Auto-Fix Vulnerabilities** workflow.',
                         'It applies the minimum-impact dependency upgrades needed to resolve known CVEs.',

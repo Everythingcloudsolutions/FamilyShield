@@ -249,10 +249,10 @@ jobs:
                       const expiryReport = '${{ needs.check-exception-expiry.outputs.expiry_report }}';
                       const hasExpiring  = '${{ needs.check-exception-expiry.outputs.has_expiring }}' === 'true';
 
-                      const icon = r => r === 'pass' ? '✅' : r === '' ? '⏭️' : '❌';
+                      const icon = r => r === 'pass' ? '\u2705' : r === '' ? '\u23ed' : '\u274c';
 
                       const body = [
-                        '## 🔒 Security Gate Summary',
+                        '## \ud83d\udd12 Security Gate Summary',
                         '',
                         '| Workspace | Result |',
                         '|-----------|--------|',
@@ -264,7 +264,7 @@ jobs:
                         expiryReport || '_No active exceptions._',
                         '',
                         hasExpiring
-                          ? '> ⚠️ **Action required:** One or more exceptions are expiring or expired. Update `scripts/security-exceptions.json`.'
+                          ? '> \u26a0\ufe0f **Action required:** One or more exceptions are expiring or expired. Update `scripts/security-exceptions.json`.'
                           : '> All exceptions are within their validity window.',
                         '',
                         '_Run ID: [' + context.runId + '](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId + ')_'
