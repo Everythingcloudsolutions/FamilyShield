@@ -116,22 +116,40 @@ OCI ARM VM (ca-toronto-1)
 | 1.5a | Fix container healthchecks | `iac/templates/docker-compose.yaml.tpl` — portal (IPv4 fix), headscale (no wget), mitmproxy (python3) | Portal ✅ healthy; headscale ✅ healthy; mitmproxy ✅ healthy (after re-run) | ✅ Done |
 | 1.5b | Fix INFLUXDB_ADMIN_TOKEN secret name | `infra-dev.yml` + `infra-prod.yml` — secret ref was INFLUXDB_ADMIN_TOKEN, should be TF_VAR_INFLUXDB_ADMIN_TOKEN | Workflow passes tofu apply without missing-secret error | ✅ Done |
 | 1.6 | Add Grafana datasource provisioning | Add config to `apps/platform-config/grafana/provisioning/` | Grafana starts with InfluxDB datasource pre-configured | ✅ Done |
-| 1.7 | AdGuard initial setup | SSH port-forward: `ssh -L 3000:localhost:3000 -i ~/.ssh/familyshield ubuntu@<vm-ip>` → open `http://localhost:3000` → set Admin port=80 | Admin UI accessible via `adguard-dev.everythingcloud.ca`, default blocklists active | 🔲 Todo (needs Mohit — see note below) |
-| 1.8 | Headscale: create user + preauth key | `docker exec familyshield-headscale headscale users create parent` | User created, preauth key generated and saved | 🔲 Todo |
-| 1.9 | ntfy: create parent user + alert topic | `docker exec familyshield-ntfy ntfy user add parent` | Parent user created, `familyshield-alerts` topic accessible | 🔲 Todo |
+| 1.7 | AdGuard initial setup | SSH port-forward to container IP: `ssh -L 3000:172.20.0.2:3000 -i ~/.ssh/familyshield ubuntu@<vm-ip> -N` → open `http://localhost:3000` → set Admin port=80 | Admin UI accessible via `adguard-dev.everythingcloud.ca`, default blocklists active | ✅ Done |
+| 1.8 | Headscale: create user + preauth key | `docker exec familyshield-headscale headscale users create parent` then get user ID via `users list` and run `preauthkeys create --user <id>` | User created, preauth key generated and saved | ✅ Done |
+| 1.9 | ntfy: create parent user + alert topic | `docker exec -it familyshield-ntfy ntfy user add parent` (must use `-it` for password prompt) then `ntfy access parent familyshield-alerts rw` | Parent user created, `familyshield-alerts` topic accessible | ✅ Done |
 | 1.10 | Verify all services healthy | SSH → `docker compose ps` | All 10 services: `Up (healthy)` | 🔲 Todo |
 
 > **Step 1.7 note — AdGuard first-time setup via SSH port-forward:**
 > The Cloudflare tunnel routes `adguard-dev.everythingcloud.ca` → VM host:3080 → container:80.
-> AdGuard's setup wizard runs on container:3000 (not 80), so the tunnel can't reach it until setup is done.
-> Complete setup once using SSH port-forwarding:
+> AdGuard's setup wizard runs on container:3000 (not mapped to host), so the tunnel can't reach it until setup is done.
+> Container port 3000 is NOT exposed to the host — forward directly to the container IP on the bridge network:
 > ```bash
-> ssh -L 3000:localhost:3000 -i ~/.ssh/familyshield ubuntu@192.18.154.233
+> ssh -L 3000:172.20.0.2:3000 -i ~/.ssh/familyshield ubuntu@<vm-ip> -N
 > ```
-> Then open `http://localhost:3000` in your browser. In the wizard:
-> - **Admin Web Interface** → port **80** (so tunnel works after setup)
+> Leave that terminal open (the `-N` flag means no shell, just forwarding). Then open `http://localhost:3000`.
+> In the wizard:
+> - **Admin Web Interface** → port **80** (MUST be 80, not 3000 — so tunnel works after setup)
 > - **DNS** → port **53** (already mapped)
-> After completing setup, AdGuard serves on port 80, the tunnel works, and the healthcheck passes.
+> After completing setup, port 3000 wizard disappears (Connection refused = setup is done). AdGuard serves on
+> port 80. The Cloudflare tunnel and healthcheck now both work.
+>
+> **Step 1.8 note — Headscale `--user` flag takes numeric ID, not username:**
+> As of recent headscale versions, `--user` requires the numeric user ID from `headscale users list`, not the name:
+> ```bash
+> docker exec familyshield-headscale headscale users list
+> # Note the ID column (e.g. 1)
+> docker exec familyshield-headscale headscale preauthkeys create --user 1 --reusable --expiration 8760h
+> ```
+>
+> **Step 1.9 note — ntfy `user add` requires interactive TTY:**
+> Running `docker exec familyshield-ntfy ntfy user add parent` without `-it` fails with
+> `password: inappropriate ioctl for device`. Always use `-it`:
+> ```bash
+> docker exec -it familyshield-ntfy ntfy user add parent
+> docker exec familyshield-ntfy ntfy access parent familyshield-alerts rw
+> ```
 
 ---
 
