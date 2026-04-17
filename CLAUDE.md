@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-16 (workflow split; CF tunnel SSH; tighten-ssh via tofu apply; Cloudflare migrated to OpenTofu iac/cloudflare/; Bot Fight Mode; service token; cloudflared credential flags)
+> Last updated: 2026-04-17 (mitmproxy port isolation; Portal E2E tests; Docker build locally; Supabase schema setup)
 
 ---
 
@@ -131,13 +131,41 @@ pytest -v            # Run all tests with verbose output
 pytest tests/test_addon.py::TestClass::test_method  # Run single test
 ```
 
-**Portal (Next.js) — once scaffolded:**
+**Portal (Next.js):**
 
 ```bash
 cd apps/portal
 npm install
-npm run dev          # Dev server on http://localhost:3000
-npm test             # Run test suite
+npm run dev          # Dev server on http://localhost:3000 (requires running API at localhost:3001)
+npm test             # Run Jest unit tests
+npm run test:e2e     # Run Playwright E2E tests (dashboard, alerts, devices)
+npm run test:e2e -- --debug  # Run E2E with headed browser
+npm run lint         # Run ESLint
+```
+
+**Note:** Portal requires API running locally (`npm run dev` in `apps/api/`) and Supabase project configured in `.env.local`.
+
+**Local Docker builds (before pushing to GHCR):**
+
+```bash
+# API Docker image (arm64)
+cd apps/api
+docker build --platform linux/arm64 -t familyshield-api:dev .
+docker run --env-file .env.docker familyshield-api:dev npm run dev
+
+# Portal Docker image (static Next.js)
+cd apps/portal
+docker build -t familyshield-portal:dev .
+docker run -p 3000:3000 familyshield-portal:dev
+```
+
+**Supabase schema setup:**
+
+```bash
+# Create tables in Supabase (one-time per environment)
+# Tables: content_events, alerts, devices, alert_rules, users
+# Run migrations via Supabase Studio or SQL editor
+# Enable RLS on all tables before deploying to production
 ```
 
 **IaC validation (OpenTofu):**
@@ -389,9 +417,7 @@ The `bootstrap-oci.sh` script must be run ONCE before any `tofu apply`:
 10. **Generate SSH key** — for VS Code Remote SSH access
 11. **Summary** — output all GitHub secrets to configure
 
-**Critical Detail:** Step 6 creates a bootstrap IAM policy that allows the GitHub Actions user to manage resources in the tenancy. Step 7 creates three compartments that IaC queries for and uses. Without these, `tofu apply` will fail with 404-NotAuthorizedOrNotFound errors. Step 8 creates a single shared bucket with prefixes (Option A architecture).
-
-**Idempotency:** The script is idempotent — re-running it will skip existing resources and only create missing ones. Safe to run multiple times.
+**Critical:** Steps 6–8 create IAM policy (tenant-wide), three compartments (dev/staging/prod), and state bucket. Without these, `tofu apply` fails. Script is idempotent — safe to re-run.
 
 ---
 
@@ -664,6 +690,17 @@ This is the minimum hardening sequence Claude Code should recommend and preserve
 ---
 
 ## Known Issues & Troubleshooting
+
+### mitmproxy — Port Isolation (2026-04-17)
+
+**Fix:** Updated mitmproxy CMD to use separate ports for web UI (8081) and listen mode (8888/8889). This prevents port conflicts when running mitmproxy locally alongside other services.
+
+```yaml
+# apps/mitm/Dockerfile
+CMD ["mitmproxy", "--listen-port", "8888", "--mode", "transparent", "--web-port", "8081"]
+```
+
+If you run mitmproxy locally, ensure ports 8888, 8889, and 8081 are not in use.
 
 ### SSH Security — Deploy-First, Secure-Last (2026-04-16)
 
@@ -1003,39 +1040,15 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - Resource allocation: Dev (1C/6GB) + Staging ephemeral (1C/6GB) + Prod (2C/6GB) = within 4C/24GB Always Free
   - Per-environment state buckets: `familyshield-tfstate-{environment}`
   - Bucket import logic handles existing resources without 409 conflicts
-- ✅ **Deployment pipeline stabilised (2026-04-15):** All three workflows (dev/staging/prod) now follow the same 6-job pattern with all pipeline blockers resolved:
-  - `cloudflare-api.sh` output pollution (diagnostic functions to stdout) — fixed: all diagnostics redirect to `>&2`; `local var=$(cmd)` split into two statements
-  - Tunnel token never written to VM — fixed: cloudflared now starts via `docker run --network host --token` (zero docker-compose.yml dependency)
-  - SSH key `printf` missing trailing newline → `libcrypto` error — fixed: `echo "$KEY" | tr -d '\r'` in all three workflows
-  - Concurrent runs causing Terraform state lock conflicts — fixed: `concurrency:` groups on all three workflows (`cancel-in-progress: true` dev/staging, `false` prod)
-  - Race condition on new VM boot: deploy-app runs before cloud-init finishes writing docker-compose.yml — fixed: `sudo cloud-init status --wait || true` added to all deploy-app scripts
-  - `deploy-staging.yml` gate job broken `if:` condition (`workflow_run.conclusion` on a `push` trigger is always null) — fixed: gate job removed; staging triggers on `qa` branch push
-  - docker-compose.yml missing on VM (broken cloud-init) → api/portal not running → cloudflared returns 502 → smoke test fails — fixed: "Bootstrap VM" step in all setup-cloudflare jobs
-  - All 8 issues with root causes, investigation steps, and fixes documented in `docs/troubleshooting/infrastructure.md`
-- ✅ **SSH security redesigned (2026-04-16):** Deploy-first, secure-last approach replaces failed dynamic punch/seal
-  - Removed dynamic NSG punch/seal logic (was failing with OCI CLI exit code 2)
-  - Deploy with `admin_ssh_cidrs = ["0.0.0.0/0"]` — SSH open to world during all deployment jobs
-  - Added `tighten-ssh-{env}` job at end of pipeline (runs after smoke-test passes)
-  - tighten-ssh removes 0.0.0.0/0 rules and adds admin IP only (173.33.214.49/32)
-  - Phase B (tunnel SSH) unchanged — added at end after tunnel verified active
-  - Eliminates chicken-and-egg lockout risk, guarantees SSH always works during deploy
-- ✅ **Workflow architecture split (2026-04-16):** Separated IaC workflows from app deployment workflows
-  - Created `infra-dev.yml` — triggered on `iac/**` changes to `development`; jobs: tofu apply → setup-cloudflare → smoke-infra → tighten-ssh
-  - Rewrote `deploy-dev.yml` — triggered on `apps/**` changes to `development`; uses Cloudflare tunnel SSH exclusively; jobs: wait-for-infra → verify-tunnel → build-and-push → deploy-app → smoke-test
-  - Created `infra-prod.yml` — triggered on `iac/**` changes to `main`; same as infra-dev + safety-check + create-release
-  - Rewrote `deploy-prod.yml` — triggered on `apps/**` changes to `main`; promote-images instead of build-and-push + CF tunnel SSH
-  - Updated `pr-check.yml` — split into `lint-iac` + `lint-apps` + path-filtered `plan-dev` / `plan-prod`
-  - App workflows never use public IP SSH — work regardless of NSG state (tightened or open)
-  - Mixed commit handling: `wait-for-infra` job polls GitHub API and waits up to 10 min for infra workflow to complete
-- ✅ **Cloudflare migrated to OpenTofu IaC (2026-04-16):** `iac/cloudflare/` module replaces `scripts/cloudflare-api.sh`
-  - Tunnel, DNS (8 records), Access apps (adguard, grafana, ssh), service token, WAF config rule all managed by OpenTofu
-  - Separate state key: `cloudflare/{env}/terraform.tfstate` in same OCI bucket as OCI infra state
-  - `allow_overwrite = true` on DNS records takes ownership from old API script records (no deletion needed)
-  - Service token (CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET) captured from `tofu output` and auto-written to GitHub Secrets via `GH_PAT`
-  - WAF config rule: `security_level = "essentially_off"` + `bic = false` on SSH hostname (handles Security Level + BIC; Bot Fight Mode requires manual dashboard toggle)
-  - API token now requires 5 scopes: DNS Edit, Tunnel Edit, Access Apps Edit, Service Tokens Edit, Config Rules Edit
-  - cloudflared ProxyCommand must use explicit `--service-token-id` / `--service-token-secret` flags (env var names `CF_ACCESS_CLIENT_ID` are HTTP headers, not cloudflared env vars)
-  - Bot Fight Mode must be disabled zone-wide in Cloudflare dashboard (Security → Bots → Bot Fight Mode → OFF) — free tier, no API control
+- ✅ **Deployment pipeline stabilised (2026-04-15):** All three workflows follow the same 6-job pattern; 8 blockers resolved (output pollution, token delivery, SSH key encoding, state lock, cloud-init race, staging gate, docker-compose bootstrap). Full details in `docs/troubleshooting/infrastructure.md`.
+- ✅ **SSH security redesigned (2026-04-16):** Deploy-first, secure-last approach. Deploy with `0.0.0.0/0`, then `tighten-ssh-{env}` job restricts to admin IP (173.33.214.49/32) after smoke tests pass.
+- ✅ **Workflow architecture split (2026-04-16):** IaC and app workflows separate. Infra triggers on `iac/**`, app triggers on `apps/**`. App workflows use CF tunnel SSH (work regardless of NSG state). Mixed commits: `wait-for-infra` polls GitHub API for up to 10 min.
+- ✅ **Cloudflare migrated to OpenTofu IaC (2026-04-16):** `iac/cloudflare/` module manages tunnel, DNS, access apps, service token, WAF rules
+  - Separate state: `cloudflare/{env}/terraform.tfstate`
+  - Service token auto-written to GitHub Secrets
+  - Requires 5-scope API token (DNS, Tunnel, Access Apps, Service Tokens, Config Rules)
+  - cloudflared uses explicit `--service-token-id` / `--service-token-secret` flags (not env vars)
+  - Bot Fight Mode requires manual dashboard toggle (free tier, no API control)
 - 🔲 First full end-to-end successful dev pipeline run (infra-dev.yml: all 4 jobs green + deploy-dev.yml: all 5 jobs green)
 - 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
 

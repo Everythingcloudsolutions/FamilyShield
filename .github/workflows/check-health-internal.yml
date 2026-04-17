@@ -1,0 +1,95 @@
+name: check-health-internal
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment (dev or prod)"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - prod
+
+permissions:
+  contents: read
+
+jobs:
+  check-internal-services:
+    name: Check Redis & InfluxDB
+    runs-on: ubuntu-latest
+    outputs:
+      health_report: ${{ steps.check.outputs.report }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Redis & InfluxDB health
+        id: check
+        env:
+          ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+
+          ENV="${ENVIRONMENT}"
+          SSH_HOST="ssh-${ENV}.everythingcloud.ca"
+
+          # Prepare SSH key
+          mkdir -p ~/.ssh
+          echo "$OCI_SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/familyshield
+          chmod 600 ~/.ssh/familyshield
+
+          # Initialize report
+          REPORT='{"environment":"'$ENV'","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","services":[]}'
+
+          echo "🔍 Checking Redis health..."
+          REDIS_STATUS="unhealthy"
+          REDIS_OUTPUT=$(ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=10 \
+            -o ProxyCommand="cloudflared access ssh --hostname $SSH_HOST --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
+            "ubuntu@$SSH_HOST" \
+            "docker exec familyshield-redis redis-cli ping 2>/dev/null || echo 'FAILED'" 2>/dev/null || echo "FAILED")
+
+          if [[ "$REDIS_OUTPUT" == "PONG" ]] || [[ "$REDIS_OUTPUT" == *"PONG"* ]]; then
+            REDIS_STATUS="healthy"
+            echo "✅ Redis: healthy"
+          else
+            echo "❌ Redis: unhealthy (output: $REDIS_OUTPUT)"
+          fi
+
+          REDIS_ENTRY='{"name":"Redis","status":"'$REDIS_STATUS'","output":"'$REDIS_OUTPUT'"}'
+
+          echo "🔍 Checking InfluxDB health..."
+          INFLUX_STATUS="unhealthy"
+          INFLUX_OUTPUT=$(ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=10 \
+            -o ProxyCommand="cloudflared access ssh --hostname $SSH_HOST --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
+            "ubuntu@$SSH_HOST" \
+            "docker exec familyshield-influxdb influx ping 2>/dev/null || echo 'FAILED'" 2>/dev/null || echo "FAILED")
+
+          if [[ "$INFLUX_OUTPUT" == "OK" ]] || [[ "$INFLUX_OUTPUT" == *"OK"* ]]; then
+            INFLUX_STATUS="healthy"
+            echo "✅ InfluxDB: healthy"
+          else
+            echo "❌ InfluxDB: unhealthy (output: $INFLUX_OUTPUT)"
+          fi
+
+          INFLUX_ENTRY='{"name":"InfluxDB","status":"'$INFLUX_STATUS'","output":"'$INFLUX_OUTPUT'"}'
+
+          # Build final report
+          REPORT=$(echo "$REPORT" | jq --argjson redis "$REDIS_ENTRY" --argjson influx "$INFLUX_ENTRY" \
+            '.services |= [$redis, $influx]')
+
+          # Output report as JSON
+          echo "report=$(echo "$REPORT" | jq -c .)" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "📋 Health Report:"
+          echo "$REPORT" | jq '.'

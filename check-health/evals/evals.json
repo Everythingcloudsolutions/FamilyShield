@@ -1,0 +1,26 @@
+{
+  "skill_name": "check-health",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "general_health_check",
+      "prompt": "Check FamilyShield health",
+      "expected_output": "Summary of both dev and prod environments with service status (healthy/degraded/unhealthy). Should include response times and count of healthy services.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "eval_name": "prod_only_check",
+      "prompt": "Is production healthy? Check the prod environment",
+      "expected_output": "Detailed report for prod only. Should list all 11 services with individual status. Quick summary line like '✅ Prod: 11/11 healthy' or similar.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "eval_name": "troubleshooting_scenario",
+      "prompt": "The dev portal feels slow. Check dev health and tell me what might be wrong",
+      "expected_output": "Dev environment health report with focus on slow services (response times >5s). Should provide actionable recommendations for any degraded/unhealthy services. If portal is slow, might recommend checking API, Cloudflare tunnel, or InfluxDB.",
+      "files": []
+    }
+  ]
+}
