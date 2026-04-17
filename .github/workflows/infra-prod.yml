@@ -269,6 +269,23 @@ jobs:
 
           echo "✅ docker-compose.yml written to VM"
 
+          # Copy platform service configs — these are bind-mounted into containers
+          # and must exist on the VM before docker compose up runs.
+          # deploy-prod.yml will overwrite with the full content later.
+          scp -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            apps/platform-config/headscale/headscale.yaml \
+            ubuntu@"$VM_IP":/tmp/headscale.yaml
+
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            ubuntu@"$VM_IP" \
+            "sudo mkdir -p /opt/familyshield/apps/platform-config/headscale && sudo mv /tmp/headscale.yaml /opt/familyshield/apps/platform-config/headscale/headscale.yaml && sudo chown ubuntu:ubuntu /opt/familyshield/apps/platform-config/headscale/headscale.yaml"
+
+          echo "✅ headscale config written to VM"
+
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
