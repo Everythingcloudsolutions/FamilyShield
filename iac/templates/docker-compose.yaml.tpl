@@ -63,7 +63,7 @@ services:
     volumes:
       - headscale_data:/var/lib/headscale
       - ./apps/platform-config/headscale/headscale.yaml:/etc/headscale/config.yaml:ro
-    command: headscale serve
+    command: serve
     environment:
       - TZ=America/Toronto
     healthcheck:

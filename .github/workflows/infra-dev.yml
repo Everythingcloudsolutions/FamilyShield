@@ -273,6 +273,16 @@ jobs:
           cd /opt/familyshield
           echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
+          # Pre-create bind-mount directories with correct ownership before containers start.
+          # deploy-dev.yml syncs real content later; these ensure containers don't crash on first boot.
+          # Node-RED runs as uid 1000 (node) — /data must be writable by that user.
+          sudo mkdir -p apps/platform-config/nodered
+          sudo mkdir -p apps/platform-config/headscale
+          sudo mkdir -p apps/platform-config/grafana/provisioning
+          sudo mkdir -p apps/platform-config/ntfy
+          sudo mkdir -p apps/mitm
+          sudo chown -R 1000:1000 apps/
+
           # Pull public images first — these always exist and must not be blocked by GHCR failures
           sudo docker compose pull adguard headscale redis influxdb grafana nodered ntfy
 
