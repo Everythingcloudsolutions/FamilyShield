@@ -110,6 +110,20 @@ variable "anthropic_api_key" {
   sensitive   = true
 }
 
+variable "influxdb_password" {
+  description = "InfluxDB admin password — baked into docker-compose at tofu apply time"
+  type        = string
+  sensitive   = true
+  default     = "FamilyShield-Influx-Dev"
+}
+
+variable "grafana_password" {
+  description = "Grafana admin password — baked into docker-compose at tofu apply time"
+  type        = string
+  sensitive   = true
+  default     = "FamilyShield-Grafana-Dev"
+}
+
 variable "admin_emails" {
   description = "Email addresses for Cloudflare Zero Trust admin access"
   type        = list(string)

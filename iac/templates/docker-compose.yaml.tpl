@@ -4,8 +4,6 @@
 # Source: iac/templates/docker-compose.yaml.tpl
 # Year: 2026
 
-version: "3.9"
-
 networks:
   familyshield:
     driver: bridge
@@ -21,6 +19,8 @@ volumes:
   grafana_data:
   mitmproxy_data:
   redis_data:
+  ntfy_cache:
+  ntfy_data:
 
 services:
 
@@ -73,8 +73,10 @@ services:
       retries: 3
 
   # ── 3. mitmproxy — SSL inspection + content ID extraction ─────────────────
+  # Custom image (built from apps/mitm/Dockerfile) includes redis Python package.
+  # Addon code is volume-mounted for live updates without image rebuild.
   mitmproxy:
-    image: mitmproxy/mitmproxy:latest
+    image: ghcr.io/everythingcloudsolutions/familyshield-mitm:${environment}
     container_name: familyshield-mitmproxy
     restart: unless-stopped
     networks:
@@ -86,12 +88,6 @@ services:
     volumes:
       - mitmproxy_data:/home/mitmproxy/.mitmproxy
       - ./apps/mitm:/addon:ro
-    command: >
-      mitmweb
-      --mode transparent
-      --web-host 0.0.0.0
-      --web-port 8080
-      --scripts /addon/familyshield_addon.py
     environment:
       - TZ=America/Toronto
       - REDIS_URL=redis://redis:6379
@@ -168,6 +164,11 @@ services:
       - TZ=America/Toronto
       - NEXT_PUBLIC_SUPABASE_URL=${supabase_url}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${supabase_anon_key}
+      # Next.js standalone binds to Docker's HOSTNAME env var (container IP) by default.
+      # Setting 0.0.0.0 ensures healthcheck (localhost:3000) and port mapping work correctly.
+      - HOSTNAME=0.0.0.0
+      # Auth: disabled for dev. In prod, set PORTAL_BASIC_AUTH_ENABLED=true and supply credentials.
+      - PORTAL_BASIC_AUTH_ENABLED=false
     depends_on:
       api:
         condition: service_healthy
@@ -211,7 +212,7 @@ services:
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=$${INFLUXDB_PASSWORD}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${influxdb_password}
       - DOCKER_INFLUXDB_INIT_ORG=familyshield
       - DOCKER_INFLUXDB_INIT_BUCKET=metrics
       - DOCKER_INFLUXDB_INIT_RETENTION=30d
@@ -236,7 +237,7 @@ services:
       - grafana_data:/var/lib/grafana
       - ./apps/platform-config/grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=$${GRAFANA_PASSWORD}
+      - GF_SECURITY_ADMIN_PASSWORD=${grafana_password}
       - GF_SERVER_ROOT_URL=https://grafana-${environment}.everythingcloud.ca
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - TZ=America/Toronto
@@ -263,6 +264,8 @@ services:
       - NTFY_AUTH_DEFAULT_ACCESS=deny-all
     volumes:
       - ./apps/platform-config/ntfy:/etc/ntfy:ro
+      - ntfy_cache:/var/cache/ntfy
+      - ntfy_data:/var/lib/ntfy
 
   # ── 11. Cloudflare Tunnel daemon ──────────────────────────────────────────
   # NOTE: cloudflared is intentionally NOT managed by docker-compose.

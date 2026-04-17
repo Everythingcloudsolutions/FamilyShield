@@ -102,6 +102,8 @@ jobs:
           TF_VAR_supabase_service_role_key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          TF_VAR_influxdb_password: ${{ secrets.INFLUXDB_PASSWORD }}
+          TF_VAR_grafana_password: ${{ secrets.GRAFANA_PASSWORD }}
 
       - name: Capture IaC outputs
         id: outputs
@@ -203,7 +205,7 @@ jobs:
           gh secret set CF_ACCESS_CLIENT_SECRET --body "$CLIENT_SECRET" --repo "$REPO"
           echo "✅ GitHub secrets updated: CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET"
 
-      - name: Bootstrap VM — ensure docker-compose.yml exists
+      - name: Bootstrap VM — write docker-compose.yml and start services
         shell: bash
         env:
           SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
@@ -213,6 +215,8 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          INFLUXDB_PASSWORD: ${{ secrets.INFLUXDB_PASSWORD || 'FamilyShield-Influx-Dev' }}
+          GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD || 'FamilyShield-Grafana-Dev' }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: |
@@ -220,19 +224,9 @@ jobs:
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
           chmod 600 ~/.ssh/familyshield
 
-          COMPOSE_EXISTS=$(ssh -i ~/.ssh/familyshield \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile=/dev/null \
-            -o ConnectTimeout=15 \
-            ubuntu@"$VM_IP" \
-            "test -f /opt/familyshield/docker-compose.yml && echo yes || echo no" 2>/dev/null || echo "no")
-
-          if [ "$COMPOSE_EXISTS" = "yes" ]; then
-            echo "✅ docker-compose.yml already exists on VM"
-            exit 0
-          fi
-
-          echo "⚠️  docker-compose.yml missing — rendering template and copying to VM"
+          # Always render and write the latest docker-compose.yml to ensure template changes take effect.
+          # This is intentional — every infra run guarantees the VM has the current template.
+          echo "📝 Rendering docker-compose.yml from template..."
           sed \
             -e "s|\${environment}|dev|g" \
             -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_dev|g" \
@@ -241,14 +235,17 @@ jobs:
             -e "s|\${supabase_service_role_key}|$SUPABASE_SERVICE_ROLE_KEY|g" \
             -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
             -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
+            -e "s|\${influxdb_password}|$INFLUXDB_PASSWORD|g" \
+            -e "s|\${grafana_password}|$GRAFANA_PASSWORD|g" \
             -e 's|\$\${|\${|g' \
             iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
 
-          scp -i ~/.ssh/familyshield \
+          ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
-            /tmp/docker-compose.yml \
-            ubuntu@"$VM_IP":/tmp/docker-compose.yml
+            -o ConnectTimeout=15 \
+            ubuntu@"$VM_IP" \
+            "cat > /tmp/docker-compose.yml" < /tmp/docker-compose.yml
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
@@ -256,6 +253,8 @@ jobs:
             -o ConnectTimeout=15 \
             ubuntu@"$VM_IP" \
             "sudo mkdir -p /opt/familyshield && sudo mv /tmp/docker-compose.yml /opt/familyshield/docker-compose.yml && sudo chown ubuntu:ubuntu /opt/familyshield /opt/familyshield/docker-compose.yml"
+
+          echo "✅ docker-compose.yml written to VM"
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
@@ -265,14 +264,14 @@ jobs:
           set -euo pipefail
           sudo cloud-init status --wait || true
           cd /opt/familyshield
-          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-          docker compose up -d redis
-          sleep 5
-          docker compose pull api portal
-          docker compose up -d --remove-orphans api portal
-          sleep 10
-          docker compose ps
-          echo "✅ VM bootstrap complete"
+          echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+          # Pull all GHCR images (api, portal, mitm)
+          sudo docker compose pull api portal mitmproxy 2>/dev/null || sudo docker compose pull api portal
+          # Start full stack — recreate any containers with changed config
+          sudo docker compose up -d --remove-orphans
+          sleep 15
+          sudo docker compose ps
+          echo "✅ Full stack started"
           ENDSSH
 
       - name: Write tunnel token to VM and activate cloudflared
@@ -391,6 +390,8 @@ jobs:
           TF_VAR_supabase_service_role_key: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           TF_VAR_groq_api_key: ${{ secrets.GROQ_API_KEY }}
           TF_VAR_anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          TF_VAR_influxdb_password: ${{ secrets.INFLUXDB_PASSWORD }}
+          TF_VAR_grafana_password: ${{ secrets.GRAFANA_PASSWORD }}
           TF_VAR_admin_ssh_cidrs: '["173.33.214.49/32"]'
         shell: bash
         run: |

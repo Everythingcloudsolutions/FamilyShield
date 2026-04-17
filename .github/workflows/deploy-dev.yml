@@ -141,7 +141,7 @@ jobs:
     needs: verify-tunnel
     strategy:
       matrix:
-        app: [api, portal]
+        app: [api, portal, mitm]
     steps:
       - uses: actions/checkout@v4
 
@@ -236,17 +236,16 @@ jobs:
           set -euo pipefail
           cd /opt/familyshield
 
-          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+          echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
-          # Ensure Redis is up before API starts
-          docker compose up -d redis
-          sleep 5
+          # Pull only the images that changed (GHCR — requires auth)
+          sudo docker compose pull api portal
 
-          docker compose pull api portal
-          docker compose up -d --remove-orphans api portal
+          # Bring up all services — starts any stopped containers, recreates only changed ones
+          sudo docker compose up -d --remove-orphans
 
-          sleep 10
-          docker compose ps
+          sleep 15
+          sudo docker compose ps
           echo "✅ Deploy complete"
           ENDSSH
 
