@@ -213,6 +213,7 @@ services:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
       - DOCKER_INFLUXDB_INIT_PASSWORD=${influxdb_password}
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${influxdb_admin_token}
       - DOCKER_INFLUXDB_INIT_ORG=familyshield
       - DOCKER_INFLUXDB_INIT_BUCKET=metrics
       - DOCKER_INFLUXDB_INIT_RETENTION=30d
@@ -240,6 +241,7 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${grafana_password}
       - GF_SERVER_ROOT_URL=https://grafana-${environment}.everythingcloud.ca
       - GF_AUTH_ANONYMOUS_ENABLED=false
+      - INFLUXDB_ADMIN_TOKEN=${influxdb_admin_token}
       - TZ=America/Toronto
     depends_on:
       influxdb:

@@ -1,4 +1,4 @@
-base-url: https://notify-placeholder.everythingcloud.ca
+base-url: https://notify-dev.everythingcloud.ca
 listen-http: ":80"
 behind-proxy: true
 cache-file: /var/cache/ntfy/cache.db

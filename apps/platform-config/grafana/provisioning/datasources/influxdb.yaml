@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: familyshield
+      defaultBucket: metrics
+      tlsSkipVerify: true
+    secureJsonData:
+      # Grafana env var substitution: INFLUXDB_ADMIN_TOKEN is injected into the
+      # Grafana container via docker-compose (rendered by tofu apply).
+      token: $INFLUXDB_ADMIN_TOKEN

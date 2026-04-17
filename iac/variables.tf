@@ -117,6 +117,13 @@ variable "influxdb_password" {
   default     = "FamilyShield-Influx-Dev"
 }
 
+variable "influxdb_admin_token" {
+  description = "InfluxDB admin API token — passed to InfluxDB init and Grafana datasource provisioning"
+  type        = string
+  sensitive   = true
+  default     = "FamilyShield-InfluxDB-Token-Dev"
+}
+
 variable "grafana_password" {
   description = "Grafana admin password — baked into docker-compose at tofu apply time"
   type        = string

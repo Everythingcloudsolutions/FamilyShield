@@ -2,7 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-17 (mitmproxy port isolation; Portal E2E tests; Docker build locally; Supabase schema setup)
+> Last updated: 2026-04-17 (MVP plan document; Supabase security fix; ntfy/Grafana config; Phase 1 stabilisation in progress)
+
+## Active Development Anchor
+
+**Primary planning document:** [`docs/mvp-plan.md`](docs/mvp-plan.md)
+
+This file defines the MVP feature list (F-01 to F-13), post-MVP backlog (F-14 to F-24), and phase-by-phase todo checklists. **Always check `docs/mvp-plan.md` first when picking up a new task.** Update it when items are completed.
+
+**Current phase:** Phase 1 — Service Stabilisation (steps 1.1–1.10)
+**Next milestone:** All 10 services healthy → Phase 2 (first device enrolled, first alert received)
 
 ---
 
