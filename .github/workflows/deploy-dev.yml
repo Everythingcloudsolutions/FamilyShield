@@ -215,7 +215,7 @@ jobs:
             -o UserKnownHostsFile=/dev/null \
             -o ProxyCommand="cloudflared access ssh --hostname ${SSH_HOST} --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}" \
             ubuntu@"${SSH_HOST}" \
-            "mkdir -p /opt/familyshield && tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
+            "mkdir -p /opt/familyshield && sudo tar -xzf /tmp/familyshield-runtime-assets.tgz -C /opt/familyshield"
 
           echo "✅ Runtime assets synced"
 

@@ -73,81 +73,83 @@ alter table public.content_events enable row level security;
 alter table public.alerts enable row level security;
 
 -- default deny remains in effect unless a policy below allows a row.
+-- NOTE: CREATE POLICY does not support IF NOT EXISTS in PostgreSQL.
+-- Using DROP POLICY IF EXISTS + CREATE POLICY for idempotency.
 
 -- devices policies
-create policy if not exists devices_select_own
-on public.devices
-for select
+drop policy if exists devices_select_own on public.devices;
+create policy devices_select_own
+on public.devices for select
 to authenticated
 using (parent_user_id = auth.uid());
 
-create policy if not exists devices_insert_own
-on public.devices
-for insert
+drop policy if exists devices_insert_own on public.devices;
+create policy devices_insert_own
+on public.devices for insert
 to authenticated
 with check (parent_user_id = auth.uid());
 
-create policy if not exists devices_update_own
-on public.devices
-for update
+drop policy if exists devices_update_own on public.devices;
+create policy devices_update_own
+on public.devices for update
 to authenticated
 using (parent_user_id = auth.uid())
 with check (parent_user_id = auth.uid());
 
-create policy if not exists devices_delete_own
-on public.devices
-for delete
+drop policy if exists devices_delete_own on public.devices;
+create policy devices_delete_own
+on public.devices for delete
 to authenticated
 using (parent_user_id = auth.uid());
 
--- content events policies
-create policy if not exists content_events_select_own
-on public.content_events
-for select
+-- content_events policies
+drop policy if exists content_events_select_own on public.content_events;
+create policy content_events_select_own
+on public.content_events for select
 to authenticated
 using (parent_user_id = auth.uid());
 
-create policy if not exists content_events_insert_own
-on public.content_events
-for insert
+drop policy if exists content_events_insert_own on public.content_events;
+create policy content_events_insert_own
+on public.content_events for insert
 to authenticated
 with check (parent_user_id = auth.uid());
 
-create policy if not exists content_events_update_own
-on public.content_events
-for update
+drop policy if exists content_events_update_own on public.content_events;
+create policy content_events_update_own
+on public.content_events for update
 to authenticated
 using (parent_user_id = auth.uid())
 with check (parent_user_id = auth.uid());
 
-create policy if not exists content_events_delete_own
-on public.content_events
-for delete
+drop policy if exists content_events_delete_own on public.content_events;
+create policy content_events_delete_own
+on public.content_events for delete
 to authenticated
 using (parent_user_id = auth.uid());
 
 -- alerts policies
-create policy if not exists alerts_select_own
-on public.alerts
-for select
+drop policy if exists alerts_select_own on public.alerts;
+create policy alerts_select_own
+on public.alerts for select
 to authenticated
 using (parent_user_id = auth.uid());
 
-create policy if not exists alerts_insert_own
-on public.alerts
-for insert
+drop policy if exists alerts_insert_own on public.alerts;
+create policy alerts_insert_own
+on public.alerts for insert
 to authenticated
 with check (parent_user_id = auth.uid());
 
-create policy if not exists alerts_update_own
-on public.alerts
-for update
+drop policy if exists alerts_update_own on public.alerts;
+create policy alerts_update_own
+on public.alerts for update
 to authenticated
 using (parent_user_id = auth.uid())
 with check (parent_user_id = auth.uid());
 
-create policy if not exists alerts_delete_own
-on public.alerts
-for delete
+drop policy if exists alerts_delete_own on public.alerts;
+create policy alerts_delete_own
+on public.alerts for delete
 to authenticated
 using (parent_user_id = auth.uid());
