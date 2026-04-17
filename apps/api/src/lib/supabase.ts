@@ -20,7 +20,7 @@ export function createSupabaseClient(): SupabaseClient {
     throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY environment variables');
   }
 
-  const supabaseKey = (SUPABASE_SERVICE_ROLE_KEY ?? SUPABASE_ANON_KEY)!;
+  const supabaseKey = (SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY)!;
   supabaseClient = createClient(SUPABASE_URL, supabaseKey);
   return supabaseClient;
 }

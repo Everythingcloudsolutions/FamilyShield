@@ -156,7 +156,8 @@ Without this step, `verify-tunnel` in `deploy-dev.yml` will time out with `cf-mi
 |---|---|
 | `ADGUARD_ADMIN_PASSWORD` | Choose a strong password |
 | `SUPABASE_URL` | Supabase → Project Settings → API |
-| `SUPABASE_ANON_KEY` | Supabase → Project Settings → API |
+| `SUPABASE_ANON_KEY` | Supabase → Project Settings → API → `anon` `public` key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API → `service_role` `secret` key |
 | `GROQ_API_KEY` | console.groq.com → API Keys |
 | `ANTHROPIC_API_KEY` | console.anthropic.com → API Keys |
 
