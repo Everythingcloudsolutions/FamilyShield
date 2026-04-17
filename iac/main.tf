@@ -170,6 +170,7 @@ locals {
     groq_api_key              = var.groq_api_key
     anthropic_api_key         = var.anthropic_api_key
     influxdb_password         = var.influxdb_password
+    influxdb_admin_token      = var.influxdb_admin_token
     grafana_password          = var.grafana_password
   }
 }
