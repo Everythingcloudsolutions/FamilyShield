@@ -184,8 +184,8 @@ resource "oci_core_volume_attachment" "data" {
   display_name    = "familyshield-data-attachment-${var.environment}"
   device          = "/dev/oracleoci/oraclevdb"
 
-  # Encrypt data in transit between VM and block volume (free, always recommended)
-  is_pv_encryption_in_transit_enabled = true
+  # Note: is_pv_encryption_in_transit_enabled is NOT supported on VM.Standard.A1.Flex (Always Free ARM).
+  # OCI error 400-InvalidParameter if set to true on this shape.
 
   timeouts {
     create = "15m"
