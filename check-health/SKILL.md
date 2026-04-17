@@ -1,6 +1,6 @@
 ---
 name: check-health
-description: Check FamilyShield service health across dev and prod environments. Use this skill whenever the user asks to verify that FamilyShield services are running, check service status, monitor system health, verify deployments, or troubleshoot service availability. The skill checks all 11 backend services (Portal, API, AdGuard, Headscale, mitmproxy, Redis, InfluxDB, Grafana, Node-RED, ntfy, and Cloudflare Tunnel) in both dev and prod, reports status with actionable recommendations for any failures.
+description: Check FamilyShield service health on-demand. Use this skill whenever the user asks to verify services are running, check if a service is healthy, is a specific service down, why something is slow, debug service availability, or troubleshoot performance issues. The skill checks all 11 backend services (Portal, API, AdGuard, Headscale, mitmproxy, Redis, InfluxDB, Grafana, Node-RED, ntfy) across dev and prod environments. Users can check all services at once or specify individual services (e.g., "is the API healthy?", "check Redis and InfluxDB"). Returns markdown report with service status, response times, and actionable remediation commands for any failures.
 ---
 
 # FamilyShield Health Check Skill
@@ -152,37 +152,79 @@ ssh -o ProxyCommand="cloudflared access ssh --hostname $SSH_HOST --service-token
 
 The skill can accept:
 
-- **Environment:** `dev` only, `prod` only, or both (default: both)
+- **Environment:** `dev`, `prod`, or both (default: both)
   - Example: "Check health for prod only"
+  - Example: "Check dev environment"
+
+- **Specific services:** Check only certain services by name
+  - Example: "Check API and Redis"
+  - Example: "Health check — Portal, AdGuard, and mitmproxy only"
+  - Services: Portal, API, AdGuard, Headscale, mitmproxy, Redis, InfluxDB, Grafana, Node-RED, ntfy
 
 - **Verbose mode:** Show all response payloads (default: off)
-  - Example: "Check health with full output"
+  - Example: "Full health check with details"
 
 ## Dependencies
 
-- GitHub Actions workflow: `.github/workflows/check-health-internal.yml` (must be created)
-- GitHub token: `GITHUB_TOKEN` (auto-available in Actions, passed to skill)
-- Cloudflare tunnel credentials: Already set up in IaC
+**For HTTPS checks (Portal, API, AdGuard, etc.):**
+- ✅ Already available — no credentials needed
+- Uses standard curl/HTTP requests
+
+**For internal service checks (Redis, InfluxDB):**
+- Optional but recommended — can skip if SSH unavailable
+- Requires GitHub Actions workflow: `.github/workflows/check-health-internal.yml`
+- Requires secrets in GitHub Actions or local environment:
+  - `OCI_SSH_PRIVATE_KEY` — SSH private key for OCI VM
+  - `CF_ACCESS_CLIENT_ID` — Cloudflare service token ID
+  - `CF_ACCESS_CLIENT_SECRET` — Cloudflare service token secret
+- Cloudflare tunnel must be active (set up in IaC)
 
 ## Limitations & Notes
 
-- **Redis/InfluxDB checks require SSH:** These depend on GitHub Actions having active Cloudflare tunnel connectivity
-- **Timeout:** HTTPS checks have 10s timeout per service; internal checks (workflow) timeout at 30s total
-- **Rate limiting:** If checking prod, expect ~30-40s runtime (11 sequential HTTP requests + 1 workflow run)
+- **Manual triggering only (for now):** Skill is designed for on-demand checks during development. Scheduled automation can be added later.
+- **Redis/InfluxDB checks require SSH:** These depend on Cloudflare tunnel connectivity and GitHub Actions secrets availability
+- **Timeout:** HTTPS checks have 10s timeout per service; internal SSH checks timeout at 30s total
+- **Performance:** If checking all services in prod, expect ~30-40s runtime (11 sequential HTTP requests + SSH checks)
 - **Grafana:** Has no `/health` endpoint in docker-compose — checks HTTP 200 on root path
+- **Specific services:** When user specifies services (e.g., "check API"), still checks across both environments unless environment is also specified
 
 ## Example Invocations
 
+**Environments:**
 ```
 "Check FamilyShield health"
-→ Checks both dev & prod, returns summary + detailed report
+→ Checks both dev & prod, returns summary table
 
 "Is prod healthy?"
-→ Checks prod only, quick summary
+→ Checks prod only
 
-"Full health check dev with details"
-→ Dev only, verbose output with all response payloads
+"Check dev health"
+→ Dev only
+```
+
+**Specific Services:**
+```
+"Check API and Redis health"
+→ Only checks API service + Redis service across both environments
+
+"Is the portal healthy in prod?"
+→ Checks Portal service in prod only
+
+"Check DNS — AdGuard health"
+→ Only checks AdGuard Home service
+
+"Health check — API, Grafana, and InfluxDB"
+→ Only those 3 services across both environments
+```
+
+**Troubleshooting:**
+```
+"Portal feels slow — check dev health"
+→ Dev only, all services, with remediation suggestions for slow services
+
+"Is mitmproxy down?"
+→ Checks mitmproxy across both environments
 
 "Health check and tell me what to fix"
-→ Both environments, actionable recommendations only
+→ Both environments, actionable recommendations for failures
 ```
