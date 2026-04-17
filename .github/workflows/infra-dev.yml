@@ -263,6 +263,13 @@ jobs:
             ubuntu@"$VM_IP" bash -s <<ENDSSH
           set -euo pipefail
           sudo cloud-init status --wait || true
+
+          # Free port 53 from systemd-resolved (Ubuntu 22.04 default — conflicts with AdGuard)
+          sudo mkdir -p /etc/systemd/resolved.conf.d
+          echo -e "[Resolve]\nDNSStubListener=no" | sudo tee /etc/systemd/resolved.conf.d/no-stub.conf > /dev/null
+          sudo systemctl restart systemd-resolved
+          sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+
           cd /opt/familyshield
           echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
