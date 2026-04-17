@@ -30,6 +30,7 @@ resource "cloudflare_zero_trust_access_application" "adguard" {
   app_launcher_visible = false
 }
 
+# Allow GitHub Actions service token (non-interactive CI/CD)
 resource "cloudflare_zero_trust_access_policy" "adguard_service_auth" {
   account_id     = var.cloudflare_account_id
   application_id = cloudflare_zero_trust_access_application.adguard.id
@@ -39,6 +40,19 @@ resource "cloudflare_zero_trust_access_policy" "adguard_service_auth" {
 
   include {
     service_token = [cloudflare_zero_trust_access_service_token.github_actions.id]
+  }
+}
+
+# Allow admin via email OTP (human browser access)
+resource "cloudflare_zero_trust_access_policy" "adguard_admin_email" {
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.adguard.id
+  name           = "Allow admin email"
+  decision       = "allow"
+  precedence     = 2
+
+  include {
+    email = [var.admin_email]
   }
 }
 
@@ -53,6 +67,7 @@ resource "cloudflare_zero_trust_access_application" "grafana" {
   app_launcher_visible = false
 }
 
+# Allow GitHub Actions service token (non-interactive CI/CD)
 resource "cloudflare_zero_trust_access_policy" "grafana_service_auth" {
   account_id     = var.cloudflare_account_id
   application_id = cloudflare_zero_trust_access_application.grafana.id
@@ -62,6 +77,19 @@ resource "cloudflare_zero_trust_access_policy" "grafana_service_auth" {
 
   include {
     service_token = [cloudflare_zero_trust_access_service_token.github_actions.id]
+  }
+}
+
+# Allow admin via email OTP (human browser access)
+resource "cloudflare_zero_trust_access_policy" "grafana_admin_email" {
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.grafana.id
+  name           = "Allow admin email"
+  decision       = "allow"
+  precedence     = 2
+
+  include {
+    email = [var.admin_email]
   }
 }
 
@@ -87,5 +115,18 @@ resource "cloudflare_zero_trust_access_policy" "ssh_service_auth" {
 
   include {
     service_token = [cloudflare_zero_trust_access_service_token.github_actions.id]
+  }
+}
+
+# Allow admin via email OTP (human SSH via cloudflared access ssh)
+resource "cloudflare_zero_trust_access_policy" "ssh_admin_email" {
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.ssh.id
+  name           = "Allow admin email"
+  decision       = "allow"
+  precedence     = 2
+
+  include {
+    email = [var.admin_email]
   }
 }

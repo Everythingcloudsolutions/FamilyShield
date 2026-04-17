@@ -442,6 +442,28 @@ Expected healthy API response:
 {"dns_addresses":["0.0.0.0"],"dns_port":53,"http_port":3080,"protection_enabled":true,"running":true}
 ```
 
+#### AdGuard admin UI shows 503 / setup wizard not complete
+
+**Symptom:** `adguard-dev.everythingcloud.ca` returns 503 Bad Gateway from Cloudflare.
+
+**Cause:** AdGuard's first-launch setup wizard runs on container port 3000. The Cloudflare tunnel routes
+to host:3080 → container:80. Port 80 is empty until the wizard is completed. Container port 3000 is
+**not mapped to the host** — `ssh -L 3000:localhost:3000` does NOT work.
+
+**Fix — port-forward directly to the container IP on the bridge network:**
+
+```bash
+# AdGuard container is at 172.20.0.2 on the familyshield bridge network
+ssh -L 3000:172.20.0.2:3000 -i ~/.ssh/familyshield ubuntu@<vm-ip> -N
+```
+
+Leave that terminal open (no shell, just forwarding). Open `http://localhost:3000` in your browser.
+
+In the wizard, **you must set Admin Web Interface port to 80** (not 3000). After the wizard completes:
+- Port 3000 wizard disappears → "Connection refused" on port-forward = setup is done (expected)
+- AdGuard now serves on port 80 → Cloudflare tunnel at `adguard-dev.everythingcloud.ca` works
+- Container healthcheck passes
+
 #### Per-device profile not applying
 
 **Symptom:** A specific child's device is not getting the correct block rules.
@@ -525,6 +547,24 @@ docker exec familyshield-headscale headscale preauthkeys create \
   --user familyshield \
   --expiration 24h \
   --reusable
+```
+
+#### `--user` flag requires numeric ID, not username
+
+**Symptom:** `preauthkeys create --user parent` fails with:
+`invalid argument "parent" for "-u, --user" flag: strconv.ParseUint: parsing "parent": invalid syntax`
+
+**Cause:** Recent headscale versions changed `--user` to accept the numeric user ID only.
+
+**Fix:**
+
+```bash
+# Get the numeric ID first
+docker exec familyshield-headscale headscale users list
+# Example output: ID=1, Name=parent
+
+# Use the ID, not the name
+docker exec familyshield-headscale headscale preauthkeys create --user 1 --reusable --expiration 8760h
 ```
 
 #### Key expiry
@@ -1106,6 +1146,58 @@ docker exec familyshield-nodered curl -s \
 # Check Docker network
 docker network inspect familyshield_default | jq '.[0].Containers | to_entries[] | .value.Name'
 # All containers should be on the same network
+```
+
+---
+
+### ntfy Issues
+
+#### `ntfy user add` fails with "inappropriate ioctl for device"
+
+**Symptom:** Running `docker exec familyshield-ntfy ntfy user add parent` exits silently or prints
+`password: inappropriate ioctl for device`
+
+**Cause:** `ntfy user add` prompts for a password interactively. Without a TTY allocated, Docker can't
+attach to the terminal for password input.
+
+**Fix:** Always use `-it` when running ntfy commands that prompt for input:
+
+```bash
+docker exec -it familyshield-ntfy ntfy user add parent
+# Prompts: Enter Password: ●●●●●●●●
+```
+
+After creating the user, grant topic access (this doesn't need `-it`):
+
+```bash
+docker exec familyshield-ntfy ntfy access parent familyshield-alerts rw
+```
+
+#### Verify ntfy users and access
+
+```bash
+# List all users
+docker exec familyshield-ntfy ntfy user list
+
+# List access control entries
+docker exec familyshield-ntfy ntfy access
+
+# Test publish (should succeed for parent user)
+curl -u parent:<password> -d "Test alert" https://notify-dev.everythingcloud.ca/familyshield-alerts
+```
+
+#### ntfy container unhealthy / not starting
+
+```bash
+# Check logs
+docker logs familyshield-ntfy --tail 30
+
+# Common cause: NTFY_CACHE_FILE or NTFY_AUTH_FILE path doesn't exist inside container
+# The volumes (ntfy_cache, ntfy_data) are created by docker-compose — verify they exist:
+docker volume ls | grep ntfy
+
+# Restart
+docker restart familyshield-ntfy
 ```
 
 ---

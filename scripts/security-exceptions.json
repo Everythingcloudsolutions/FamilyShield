@@ -1,0 +1,32 @@
+{
+    "_comment": "Security vulnerability exceptions. Each entry represents a CVE that CANNOT currently be fixed due to an upstream dependency constraint. All entries MUST include an expiry date. The CI gate will fail any exception that has passed its expiry without being resolved.",
+    "_schema_version": "1",
+    "exceptions": [
+        {
+            "id": "CVE-2026-27448",
+            "package": "pyopenssl",
+            "affected_version": "25.3.0",
+            "fixed_in": "26.0.0",
+            "ecosystem": "pip",
+            "workspace": "apps/mitm",
+            "reason": "mitmproxy currently constrains pyOpenSSL to <=25.3.0. The fix version (pyOpenSSL 26.0.0) is incompatible with any currently-released version of mitmproxy. This exception must be removed once mitmproxy ships a release that allows pyOpenSSL >= 26.0.0.",
+            "upstream_issue": "https://github.com/mitmproxy/mitmproxy/issues",
+            "added": "2026-04-17",
+            "expires": "2026-07-17",
+            "owner": "mohit"
+        },
+        {
+            "id": "CVE-2026-27459",
+            "package": "pyopenssl",
+            "affected_version": "25.3.0",
+            "fixed_in": "26.0.0",
+            "ecosystem": "pip",
+            "workspace": "apps/mitm",
+            "reason": "Same upstream mitmproxy constraint as CVE-2026-27448. Both CVEs affect the same package version and share the same resolution path.",
+            "upstream_issue": "https://github.com/mitmproxy/mitmproxy/issues",
+            "added": "2026-04-17",
+            "expires": "2026-07-17",
+            "owner": "mohit"
+        }
+    ]
+}

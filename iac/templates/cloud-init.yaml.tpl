@@ -31,10 +31,16 @@ users:
     sudo: ALL=(ALL) NOPASSWD:ALL
 
 write_files:
-  # Docker Compose stack
+  # docker-compose.yml placeholder — the real file is written by the infra workflow via SSH
+  # AFTER tofu apply completes. Using a placeholder here means changing docker-compose.yaml.tpl
+  # does NOT change user_data, so the VM is NOT recreated on every app config change.
+  # Volumes (adguard_conf, headscale_data, ntfy_data, etc.) persist across infra runs.
   - path: /opt/familyshield/docker-compose.yml
-    encoding: b64
-    content: ${docker_compose_b64}
+    content: |
+      # Placeholder — overwritten by infra workflow (infra-dev.yml / infra-prod.yml)
+      # The infra workflow renders docker-compose.yaml.tpl and copies it here via SSH.
+      # On reboots after first deploy, this file contains the real stack config.
+      services: {}
     owner: ubuntu:ubuntu
     permissions: '0644'
 
@@ -56,6 +62,67 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
+
+  # Persistent data volume mount script
+  # Runs at first boot; fstab handles all subsequent reboots automatically.
+  # Retries up to 60s for the OCI volume attachment to complete (race condition window).
+  - path: /tmp/mount-data-volume.sh
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      DATA_DEVICE="/dev/oracleoci/oraclevdb"
+      DATA_MOUNT="/opt/familyshield-data"
+
+      # Wait up to 60 seconds for OCI to complete volume attachment
+      for i in $(seq 1 20); do
+        if test -b "$DATA_DEVICE"; then
+          break
+        fi
+        echo "Waiting for data volume device $DATA_DEVICE (attempt $i/20)..."
+        sleep 3
+      done
+
+      if ! test -b "$DATA_DEVICE"; then
+        echo "WARNING: Data volume device $DATA_DEVICE not found after 60s — services will use boot volume (fallback)"
+        echo "The infra workflow Bootstrap VM step will retry mounting after tofu apply completes."
+        mkdir -p "$DATA_MOUNT"
+        exit 0
+      fi
+
+      # Format ext4 on first boot (no filesystem = brand new volume)
+      if ! blkid "$DATA_DEVICE" | grep -q TYPE; then
+        echo "First boot: formatting persistent data volume..."
+        mkfs.ext4 -L familyshield-data -F "$DATA_DEVICE"
+      fi
+
+      # Mount
+      mkdir -p "$DATA_MOUNT"
+      if ! mountpoint -q "$DATA_MOUNT"; then
+        mount "$DATA_DEVICE" "$DATA_MOUNT"
+      fi
+
+      # Add UUID-based fstab entry (survives device renaming, nofail = safe reboot)
+      DEVICE_UUID=$(blkid -s UUID -o value "$DATA_DEVICE")
+      if [ -n "$DEVICE_UUID" ] && ! grep -q "$DEVICE_UUID" /etc/fstab; then
+        echo "UUID=$DEVICE_UUID $DATA_MOUNT ext4 defaults,_netdev,nofail 0 2" >> /etc/fstab
+      fi
+
+      # Create per-service data directories
+      mkdir -p \
+        "$DATA_MOUNT/adguard/work" \
+        "$DATA_MOUNT/adguard/conf" \
+        "$DATA_MOUNT/headscale" \
+        "$DATA_MOUNT/influxdb" \
+        "$DATA_MOUNT/grafana" \
+        "$DATA_MOUNT/mitmproxy" \
+        "$DATA_MOUNT/redis" \
+        "$DATA_MOUNT/ntfy/cache" \
+        "$DATA_MOUNT/ntfy/data"
+      chown -R ubuntu:ubuntu "$DATA_MOUNT"
+      # Per-service ownership overrides — must match container user UIDs
+      chown -R 472:472 "$DATA_MOUNT/grafana"          # Grafana runs as uid 472
+      chown -R 1000:1000 "$DATA_MOUNT/mitmproxy"      # mitmproxy user in container is uid/gid 1000
+      echo "Persistent data volume ready at $DATA_MOUNT ($(df -h $DATA_MOUNT | tail -1 | awk '{print $4}') free)"
 
   # UFW rules
   - path: /tmp/setup-ufw.sh
@@ -91,8 +158,10 @@ runcmd:
   - systemctl enable fail2ban
   - systemctl start fail2ban
 
-  # Create dirs
-  - mkdir -p /opt/familyshield/data/{adguard,headscale,influxdb,grafana,mitmproxy}
+  # Mount persistent OCI Block Volume + create service data dirs
+  - bash /tmp/mount-data-volume.sh
+
+  # Create app dirs (boot volume — service configs, not data)
   - chown -R ubuntu:ubuntu /opt/familyshield
 
   # Enable and start FamilyShield stack

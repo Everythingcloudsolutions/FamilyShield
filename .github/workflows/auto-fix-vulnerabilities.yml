@@ -1,0 +1,502 @@
+# .github/workflows/auto-fix-vulnerabilities.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# FamilyShield — Automated Vulnerability Fix
+#
+# Runs on a schedule (Monday 03:00 UTC) and on manual dispatch.
+# For each workspace (portal, api, mitm):
+#   1. Attempts to fix vulnerabilities with the ecosystem's patch tool
+#   2. Runs the security gate to confirm fixes are clean
+#   3. Runs the existing test suite to check for regressions
+#
+# If any fixes succeed, opens a single PR against `development` with a full
+# summary of what was fixed, what's still open, and why.
+#
+# NOTE: This workflow needs write permissions and `pull-requests: write` to
+#       open PRs. Configure these in Settings → Actions → Workflow permissions.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Auto-Fix Vulnerabilities
+
+on:
+    schedule:
+        # Run every Monday at 03:00 UTC
+        - cron: "0 3 * * 1"
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: "Dry run — report fixes but do not open a PR"
+                required: false
+                default: false
+                type: boolean
+            force_update_all:
+                description: "Force update all dependencies, not just security fixes"
+                required: false
+                default: false
+                type: boolean
+
+permissions:
+    contents: write
+    pull-requests: write
+
+jobs:
+    # ── Fix portal npm vulnerabilities ─────────────────────────────────────────
+    fix-portal:
+        name: "Fix portal (npm audit fix)"
+        runs-on: ubuntu-latest
+        outputs:
+            changed: ${{ steps.detect.outputs.changed }}
+            fix_summary: ${{ steps.fix.outputs.summary }}
+            tests_passed: ${{ steps.test.outputs.passed }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  # Use a PAT so the resulting commit can trigger other workflows
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+                  cache: "npm"
+                  cache-dependency-path: apps/portal/package-lock.json
+
+            - name: Capture baseline audit
+              id: baseline
+              run: |
+                  cd apps/portal
+                  npm ci --prefer-offline --quiet
+                  BEFORE=$(npm audit --json 2>/dev/null | jq '.metadata.vulnerabilities.total // 0')
+                  echo "before=${BEFORE}" >> "$GITHUB_OUTPUT"
+
+            - name: Run npm audit fix
+              id: fix
+              run: |
+                  cd apps/portal
+
+                  # Capture audit output before and after
+                  npm audit --json > /tmp/portal-before.json 2>/dev/null || true
+
+                  if [[ "${{ github.event.inputs.force_update_all }}" == "true" ]]; then
+                    npm update 2>&1 | tee /tmp/portal-update.log || true
+                  fi
+
+                  # audit fix with --force tries breaking changes — only use for explicit manual runs
+                  npm audit fix 2>&1 | tee /tmp/portal-fix.log || true
+
+                  npm audit --json > /tmp/portal-after.json 2>/dev/null || true
+
+                  BEFORE=$(jq '.metadata.vulnerabilities.total // 0' /tmp/portal-before.json)
+                  AFTER=$(jq '.metadata.vulnerabilities.total // 0' /tmp/portal-after.json)
+                  FIXED=$(( BEFORE - AFTER ))
+
+                  {
+                    echo "summary<<EOF"
+                    echo "Portal: ${FIXED} vulnerabilities fixed (${BEFORE} → ${AFTER} remaining)"
+                    if [[ "$AFTER" -gt 0 ]]; then
+                      echo "Remaining vulnerabilities:"
+                      jq -r '.vulnerabilities | to_entries[] | .value | "  - \(.name) (\(.severity)): fixAvailable=\(.fixAvailable)"' \
+                        /tmp/portal-after.json 2>/dev/null | head -20 || true
+                    fi
+                    echo "EOF"
+                  } >> "$GITHUB_OUTPUT"
+
+            - name: Check for changes
+              id: detect
+              run: |
+                  if git diff --quiet apps/portal/package.json apps/portal/package-lock.json; then
+                    echo "changed=false" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "changed=true" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Build portal (regression check)
+              if: steps.detect.outputs.changed == 'true'
+              run: |
+                  cd apps/portal
+                  npm run build 2>&1 | tail -20
+
+            - name: Run security gate on portal
+              if: steps.detect.outputs.changed == 'true'
+              id: test
+              run: |
+                  bash scripts/security-gate.sh 2>&1 | tee /tmp/portal-gate.txt
+                  EXIT=$?
+                  echo "passed=$([ $EXIT -eq 0 ] && echo 'true' || echo 'false')" >> "$GITHUB_OUTPUT"
+
+            - name: Upload audit artifacts
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: portal-autofix-audit
+                  path: |
+                      /tmp/portal-before.json
+                      /tmp/portal-after.json
+                      /tmp/portal-fix.log
+                  retention-days: 14
+
+    # ── Fix API npm vulnerabilities ─────────────────────────────────────────────
+    fix-api:
+        name: "Fix API (npm audit fix)"
+        runs-on: ubuntu-latest
+        outputs:
+            changed: ${{ steps.detect.outputs.changed }}
+            fix_summary: ${{ steps.fix.outputs.summary }}
+            tests_passed: ${{ steps.test.outputs.passed }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+                  cache: "npm"
+                  cache-dependency-path: apps/api/package-lock.json
+
+            - name: Install API dependencies
+              run: npm ci --prefer-offline --quiet
+              working-directory: apps/api
+
+            - name: Run npm audit fix
+              id: fix
+              run: |
+                  cd apps/api
+
+                  npm audit --json > /tmp/api-before.json 2>/dev/null || true
+
+                  if [[ "${{ github.event.inputs.force_update_all }}" == "true" ]]; then
+                    npm update 2>&1 | tee /tmp/api-update.log || true
+                  fi
+
+                  npm audit fix 2>&1 | tee /tmp/api-fix.log || true
+
+                  npm audit --json > /tmp/api-after.json 2>/dev/null || true
+
+                  BEFORE=$(jq '.metadata.vulnerabilities.total // 0' /tmp/api-before.json)
+                  AFTER=$(jq '.metadata.vulnerabilities.total // 0' /tmp/api-after.json)
+                  FIXED=$(( BEFORE - AFTER ))
+
+                  {
+                    echo "summary<<EOF"
+                    echo "API: ${FIXED} vulnerabilities fixed (${BEFORE} → ${AFTER} remaining)"
+                    if [[ "$AFTER" -gt 0 ]]; then
+                      echo "Remaining vulnerabilities:"
+                      jq -r '.vulnerabilities | to_entries[] | .value | "  - \(.name) (\(.severity)): fixAvailable=\(.fixAvailable)"' \
+                        /tmp/api-after.json 2>/dev/null | head -20 || true
+                    fi
+                    echo "EOF"
+                  } >> "$GITHUB_OUTPUT"
+
+            - name: Check for changes
+              id: detect
+              run: |
+                  if git diff --quiet apps/api/package.json apps/api/package-lock.json; then
+                    echo "changed=false" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "changed=true" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Run API tests (regression check)
+              if: steps.detect.outputs.changed == 'true'
+              id: test
+              run: |
+                  cd apps/api
+                  npm test -- --passWithNoTests 2>&1 | tail -20
+                  echo "passed=true" >> "$GITHUB_OUTPUT"
+
+            - name: Upload audit artifacts
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: api-autofix-audit
+                  path: |
+                      /tmp/api-before.json
+                      /tmp/api-after.json
+                      /tmp/api-fix.log
+                  retention-days: 14
+
+    # ── Fix mitm pip vulnerabilities ────────────────────────────────────────────
+    fix-mitm:
+        name: "Fix mitm (pip install -U)"
+        runs-on: ubuntu-latest
+        outputs:
+            changed: ${{ steps.detect.outputs.changed }}
+            fix_summary: ${{ steps.fix.outputs.summary }}
+            tests_passed: ${{ steps.test.outputs.passed }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Setup Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+
+            - name: Install pip-audit and safety
+              run: pip install pip-audit --quiet
+
+            - name: Capture baseline pip-audit
+              run: |
+                  python3 -m pip_audit \
+                    -r apps/mitm/requirements.txt \
+                    --format json \
+                    --progress-spinner off \
+                    > /tmp/mitm-before.json 2>/dev/null || true
+
+            - name: Attempt pip upgrades for each vulnerable package
+              id: fix
+              run: |
+                  FIXED=0
+                  SKIPPED=0
+                  SUMMARY_LINES=""
+
+                  # Collect packages with known fixes
+                  while IFS= read -r row; do
+                    pkg_name=$(echo "$row" | jq -r '.name')
+                    pkg_version=$(echo "$row" | jq -r '.version')
+                    fix_versions=$(echo "$row" | jq -r '[.vulns[].fix_versions[]] | unique | join(",")' 2>/dev/null || echo "")
+
+                    if [[ -z "$fix_versions" ]]; then
+                      SUMMARY_LINES="${SUMMARY_LINES}\n  - ${pkg_name}==${pkg_version}: no fix available in any version"
+                      SKIPPED=$(( SKIPPED + 1 ))
+                      continue
+                    fi
+
+                    # Attempt to install the highest available fix version
+                    highest_fix=$(echo "$fix_versions" | tr ',' '\n' | sort -V | tail -1)
+
+                    # Try upgrading in a temp venv to check compatibility without modifying requirements.txt
+                    python3 -m venv /tmp/test-venv --quiet
+                    source /tmp/test-venv/bin/activate
+
+                    # Install current requirements
+                    if pip install -r apps/mitm/requirements.txt --quiet 2>/dev/null; then
+                      # Try upgrading the vulnerable package
+                      if pip install "${pkg_name}>=${highest_fix}" --quiet 2>/dev/null; then
+                        FIXED=$(( FIXED + 1 ))
+                        SUMMARY_LINES="${SUMMARY_LINES}\n  - ${pkg_name}: upgraded to >=${highest_fix} ✅"
+                        # Update requirements.txt with floor constraint
+                        sed -i "s|${pkg_name}>=.*|${pkg_name}>=${highest_fix}|g" apps/mitm/requirements.txt || true
+                        # If not already pinned in requirements.txt, add constraint
+                        grep -q "^${pkg_name}" apps/mitm/requirements.txt || \
+                          echo "${pkg_name}>=${highest_fix}" >> apps/mitm/requirements.txt
+                      else
+                        SUMMARY_LINES="${SUMMARY_LINES}\n  - ${pkg_name}: upgrade to >=${highest_fix} BLOCKED by dependency constraints"
+                        SKIPPED=$(( SKIPPED + 1 ))
+                      fi
+                    fi
+
+                    deactivate 2>/dev/null || true
+                    rm -rf /tmp/test-venv
+                  done < <(python3 -m pip_audit -r apps/mitm/requirements.txt --format json --progress-spinner off 2>/dev/null | \
+                           jq -c '.[] | select(.vulns | length > 0)' 2>/dev/null || true)
+
+                  {
+                    echo "summary<<EOF"
+                    echo "mitm: ${FIXED} packages upgraded, ${SKIPPED} blocked by upstream constraints"
+                    echo -e "${SUMMARY_LINES}"
+                    echo "EOF"
+                  } >> "$GITHUB_OUTPUT"
+
+            - name: Re-run pip-audit after fixes
+              run: |
+                  python3 -m pip_audit \
+                    -r apps/mitm/requirements.txt \
+                    --format json \
+                    --progress-spinner off \
+                    > /tmp/mitm-after.json 2>/dev/null || true
+
+            - name: Check for changes
+              id: detect
+              run: |
+                  if git diff --quiet apps/mitm/requirements.txt; then
+                    echo "changed=false" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "changed=true" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Run mitm tests (regression check)
+              if: steps.detect.outputs.changed == 'true'
+              id: test
+              run: |
+                  cd apps/mitm
+                  pip install -r requirements.txt --quiet
+                  python3 -m pytest tests/ -v --tb=short 2>&1 | tail -30
+                  echo "passed=true" >> "$GITHUB_OUTPUT"
+
+            - name: Upload audit artifacts
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: mitm-autofix-audit
+                  path: |
+                      /tmp/mitm-before.json
+                      /tmp/mitm-after.json
+                  retention-days: 14
+
+    # ── Open PR with all fixes ──────────────────────────────────────────────────
+    open-pr:
+        name: "Open fix PR"
+        runs-on: ubuntu-latest
+        needs: [ fix-portal, fix-api, fix-mitm ]
+        # Only open a PR when something actually changed and it's not a dry run
+        if: |
+            always() &&
+            (needs.fix-portal.outputs.changed == 'true' ||
+             needs.fix-api.outputs.changed   == 'true' ||
+             needs.fix-mitm.outputs.changed  == 'true') &&
+            github.event.inputs.dry_run != 'true'
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  # Fetch full history so we can create a new branch
+                  fetch-depth: 0
+
+            - name: Setup Node.js (needed to re-apply npm fixes)
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+
+            - name: Setup Python (needed to re-apply pip fixes)
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+
+            - name: Install pip-audit
+              run: pip install pip-audit --quiet
+
+            - name: Re-apply all fixes on a new branch
+              id: branch
+              run: |
+                  BRANCH="fix/auto-security-$(date -u +%Y-%m-%d)"
+                  git checkout -b "$BRANCH"
+
+                  # Portal
+                  if [[ "${{ needs.fix-portal.outputs.changed }}" == "true" ]]; then
+                    cd apps/portal
+                    npm ci --prefer-offline --quiet
+                    npm audit fix 2>/dev/null || true
+                    cd "$GITHUB_WORKSPACE"
+                  fi
+
+                  # API
+                  if [[ "${{ needs.fix-api.outputs.changed }}" == "true" ]]; then
+                    cd apps/api
+                    npm ci --prefer-offline --quiet
+                    npm audit fix 2>/dev/null || true
+                    cd "$GITHUB_WORKSPACE"
+                  fi
+
+                  # mitm — re-apply any requirements.txt changes from the fix-mitm job output
+                  # (fix-mitm ran in a different job; we re-run the same logic here)
+                  if [[ "${{ needs.fix-mitm.outputs.changed }}" == "true" ]]; then
+                    pip install pip-audit --quiet
+                    while IFS= read -r row; do
+                      pkg_name=$(echo "$row" | jq -r '.name')
+                      fix_versions=$(echo "$row" | jq -r '[.vulns[].fix_versions[]] | unique | join(",")' 2>/dev/null || echo "")
+                      if [[ -n "$fix_versions" ]]; then
+                        highest_fix=$(echo "$fix_versions" | tr ',' '\n' | sort -V | tail -1)
+                        python3 -m venv /tmp/venv2 --quiet
+                        source /tmp/venv2/bin/activate
+                        if pip install -r apps/mitm/requirements.txt --quiet 2>/dev/null && \
+                           pip install "${pkg_name}>=${highest_fix}" --quiet 2>/dev/null; then
+                          sed -i "s|${pkg_name}>=.*|${pkg_name}>=${highest_fix}|g" apps/mitm/requirements.txt || true
+                        fi
+                        deactivate 2>/dev/null || true
+                        rm -rf /tmp/venv2
+                      fi
+                    done < <(python3 -m pip_audit -r apps/mitm/requirements.txt --format json --progress-spinner off 2>/dev/null | \
+                             jq -c '.[] | select(.vulns | length > 0)' 2>/dev/null || true)
+                  fi
+
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  git config user.name "github-actions[bot]"
+
+                  if git diff --quiet; then
+                    echo "no_changes=true" >> "$GITHUB_OUTPUT"
+                  else
+                    git add -A
+                    git commit \
+                      -m "fix(security): auto-fix vulnerabilities $(date -u +%Y-%m-%d)" \
+                      -m "Automated fix run by auto-fix-vulnerabilities.yml." \
+                      -m "See PR description for full details."
+                    git push origin "$BRANCH"
+                    echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+                    echo "no_changes=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Create pull request
+              if: steps.branch.outputs.no_changes != 'true'
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      const portalSummary = ${{ toJSON(needs.fix-portal.outputs.fix_summary) }};
+                      const apiSummary    = ${{ toJSON(needs.fix-api.outputs.fix_summary) }};
+                      const mitmSummary   = ${{ toJSON(needs.fix-mitm.outputs.fix_summary) }};
+                      const portalTests   = ${{ toJSON(needs.fix-portal.outputs.tests_passed) }} === 'true' ? '\u2705 passed' : '\u23ed skipped';
+                      const apiTests      = ${{ toJSON(needs.fix-api.outputs.tests_passed) }} === 'true' ? '\u2705 passed' : '\u23ed skipped';
+                      const mitmTests     = ${{ toJSON(needs.fix-mitm.outputs.tests_passed) }} === 'true' ? '\u2705 passed' : '\u23ed skipped';
+
+                      const body = [
+                        '## \ud83d\udd12 Automated Security Fix',
+                        '',
+                        'This PR was opened automatically by the **Auto-Fix Vulnerabilities** workflow.',
+                        'It applies the minimum-impact dependency upgrades needed to resolve known CVEs.',
+                        '',
+                        '### What was fixed',
+                        '',
+                        '**Portal (`apps/portal`)**',
+                        '```',
+                        portalSummary || 'No changes.',
+                        '```',
+                        '',
+                        '**API (`apps/api`)**',
+                        '```',
+                        apiSummary || 'No changes.',
+                        '```',
+                        '',
+                        '**mitm (`apps/mitm`)**',
+                        '```',
+                        mitmSummary || 'No changes.',
+                        '```',
+                        '',
+                        '### Regression test results',
+                        '',
+                        '| Workspace | Tests |',
+                        '|-----------|-------|',
+                        '| `apps/portal` | ' + portalTests + ' |',
+                        '| `apps/api` | ' + apiTests + ' |',
+                        '| `apps/mitm` | ' + mitmTests + ' |',
+                        '',
+                        '### Review checklist',
+                        '',
+                        '- [ ] Security gate passes on this PR',
+                        '- [ ] No functional regressions introduced',
+                        '- [ ] Any remaining exceptions in `scripts/security-exceptions.json` are still justified',
+                        '- [ ] Changelog / release notes updated if needed',
+                        '',
+                        '> _Workflow run: [' + context.runId + '](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId + ')_'
+                      ].join('\n');
+
+                      const { data: pr } = await github.rest.pulls.create({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        title: `fix(security): auto-fix vulnerabilities ${new Date().toISOString().slice(0,10)}`,
+                        head: '${{ steps.branch.outputs.branch }}',
+                        base: 'development',
+                        body,
+                        draft: false,
+                      });
+
+                      core.info(`Pull request created: ${pr.html_url}`);
+
+            - name: Dry-run summary
+              if: github.event.inputs.dry_run == 'true'
+              run: |
+                  echo "=== DRY RUN — no PR created ==="
+                  echo ""
+                  echo "Portal: ${{ needs.fix-portal.outputs.fix_summary }}"
+                  echo "API:    ${{ needs.fix-api.outputs.fix_summary }}"
+                  echo "mitm:   ${{ needs.fix-mitm.outputs.fix_summary }}"

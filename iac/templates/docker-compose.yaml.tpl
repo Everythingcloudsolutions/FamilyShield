@@ -11,16 +11,10 @@ networks:
       config:
         - subnet: 172.20.0.0/24
 
-volumes:
-  adguard_work:
-  adguard_conf:
-  headscale_data:
-  influxdb_data:
-  grafana_data:
-  mitmproxy_data:
-  redis_data:
-  ntfy_cache:
-  ntfy_data:
+# All service data is stored on the OCI persistent block volume at /opt/familyshield-data.
+# This volume survives VM recreation — AdGuard config, Headscale keys, InfluxDB data, etc. persist.
+# DO NOT use Docker named volumes for stateful services — those live on the boot volume and are wiped.
+# The infra workflow (infra-dev/prod.yml) formats + mounts the volume on first deploy.
 
 services:
 
@@ -39,11 +33,16 @@ services:
       - "443:443/tcp"     # DoH
       - "853:853/tcp"     # DoT
     volumes:
-      - adguard_work:/opt/adguardhome/work
-      - adguard_conf:/opt/adguardhome/conf
+      - /opt/familyshield-data/adguard/work:/opt/adguardhome/work
+      - /opt/familyshield-data/adguard/conf:/opt/adguardhome/conf
     environment:
       - TZ=America/Toronto
     healthcheck:
+      # AdGuard admin UI is on port 80 AFTER setup wizard completes.
+      # On first launch the wizard runs on port 3000 — this healthcheck will
+      # correctly show UNHEALTHY until the one-time setup is done (expected).
+      # To complete first-time setup: SSH port-forward → http://localhost:3000
+      #   ssh -L 3000:localhost:3000 -i ~/.ssh/familyshield ubuntu@<vm-ip>
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:80/"]
       interval: 30s
       timeout: 10s
@@ -61,13 +60,15 @@ services:
       - "8080:8080"       # Control plane (via Cloudflare Tunnel)
       - "9090:9090"       # Metrics
     volumes:
-      - headscale_data:/var/lib/headscale
+      - /opt/familyshield-data/headscale:/var/lib/headscale
       - ./apps/platform-config/headscale/headscale.yaml:/etc/headscale/config.yaml:ro
     command: serve
     environment:
       - TZ=America/Toronto
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9090/metrics"]
+      # headscale uses a distroless base image — no wget/curl/nc available.
+      # Use the headscale binary itself as a liveness check.
+      test: ["CMD", "headscale", "version"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -86,8 +87,9 @@ services:
       - "8888:8080"       # mitmproxy web UI (Cloudflare Tunnel)
       - "8889:8081"       # Transparent proxy port
     volumes:
-      - mitmproxy_data:/home/mitmproxy/.mitmproxy
-      - ./apps/mitm:/addon:ro
+      - /opt/familyshield-data/mitmproxy:/home/mitmproxy/.mitmproxy
+      # Note: addon code is baked into the image (COPY in Dockerfile).
+      # No host volume mount — the ./apps/mitm directory does not exist on the server.
     environment:
       - TZ=America/Toronto
       - REDIS_URL=redis://redis:6379
@@ -95,7 +97,9 @@ services:
     depends_on:
       - redis
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/"]
+      # mitmproxy web UI returns 403 without an auth token; urllib raises HTTPError for 4xx.
+      # Use a raw TCP connect to the listen port (8081) instead — proves the proxy is up.
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.settimeout(5); s.connect(('127.0.0.1',8081)); s.close()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -109,7 +113,7 @@ services:
       familyshield:
         ipv4_address: 172.20.0.5
     volumes:
-      - redis_data:/data
+      - /opt/familyshield-data/redis:/data
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -173,7 +177,9 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3000"]
+      # Use 127.0.0.1 not localhost — Alpine resolves localhost to ::1 (IPv6)
+      # but Next.js standalone binds IPv4 only.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -208,11 +214,12 @@ services:
     ports:
       - "8086:8086"
     volumes:
-      - influxdb_data:/var/lib/influxdb2
+      - /opt/familyshield-data/influxdb:/var/lib/influxdb2
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
       - DOCKER_INFLUXDB_INIT_PASSWORD=${influxdb_password}
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${influxdb_admin_token}
       - DOCKER_INFLUXDB_INIT_ORG=familyshield
       - DOCKER_INFLUXDB_INIT_BUCKET=metrics
       - DOCKER_INFLUXDB_INIT_RETENTION=30d
@@ -234,16 +241,22 @@ services:
     ports:
       - "3002:3000"       # Admin UI (via Cloudflare Tunnel → Zero Trust)
     volumes:
-      - grafana_data:/var/lib/grafana
+      - /opt/familyshield-data/grafana:/var/lib/grafana
       - ./apps/platform-config/grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${grafana_password}
       - GF_SERVER_ROOT_URL=https://grafana-${environment}.everythingcloud.ca
       - GF_AUTH_ANONYMOUS_ENABLED=false
+      - INFLUXDB_ADMIN_TOKEN=${influxdb_admin_token}
       - TZ=America/Toronto
     depends_on:
       influxdb:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # ── 10. ntfy — Push notification server ────────────────────────────────────
   ntfy:
@@ -264,8 +277,8 @@ services:
       - NTFY_AUTH_DEFAULT_ACCESS=deny-all
     volumes:
       - ./apps/platform-config/ntfy:/etc/ntfy:ro
-      - ntfy_cache:/var/cache/ntfy
-      - ntfy_data:/var/lib/ntfy
+      - /opt/familyshield-data/ntfy/cache:/var/cache/ntfy
+      - /opt/familyshield-data/ntfy/data:/var/lib/ntfy
 
   # ── 11. Cloudflare Tunnel daemon ──────────────────────────────────────────
   # NOTE: cloudflared is intentionally NOT managed by docker-compose.
