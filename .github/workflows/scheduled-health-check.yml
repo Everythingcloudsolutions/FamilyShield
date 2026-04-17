@@ -45,77 +45,71 @@ jobs:
 
       - name: Update README.md
         run: |
-          # Read current README
-          CURRENT_README=$(cat README.md)
-
           # Check if health status section exists
           if grep -q "## 🏥 Health Status" README.md; then
             # Replace existing health section
-            python3 << 'EOF'
-import re
-from datetime import datetime
+          python3 <<'EOF'
+          import re
+          from datetime import datetime
 
-with open('README.md', 'r') as f:
-    content = f.read()
+          with open('README.md', 'r', encoding='utf-8') as f:
+            content = f.read()
 
-with open('/tmp/health-report.txt', 'r') as f:
-    health_report = f.read()
+          with open('/tmp/health-report.txt', 'r', encoding='utf-8') as f:
+            health_report = f.read()
 
-# Extract everything after "## 🏥 Health Status" until next heading
-timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-health_section = f"""## 🏥 Health Status
+          timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+          health_section = f"""## 🏥 Health Status
 
-**Last checked:** {timestamp}
+          **Last checked:** {timestamp}
 
-{health_report}
+          {health_report}
 
----
-"""
+          ---
+          """
 
-# Replace the health section
-pattern = r'## 🏥 Health Status.*?(?=\n## |\Z)'
-content = re.sub(pattern, health_section.strip(), content, flags=re.DOTALL)
+          pattern = r'## 🏥 Health Status.*?(?=\n## |\Z)'
+          content = re.sub(pattern, health_section.strip(), content, flags=re.DOTALL)
 
-with open('README.md', 'w') as f:
-    f.write(content)
-EOF
+          with open('README.md', 'w', encoding='utf-8') as f:
+            f.write(content)
+          EOF
           else
             # Insert health section after title/intro (before first ##)
-            python3 << 'EOF'
-from datetime import datetime
+          python3 <<'EOF'
+          from datetime import datetime
 
-with open('README.md', 'r') as f:
-    lines = f.readlines()
+          with open('README.md', 'r', encoding='utf-8') as f:
+            lines = f.readlines()
 
-with open('/tmp/health-report.txt', 'r') as f:
-    health_report = f.read()
+          with open('/tmp/health-report.txt', 'r', encoding='utf-8') as f:
+            health_report = f.read()
 
-timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-health_section = f"""## 🏥 Health Status
+          timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+          health_section = f"""## 🏥 Health Status
 
-**Last checked:** {timestamp}
+          **Last checked:** {timestamp}
 
-{health_report}
+          {health_report}
 
----
+          ---
 
-"""
+          """
 
-# Find where to insert (after first content before first ##)
-insert_pos = 0
-for i, line in enumerate(lines):
-  if line.startswith('## ') and i > 0:
-    insert_pos = i
-    break
+          insert_pos = 0
+          for i, line in enumerate(lines):
+            if line.startswith('## ') and i > 0:
+              insert_pos = i
+              break
 
-if insert_pos == 0:
-  insert_pos = len(lines)
+          if insert_pos == 0:
+            insert_pos = len(lines)
 
-lines.insert(insert_pos, health_section)
+          lines.insert(insert_pos, health_section)
 
-with open('README.md', 'w') as f:
-  f.writelines(lines)
-EOF
+          with open('README.md', 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+          EOF
           fi
 
       - name: Commit and push
