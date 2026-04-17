@@ -432,12 +432,12 @@ jobs:
               uses: actions/github-script@v7
               with:
                   script: |
-                      const portalSummary = '${{ needs.fix-portal.outputs.fix_summary }}';
-                      const apiSummary    = '${{ needs.fix-api.outputs.fix_summary }}';
-                      const mitmSummary   = '${{ needs.fix-mitm.outputs.fix_summary }}';
-                      const portalTests   = '${{ needs.fix-portal.outputs.tests_passed }}' === 'true' ? '\u2705 passed' : '\u23ed skipped';
-                      const apiTests      = '${{ needs.fix-api.outputs.tests_passed }}' === 'true' ? '\u2705 passed' : '\u23ed skipped';
-                      const mitmTests     = '${{ needs.fix-mitm.outputs.tests_passed }}' === 'true' ? '\u2705 passed' : '\u23ed skipped';
+                      const portalSummary = ${{ toJSON(needs.fix-portal.outputs.fix_summary) }};
+                      const apiSummary    = ${{ toJSON(needs.fix-api.outputs.fix_summary) }};
+                      const mitmSummary   = ${{ toJSON(needs.fix-mitm.outputs.fix_summary) }};
+                      const portalTests   = ${{ toJSON(needs.fix-portal.outputs.tests_passed) }} === 'true' ? '\u2705 passed' : '\u23ed skipped';
+                      const apiTests      = ${{ toJSON(needs.fix-api.outputs.tests_passed) }} === 'true' ? '\u2705 passed' : '\u23ed skipped';
+                      const mitmTests     = ${{ toJSON(needs.fix-mitm.outputs.tests_passed) }} === 'true' ? '\u2705 passed' : '\u23ed skipped';
 
                       const body = [
                         '## \ud83d\udd12 Automated Security Fix',
