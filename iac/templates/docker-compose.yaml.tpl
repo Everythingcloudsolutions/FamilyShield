@@ -97,8 +97,9 @@ services:
     depends_on:
       - redis
     healthcheck:
-      # mitmproxy image has no curl/wget — use Python3 urllib
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5)"]
+      # mitmproxy web UI returns 403 without an auth token; urllib raises HTTPError for 4xx.
+      # Use a raw TCP connect to the listen port (8081) instead — proves the proxy is up.
+      test: ["CMD", "python3", "-c", "import socket; s=socket.socket(); s.settimeout(5); s.connect(('127.0.0.1',8081)); s.close()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -251,6 +252,11 @@ services:
     depends_on:
       influxdb:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # ── 10. ntfy — Push notification server ────────────────────────────────────
   ntfy:

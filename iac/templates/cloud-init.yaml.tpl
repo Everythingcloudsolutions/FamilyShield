@@ -119,6 +119,9 @@ write_files:
         "$DATA_MOUNT/ntfy/cache" \
         "$DATA_MOUNT/ntfy/data"
       chown -R ubuntu:ubuntu "$DATA_MOUNT"
+      # Per-service ownership overrides — must match container user UIDs
+      chown -R 472:472 "$DATA_MOUNT/grafana"          # Grafana runs as uid 472
+      chown -R 1000:1000 "$DATA_MOUNT/mitmproxy"      # mitmproxy user in container is uid/gid 1000
       echo "Persistent data volume ready at $DATA_MOUNT ($(df -h $DATA_MOUNT | tail -1 | awk '{print $4}') free)"
 
   # UFW rules

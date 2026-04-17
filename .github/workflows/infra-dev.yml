@@ -317,6 +317,9 @@ jobs:
             /opt/familyshield-data/ntfy/cache \
             /opt/familyshield-data/ntfy/data
           sudo chown -R ubuntu:ubuntu /opt/familyshield-data
+          # Per-service ownership — must match container user UIDs
+          sudo chown -R 472:472 /opt/familyshield-data/grafana          # Grafana runs as uid 472
+          sudo chown -R 1000:1000 /opt/familyshield-data/mitmproxy      # mitmproxy user in container is uid/gid 1000
 
           # Free port 53 from systemd-resolved (Ubuntu 22.04 default — conflicts with AdGuard)
           sudo mkdir -p /etc/systemd/resolved.conf.d
