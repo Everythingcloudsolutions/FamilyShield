@@ -246,7 +246,7 @@ jobs:
                       const portalResult = '${{ needs.audit-portal.outputs.result }}';
                       const apiResult    = '${{ needs.audit-api.outputs.result }}';
                       const mitmResult   = '${{ needs.audit-mitm.outputs.result }}';
-                      const expiryReport = `${{ needs.check-exception-expiry.outputs.expiry_report }}`;
+                      const expiryReport = '${{ needs.check-exception-expiry.outputs.expiry_report }}';
                       const hasExpiring  = '${{ needs.check-exception-expiry.outputs.has_expiring }}' === 'true';
 
                       const icon = r => r === 'pass' ? '✅' : r === '' ? '⏭️' : '❌';
@@ -256,9 +256,9 @@ jobs:
                         '',
                         '| Workspace | Result |',
                         '|-----------|--------|',
-                        `| \`apps/portal\` (npm) | ${icon(portalResult)} ${portalResult || 'skipped'} |`,
-                        `| \`apps/api\` (npm)    | ${icon(apiResult)} ${apiResult || 'skipped'} |`,
-                        `| \`apps/mitm\` (pip)   | ${icon(mitmResult)} ${mitmResult || 'skipped'} |`,
+                        '| `apps/portal` (npm) | ' + icon(portalResult) + ' ' + (portalResult || 'skipped') + ' |',
+                        '| `apps/api` (npm)    | ' + icon(apiResult) + ' ' + (apiResult || 'skipped') + ' |',
+                        '| `apps/mitm` (pip)   | ' + icon(mitmResult) + ' ' + (mitmResult || 'skipped') + ' |',
                         '',
                         '### Exception Status',
                         expiryReport || '_No active exceptions._',
@@ -267,7 +267,7 @@ jobs:
                           ? '> ⚠️ **Action required:** One or more exceptions are expiring or expired. Update `scripts/security-exceptions.json`.'
                           : '> All exceptions are within their validity window.',
                         '',
-                        `_Run ID: [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})_`
+                        '_Run ID: [' + context.runId + '](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId + ')_'
                       ].join('\n');
 
                       // Find existing bot comment and update, or create new

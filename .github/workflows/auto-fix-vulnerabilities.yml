@@ -432,9 +432,9 @@ jobs:
               uses: actions/github-script@v7
               with:
                   script: |
-                      const portalSummary = `${{ needs.fix-portal.outputs.fix_summary }}`;
-                      const apiSummary    = `${{ needs.fix-api.outputs.fix_summary }}`;
-                      const mitmSummary   = `${{ needs.fix-mitm.outputs.fix_summary }}`;
+                      const portalSummary = '${{ needs.fix-portal.outputs.fix_summary }}';
+                      const apiSummary    = '${{ needs.fix-api.outputs.fix_summary }}';
+                      const mitmSummary   = '${{ needs.fix-mitm.outputs.fix_summary }}';
                       const portalTests   = '${{ needs.fix-portal.outputs.tests_passed }}' === 'true' ? '✅ passed' : '⏭️ skipped';
                       const apiTests      = '${{ needs.fix-api.outputs.tests_passed }}' === 'true' ? '✅ passed' : '⏭️ skipped';
                       const mitmTests     = '${{ needs.fix-mitm.outputs.tests_passed }}' === 'true' ? '✅ passed' : '⏭️ skipped';
@@ -464,11 +464,11 @@ jobs:
                         '',
                         '### Regression test results',
                         '',
-                        `| Workspace | Tests |`,
-                        `|-----------|-------|`,
-                        `| \`apps/portal\` | ${portalTests} |`,
-                        `| \`apps/api\` | ${apiTests} |`,
-                        `| \`apps/mitm\` | ${mitmTests} |`,
+                        '| Workspace | Tests |',
+                        '|-----------|-------|',
+                        '| `apps/portal` | ' + portalTests + ' |',
+                        '| `apps/api` | ' + apiTests + ' |',
+                        '| `apps/mitm` | ' + mitmTests + ' |',
                         '',
                         '### Review checklist',
                         '',
@@ -477,7 +477,7 @@ jobs:
                         '- [ ] Any remaining exceptions in `scripts/security-exceptions.json` are still justified',
                         '- [ ] Changelog / release notes updated if needed',
                         '',
-                        `> _Workflow run: [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})_`
+                        '> _Workflow run: [' + context.runId + '](' + context.serverUrl + '/' + context.repo.owner + '/' + context.repo.repo + '/actions/runs/' + context.runId + ')_'
                       ].join('\n');
 
                       const { data: pr } = await github.rest.pulls.create({
