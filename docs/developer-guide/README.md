@@ -13,11 +13,12 @@
 5. [VS Code Remote SSH Setup](#5-vs-code-remote-ssh-setup)
 6. [First Deploy (dev environment)](#6-first-deploy)
 7. [Daily Development Workflow](#7-daily-development-workflow)
-8. [Architecture Overview](#8-architecture-overview)
-9. [Working with Each Service](#9-working-with-each-service)
-10. [Testing](#10-testing)
-11. [Contributing](#11-contributing)
-12. [Security Hardening Updates (2026-04-16)](#12-security-hardening-updates-2026-04-16)
+8. [Workflow Decision Matrix and Scenarios](#8-workflow-decision-matrix-and-scenarios)
+9. [Architecture Overview](#9-architecture-overview)
+10. [Working with Each Service](#10-working-with-each-service)
+11. [Testing](#11-testing)
+12. [Contributing](#12-contributing)
+13. [Security Hardening Updates (2026-04-16)](#13-security-hardening-updates-2026-04-16)
 
 ---
 
@@ -302,7 +303,7 @@ development branch (integration)
 
 ---
 
-## 12. Security Hardening Updates (2026-04-16)
+## 13. Security Hardening Updates (2026-04-16)
 
 The following security scaffolding is now part of the application codebase:
 
@@ -381,7 +382,282 @@ chore: update dependencies
 
 ---
 
-## 8. Architecture Overview
+## 8. Workflow Decision Matrix and Scenarios
+
+This section clarifies **when to use which workflow** based on what you changed. This is the operational answer to: "I made a code change — what do I do now?"
+
+### Quick Reference: What Changed → What Workflow
+
+| What You Changed | Where | Workflow | Triggered? | Purpose |
+|---|---|---|---|---|
+| **App code** | `apps/api/src/` or `apps/portal/` or `apps/mitm/` | `deploy-dev.yml` | ✅ Auto on push to `development` | Build new Docker images, deploy via tunnel |
+| **App config** | `apps/platform-config/` (headscale.yaml, grafana, etc.) | `deploy-platform-services.yml` | 🔲 Manual dispatch or use next section | Sync config files to VM without rebuilding images |
+| **Infrastructure** | `iac/` modules, tfvars, or templates | `infra-dev.yml` | ✅ Auto on push to `development` | Run `tofu apply`, set up Cloudflare tunnel, harden SSH |
+| **Both app + infra** | Any files in both `apps/` and `iac/` | Both workflows | ✅ Auto — sequential | Infra runs first (creates VM), then app runs (deploys to it) |
+| **Docs only** | `docs/`, `README.md`, `.github/workflows/` | `pr-check` (lint only) | ✅ Auto on PR | No deployment triggered |
+
+### Scenario 1: You Modified the API Enricher (YouTube Scraper)
+
+**Changed files:**
+```
+apps/api/src/enrichers/youtube.ts
+apps/api/src/llm/router.ts
+```
+
+**Workflow to use:** `deploy-dev.yml` (automatic on push to `development`)
+
+**Why:** These are app code changes. You need to:
+1. Rebuild the Docker image with new code
+2. Push to GHCR
+3. Pull and restart the API container on the VM
+
+**What deploy-dev.yml does:**
+```
+wait-for-infra (checks if infra also running)
+  ↓
+verify-tunnel (pre-flight: is tunnel reachable?)
+  ↓
+build-and-push (docker build api:arm64 → GHCR)
+  ↓
+deploy-app-dev (SSH via tunnel → pull image → docker compose up -d)
+  ↓
+smoke-test (check /api/health endpoint)
+```
+
+**Expected time:** 8-12 minutes  
+**Success indicator:** Portal loads, `curl https://familyshield-dev.everythingcloud.ca/api/health` returns 200
+
+---
+
+### Scenario 2: You Updated Headscale Configuration (DNS/VPN)
+
+**Changed files:**
+```
+apps/platform-config/headscale/headscale.yaml
+```
+
+**Workflow to use:** `deploy-platform-services.yml` (manual dispatch)
+
+**Why:** Configuration files don't need a full Docker rebuild. You just need to:
+1. Copy the new config to VM
+2. Restart the headscale container
+
+**How to trigger:**
+
+Go to GitHub → Actions → `Deploy Platform Services` → `Run workflow`:
+
+- Select environment: `dev`
+- Services to restart: `headscale` (or choose all)
+- Click **Run workflow**
+
+**What deploy-platform-services.yml does:**
+```
+Sync apps/platform-config/ to VM
+  ↓
+Restart selected services (headscale, adguard, grafana, etc.)
+```
+
+**Expected time:** 3-5 minutes  
+**Success indicator:** `docker logs familyshield-headscale | tail` shows no errors, tunnel shows ACTIVE
+
+---
+
+### Scenario 3: You Fixed a Bug in the mitmproxy Addon
+
+**Changed files:**
+```
+apps/mitm/familyshield_addon.py
+apps/mitm/requirements.txt
+```
+
+**Option A (Full Rebuild - Recommended):**
+
+Use `deploy-dev.yml` — triggers automatically when you push.
+
+**Why:** mitmproxy addon is built into the Docker image. Changes require full rebuild to update the image.
+
+**Expected time:** 8-12 minutes
+
+**Option B (Quick Development Iteration - Temporary):**
+
+Use `deploy-platform-services.yml` manually if:
+- You only changed Python logic (not requirements.txt)
+- You want to test without waiting for Docker build
+
+**Warning:** This copies the source code to the VM but does NOT rebuild the Docker image. The container might have an older version. Use only for quick debugging — always use deploy-dev.yml for final commits.
+
+---
+
+### Scenario 4: You Changed OCI Network Settings (NSG, Subnet)
+
+**Changed files:**
+```
+iac/modules/oci-network/
+iac/environments/dev/terraform.tfvars (updated CIDR blocks, etc.)
+```
+
+**Workflow to use:** `infra-dev.yml` (automatic on push to `development`)
+
+**Why:** These are infrastructure changes managed by OpenTofu. You need to:
+1. Run `tofu plan` (shows what will change)
+2. Run `tofu apply` (creates/updates OCI resources)
+3. Set up Cloudflare tunnel on the new/updated VM
+4. Harden SSH after verification
+
+**What infra-dev.yml does:**
+```
+deploy-infra-dev (tofu apply — 8 min)
+  ↓
+setup-cloudflare-dev (create tunnel, start cloudflared — 3 min)
+  ↓
+smoke-infra-dev (verify tunnel is ACTIVE — 1 min)
+  ↓
+tighten-ssh-dev (restrict SSH to admin IP — 2 min)
+```
+
+**Expected time:** 12-15 minutes  
+**Success indicator:** New NSG rules are in place, tunnel is ACTIVE, portal loads
+
+---
+
+### Scenario 5: You Changed Both API Code AND Added a New Terraform Module
+
+**Changed files:**
+```
+apps/api/src/enrichers/new-platform.ts
+iac/modules/new-service/main.tf
+```
+
+**Workflow to use:** Both workflows trigger automatically in sequence
+
+**What happens:**
+
+```
+Push to development
+  ├── iac/** detected → infra-dev.yml starts
+  │   └─ (tofu apply — may take 12-15 min)
+  │
+  └── apps/** detected → deploy-dev.yml starts
+      └─ Immediately polls: "Is infra-dev still running?"
+      
+      If infra-dev is running:
+        Wait up to 10 minutes for it to finish
+        
+      Once infra-dev completes:
+        build-and-push (Docker build)
+        deploy-app-dev (Deploy via tunnel)
+        smoke-test
+```
+
+**Expected total time:** 20-25 minutes (15 min infra + 8 min app, mostly parallel)  
+**Success indicator:** Both workflows show green checkmarks, portal is accessible
+
+---
+
+### Scenario 6: You Added a New GitHub Actions Workflow File
+
+**Changed files:**
+```
+.github/workflows/new-workflow.yml
+```
+
+**Workflow to use:** `pr-check` runs (lint only, no deployment)
+
+**Why:** Workflow files don't trigger deployments — they ARE part of the deployment system. Changes to `.github/workflows/` are validated but not deployed.
+
+**Expected time:** 2-3 minutes (lint only)  
+**Success indicator:** `pr-check` passes (lint, no deployment)
+
+---
+
+### When to Use `deploy-platform-services.yml` (Manual Utility Workflow)
+
+This workflow is for **configuration-only changes** when you want to avoid a full Docker rebuild:
+
+| Scenario | Use `deploy-platform-services` | Reason |
+|---|---|---|
+| Changed `apps/platform-config/headscale/headscale.yaml` | ✅ Yes | Config-only change; no rebuild needed |
+| Changed `apps/platform-config/grafana/provisioning/` | ✅ Yes | Grafana configs; no rebuild needed |
+| Changed `apps/platform-config/ntfy/*.conf` | ✅ Yes | ntfy config; no rebuild needed |
+| Changed `apps/mitm/familyshield_addon.py` and `requirements.txt` | ⚠️ Depends | If `requirements.txt` changed: use `deploy-dev.yml` (rebuilds image). If only `.py`: can use `deploy-platform-services` for quick test. |
+| Changed `apps/api/src/enrichers/youtube.ts` | ❌ No | App code change — use `deploy-dev.yml` |
+| Changed `iac/modules/oci-compute/` | ❌ No | Infrastructure change — use `infra-dev.yml` |
+
+**How to trigger manually:**
+
+```bash
+# GitHub UI: Actions → Deploy Platform Services → Run workflow
+# Or via CLI:
+gh workflow run deploy-platform-services.yml \
+  --ref development \
+  -f environment=dev
+```
+
+---
+
+### Decision Tree: "I made a change, what do I do?"
+
+```
+Did I change...?
+
+├─ iac/ (IaC code, tfvars, templates)
+│  └─→ USE: infra-dev.yml or infra-prod.yml
+│      Auto-triggered on push
+│
+├─ apps/ (app code, Docker code)
+│  ├─ If also changed iac/: Both workflows trigger (sequential)
+│  └─ If apps/ only: USE: deploy-dev.yml or deploy-prod.yml
+│     Auto-triggered on push
+│
+├─ apps/platform-config/ (config files only, no code)
+│  └─→ USE: deploy-platform-services.yml (manual dispatch)
+│      For quick config sync without rebuild
+│
+├─ docs/ or .github/workflows/
+│  └─→ USE: pr-check (validation only, no deploy)
+│      Auto-triggered on PR
+│
+└─ Multiple different things?
+   └─→ Merge to main branch via PR, and both workflows run
+```
+
+---
+
+### Success Indicators by Workflow
+
+#### ✅ infra-dev.yml completed successfully:
+
+- All 4 jobs are green (deploy-infra, setup-cloudflare, smoke-infra, tighten-ssh)
+- Portal is reachable at `https://familyshield-dev.everythingcloud.ca`
+- Tunnel is ACTIVE (visible in Cloudflare dashboard)
+- SSH is restricted to admin IP (not 0.0.0.0/0 anymore)
+
+#### ✅ deploy-dev.yml completed successfully:
+
+- All 5 jobs are green (verify-tunnel, build-and-push, deploy-app, smoke-test)
+- Portal loads normally
+- API endpoint `/api/health` returns 200 or 403
+
+#### ✅ deploy-platform-services.yml completed successfully:
+
+- Config files are synced to `/opt/familyshield/apps/platform-config/`
+- Restarted service shows no errors in logs
+- (e.g., for headscale: tunnel still ACTIVE, `docker ps` shows headscale running)
+
+---
+
+### Common Mistakes
+
+| Mistake | What Happens | Fix |
+|---|---|---|
+| Changing `apps/api/` but waiting for infra-dev workflow | You're waiting for the wrong workflow. App code changes trigger `deploy-dev`, not `infra-dev` | Look for `deploy-dev.yml` in Actions tab instead |
+| Changing `iac/modules/` but triggering `deploy-dev` manually | The change won't be deployed to the VM (old IaC still in place) | Push to development branch; `infra-dev.yml` auto-triggers on `iac/**` changes |
+| Merging to `main` without testing in `development` first | Your production environment may be broken | Always test in dev first: feature branch → dev PR → test → staging → main |
+| Running `deploy-platform-services` with Docker code changes | Config syncs but new Docker image never builds | Use `deploy-dev` instead for code changes |
+
+---
+
+## 9. Architecture Overview
 
 See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wire diagrams, and flow diagrams.
 
@@ -414,7 +690,7 @@ See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wi
 
 ---
 
-## 9. Working with Each Service
+## 10. Working with Each Service
 
 ### AdGuard Home
 
@@ -442,7 +718,7 @@ See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wi
 
 ---
 
-## 10. Testing
+## 11. Testing
 
 ```bash
 # Unit tests (API)
@@ -465,7 +741,7 @@ See [docs/qa-framework/README.md](../qa-framework/README.md) for full test strat
 
 ---
 
-## 11. Contributing
+## 12. Contributing
 
 ### Getting Started with a Feature
 

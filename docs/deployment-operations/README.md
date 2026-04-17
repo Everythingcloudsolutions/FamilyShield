@@ -558,6 +558,88 @@ docker compose up -d
 
 ---
 
+## Manual Utility Workflows
+
+### deploy-platform-services.yml — Configuration Sync Without Rebuild
+
+This workflow is a **manual utility** (not auto-triggered) for syncing configuration files and restarting services without a full Docker rebuild.
+
+**When to use:**
+
+- You changed `apps/platform-config/` (headscale config, grafana provisioning, ntfy setup, etc.)
+- You want to test config changes quickly without waiting for Docker builds (8-12 min)
+- You changed mitmproxy addon code only (not `requirements.txt`) and want to iterate fast
+
+**When NOT to use:**
+
+- You changed `apps/api/` or `apps/portal/` code — use `deploy-dev.yml` instead
+- You changed `requirements.txt` in mitmproxy — use `deploy-dev.yml` (needs rebuild)
+- You changed infrastructure (`iac/`) — use `infra-dev.yml` instead
+
+**How to trigger:**
+
+GitHub UI:
+1. Go to **Actions** tab
+2. Select **Deploy Platform Services**
+3. Click **Run workflow**
+4. Select environment: `dev`, `staging`, or `prod`
+5. Click **Run workflow**
+
+Or via CLI:
+
+```bash
+gh workflow run deploy-platform-services.yml \
+  --ref development \
+  -f environment=dev
+```
+
+**Expected duration:** 3-5 minutes
+
+**Pipeline jobs:**
+
+1. `bootstrap-vm` — Pre-checks, waits for cloud-init to complete
+2. `sync-config` — SCP assets to `/opt/familyshield/apps/platform-config/`
+3. `restart-services` — `docker compose restart` (or individual services if specified)
+4. `verify-health` — Basic health check
+
+**Post-workflow:**
+
+- Configuration files are updated on the VM
+- Services restart with new configs
+- No new Docker images built or pushed
+- Portal may be briefly unavailable during restart (10-30 sec)
+
+**Example: Update Headscale Configuration**
+
+```bash
+# 1. Edit the config locally
+vim apps/platform-config/headscale/headscale.yaml
+
+# 2. Commit (will auto-trigger deploy-dev.yml — full rebuild)
+git add apps/platform-config/headscale/headscale.yaml
+git commit -m "fix(headscale): disable MagicDNS to fix startup error"
+git push origin development
+
+# OR for quick iteration (no commit yet):
+# Use deploy-platform-services.yml manual workflow (see above)
+```
+
+**Troubleshooting deploy-platform-services:**
+
+**Failure: "Cannot overwrite file exists" or "Permission denied"**
+
+This happens when the bootstrap (infra workflow) creates directories as root with tight permissions, and the utility workflow tries to overwrite as `ubuntu` user.
+
+**Fix:** The workflow handles this — it adds `sudo tar --overwrite` and `sudo chown -R ubuntu:ubuntu` to reset permissions. If it still fails, run it again or check the SSH key is valid.
+
+**Failure: "docker compose: command not found"**
+
+This means docker-compose.yml is missing on the VM or cloud-init hasn't completed.
+
+**Fix:** The `bootstrap-vm` step includes `sudo cloud-init status --wait`, so this should not happen. If it does, run `infra-dev.yml` first to ensure the VM is fully initialized.
+
+---
+
 ## References
 
 - **Full troubleshooting log:** `/docs/troubleshooting/infrastructure.md` — Read this for deep-dive into past issues
