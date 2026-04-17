@@ -94,7 +94,8 @@ services:
       - "8889:8081"       # Transparent proxy port
     volumes:
       - mitmproxy_data:/home/mitmproxy/.mitmproxy
-      - ./apps/mitm:/addon:ro
+      # Note: addon code is baked into the image (COPY in Dockerfile).
+      # No host volume mount — the ./apps/mitm directory does not exist on the server.
     environment:
       - TZ=America/Toronto
       - REDIS_URL=redis://redis:6379
