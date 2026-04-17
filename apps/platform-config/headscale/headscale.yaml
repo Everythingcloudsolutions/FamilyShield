@@ -17,8 +17,13 @@ prefixes:
 derp:
   server:
     enabled: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  auto_update_enabled: true
+  update_frequency: 24h
 
 dns:
+  magic_dns: false
   override_local_dns: false
 
 database:
