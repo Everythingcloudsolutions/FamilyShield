@@ -278,13 +278,23 @@ jobs:
           sudo cloud-init status --wait || true
           cd /opt/familyshield
           echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-          # Pull all GHCR images (api, portal, mitm)
-          sudo docker compose pull api portal mitmproxy 2>/dev/null || sudo docker compose pull api portal
-          # Start full stack — recreate any containers with changed config
-          sudo docker compose up -d --remove-orphans
-          sleep 15
+
+          # Pull public images first — these always exist and must not be blocked by GHCR failures
+          sudo docker compose pull adguard headscale redis influxdb grafana nodered ntfy
+
+          # Start infrastructure services unconditionally
+          sudo docker compose up -d adguard headscale redis influxdb grafana nodered ntfy
+
+          # Attempt GHCR images — may not exist on first deploy (built by deploy-prod.yml)
+          if sudo docker compose pull api portal mitmproxy 2>/dev/null; then
+            sudo docker compose up -d --remove-orphans
+            echo "✅ Full stack started"
+          else
+            echo "⚠️  GHCR images not yet built — infra services running; deploy-prod.yml will start api/portal/mitmproxy"
+          fi
+
+          sleep 10
           sudo docker compose ps
-          echo "✅ Full stack started"
           ENDSSH
 
       - name: Write tunnel token to VM and activate cloudflared
