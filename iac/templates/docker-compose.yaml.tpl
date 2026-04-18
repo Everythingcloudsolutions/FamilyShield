@@ -68,7 +68,7 @@ services:
       # Override the static config's server_url so Headscale advertises the correct
       # public HTTPS address to Tailscale clients. Without this, clients get
       # http://0.0.0.0:8080 from headscale.yaml and cannot reach the server.
-      - HEADSCALE_SERVER_URL=https://vpn.familyshield${env_suffix}.everythingcloud.ca
+      - HEADSCALE_SERVER_URL=https://vpn${env_suffix}.everythingcloud.ca
     healthcheck:
       # headscale uses a distroless base image — no wget/curl/nc available.
       # Use the headscale binary itself as a liveness check.

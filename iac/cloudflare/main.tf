@@ -54,7 +54,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
     }
 
     ingress_rule {
-      hostname = "vpn.familyshield${local.env_suffix}.${var.root_domain}"
+      hostname = "vpn${local.env_suffix}.${var.root_domain}"
       service  = "http://localhost:8080" # headscale control plane
     }
 

@@ -15,7 +15,7 @@ locals {
     "nodered${local.env_suffix}",
     "notify${local.env_suffix}",
     "ssh${local.env_suffix}",
-    "vpn.familyshield${local.env_suffix}",
+    "vpn${local.env_suffix}",
   ]
 }
 
