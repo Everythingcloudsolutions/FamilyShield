@@ -150,7 +150,7 @@ write_files:
   # Listens on 0.0.0.0:443, proxies to localhost:8080 (Headscale)
   - path: /etc/caddy/Caddyfile
     content: |
-      vpn-direct-${environment}.everythingcloud.ca:443 {
+      vpn-${environment}.everythingcloud.ca:443 {
         log {
           output stdout
           format console
