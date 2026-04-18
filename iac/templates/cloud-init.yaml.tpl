@@ -19,6 +19,7 @@ packages:
   - fail2ban
   - wireguard
   - resolvconf
+  - ca-certificates  # Required for Caddy HTTPS certificate validation
 
 # Create ubuntu user docker access
 groups:
@@ -131,6 +132,8 @@ write_files:
       ufw default deny incoming
       ufw default allow outgoing
       ufw allow 22/tcp     # SSH
+      ufw allow 443/tcp    # HTTPS (Caddy reverse proxy for Headscale)
+      ufw allow 443/udp    # QUIC protocol
       ufw allow 51820/udp  # WireGuard VPN
       ufw --force enable
 
@@ -142,6 +145,53 @@ write_files:
       port = 22
       maxretry = 5
       bantime = 3600
+
+  # Caddy configuration — reverse proxy Headscale with auto-HTTPS
+  # Listens on 0.0.0.0:443, proxies to localhost:8080 (Headscale)
+  - path: /etc/caddy/Caddyfile
+    content: |
+      vpn-direct-${environment}.everythingcloud.ca:443 {
+        log {
+          output stdout
+          format console
+        }
+        reverse_proxy localhost:8080 {
+          header_up Connection "upgrade"
+          header_up Upgrade "{http.request.header.Upgrade}"
+          header_up X-Forwarded-For "{http.request.header.CF-Connecting-IP}"
+          header_up X-Forwarded-Proto "https"
+          header_up X-Forwarded-Host "{http.request.host}"
+          header_down -Server
+        }
+      }
+    owner: root:root
+    permissions: '0644'
+
+  # Systemd service for Caddy (Headscale reverse proxy)
+  - path: /etc/systemd/system/caddy-headscale.service
+    content: |
+      [Unit]
+      Description=Caddy - Headscale Reverse Proxy
+      After=network-online.target docker.service
+      Wants=network-online.target
+
+      [Service]
+      Type=notify
+      User=root
+      Group=root
+      ProtectSystem=full
+      ProtectHome=yes
+      NoNewPrivileges=yes
+      ExecStart=/usr/local/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+      ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+      TimeoutStopSec=5s
+      LimitNOFILE=1048576
+      LimitNPROC=512
+      Restart=always
+      RestartSec=10s
+
+      [Install]
+      WantedBy=multi-user.target
 
 runcmd:
   # Disable systemd-resolved stub listener — frees port 53 for AdGuard Home
@@ -163,6 +213,23 @@ runcmd:
 
   # Create app dirs (boot volume — service configs, not data)
   - chown -R ubuntu:ubuntu /opt/familyshield
+
+  # Install Caddy (ARM64 binary for Headscale reverse proxy)
+  - mkdir -p /etc/caddy /var/lib/caddy
+  - |
+    cd /tmp && \
+    CADDY_VERSION="v2.8.4" && \
+    wget -q "https://github.com/caddyserver/caddy/releases/download/${CADDY_VERSION}/caddy_${CADDY_VERSION#v}_linux_arm64.tar.gz" && \
+    tar xzf "caddy_${CADDY_VERSION#v}_linux_arm64.tar.gz" caddy && \
+    mv caddy /usr/local/bin/ && \
+    chmod +x /usr/local/bin/caddy && \
+    rm -f "caddy_${CADDY_VERSION#v}_linux_arm64.tar.gz" && \
+    /usr/local/bin/caddy version
+
+  # Enable and start Caddy service
+  - systemctl daemon-reload
+  - systemctl enable caddy-headscale
+  - systemctl start caddy-headscale
 
   # Enable and start FamilyShield stack
   - systemctl daemon-reload
