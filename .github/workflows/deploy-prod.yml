@@ -198,7 +198,7 @@ jobs:
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
-          SSH_HOST="ssh-prod.everythingcloud.ca"
+          SSH_HOST="ssh.everythingcloud.ca"
 
           tar -czf /tmp/familyshield-runtime-assets.tgz apps/mitm apps/platform-config
 
@@ -229,7 +229,7 @@ jobs:
           TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
           TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
         run: |
-          SSH_HOST="ssh-prod.everythingcloud.ca"
+          SSH_HOST="ssh.everythingcloud.ca"
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
@@ -296,7 +296,7 @@ jobs:
           fi
 
           echo "Checking API health..."
-          API_URL="https://api-prod.everythingcloud.ca/health"
+          API_URL="https://api.everythingcloud.ca/health"
           API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$API_URL" || echo "000")
           if [[ "$API_STATUS" =~ ^(200|403)$ ]]; then
             echo "✅ API reachable (HTTP $API_STATUS)"

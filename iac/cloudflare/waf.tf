@@ -25,7 +25,7 @@ resource "cloudflare_ruleset" "ssh_bot_bypass" {
   rules {
     ref         = "ssh_bot_bypass_${var.environment}"
     description = "Allow cloudflared SSH connections — disable bot challenge for ${var.environment} SSH"
-    expression  = "(http.host eq \"ssh-${var.environment}.${var.root_domain}\")"
+    expression  = "(http.host eq \"ssh${local.env_suffix}.${var.root_domain}\")"
     action      = "set_config"
     enabled     = true
 

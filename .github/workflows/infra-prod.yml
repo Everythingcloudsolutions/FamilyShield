@@ -245,6 +245,7 @@ jobs:
           echo "📝 Rendering docker-compose.yml from template..."
           sed \
             -e "s|\${environment}|prod|g" \
+            -e "s|\${env_suffix}||g" \
             -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_prod|g" \
             -e "s|\${supabase_url}|$SUPABASE_URL|g" \
             -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
@@ -538,6 +539,6 @@ jobs:
             - **Deployed by:** ${{ github.actor }}
             - **Environment:** prod (ca-toronto-1)
             - **URL:** https://familyshield.everythingcloud.ca
-            - **Tunnel:** ssh-prod.everythingcloud.ca
+            - **Tunnel:** ssh.everythingcloud.ca
           draft: false
           prerelease: false

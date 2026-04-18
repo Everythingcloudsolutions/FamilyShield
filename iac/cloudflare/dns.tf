@@ -2,19 +2,20 @@
 # 8 CNAME records pointing to the tunnel's Cloudflare-assigned hostname.
 # All proxied=true so traffic flows through Cloudflare network.
 # ttl=1 means "Auto" in Cloudflare (required when proxied=true).
+# env_suffix is "" for prod (clean URLs) and "-dev"/"-staging" for lower envs.
 
 locals {
   # Subdomains that map directly to the tunnel
   dns_subdomains = [
-    "familyshield-${var.environment}",
-    "api-${var.environment}",
-    "adguard-${var.environment}",
-    "mitmproxy-${var.environment}",
-    "grafana-${var.environment}",
-    "nodered-${var.environment}",
-    "notify-${var.environment}",
-    "ssh-${var.environment}",
-    "vpn.familyshield-${var.environment}",
+    "familyshield${local.env_suffix}",
+    "api${local.env_suffix}",
+    "adguard${local.env_suffix}",
+    "mitmproxy${local.env_suffix}",
+    "grafana${local.env_suffix}",
+    "nodered${local.env_suffix}",
+    "notify${local.env_suffix}",
+    "ssh${local.env_suffix}",
+    "vpn.familyshield${local.env_suffix}",
   ]
 }
 

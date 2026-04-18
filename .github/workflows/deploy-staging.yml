@@ -153,6 +153,7 @@ jobs:
           # Render Terraform template vars; un-escape $${...} → ${...} for Docker runtime env vars
           sed \
             -e "s|\${environment}|staging|g" \
+            -e "s|\${env_suffix}|-staging|g" \
             -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_staging|g" \
             -e "s|\${supabase_url}|$SUPABASE_URL|g" \
             -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
@@ -332,6 +333,7 @@ jobs:
           # Render Terraform template vars; un-escape $${...} → ${...} for Docker runtime env vars
           sed \
             -e "s|\${environment}|staging|g" \
+            -e "s|\${env_suffix}|-staging|g" \
             -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_staging|g" \
             -e "s|\${supabase_url}|$SUPABASE_URL|g" \
             -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \

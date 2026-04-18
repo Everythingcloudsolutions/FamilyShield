@@ -246,7 +246,7 @@ services:
       - ./apps/platform-config/grafana/provisioning:/etc/grafana/provisioning:ro
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${grafana_password}
-      - GF_SERVER_ROOT_URL=https://grafana-${environment}.everythingcloud.ca
+      - GF_SERVER_ROOT_URL=https://grafana${env_suffix}.everythingcloud.ca
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - INFLUXDB_ADMIN_TOKEN=${influxdb_admin_token}
       - TZ=America/Toronto
@@ -272,7 +272,7 @@ services:
     command: serve
     environment:
       - TZ=America/Toronto
-      - NTFY_BASE_URL=https://notify-${environment}.everythingcloud.ca
+      - NTFY_BASE_URL=https://notify${env_suffix}.everythingcloud.ca
       - NTFY_CACHE_FILE=/var/cache/ntfy/cache.db
       - NTFY_AUTH_FILE=/var/lib/ntfy/user.db
       - NTFY_AUTH_DEFAULT_ACCESS=deny-all
