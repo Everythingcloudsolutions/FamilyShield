@@ -231,6 +231,7 @@ jobs:
           echo "📝 Rendering docker-compose.yml from template..."
           sed \
             -e "s|\${environment}|dev|g" \
+            -e "s|\${env_suffix}|-dev|g" \
             -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_dev|g" \
             -e "s|\${supabase_url}|$SUPABASE_URL|g" \
             -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
