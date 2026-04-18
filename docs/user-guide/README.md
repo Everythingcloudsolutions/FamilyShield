@@ -159,7 +159,8 @@ There are four parts to enrolling a device:
 Before you start, make sure you have:
 
 - A parent phone and the child's phone — both connected to WiFi
-- An enrolment key from your IT admin. It looks like this: `tskey-client-K6cX7mZ8wP9qYnK2jL3mOp4rQsT5uV6w`. Your IT admin will generate this for you on the server — you do not need to create it yourself.
+- The **VPN server address** from your IT admin: `https://vpn.familyshield.everythingcloud.ca`. This is a one-time setting entered into the Tailscale app — you will not need to type it on every device.
+- An **enrolment key** from your IT admin (a long code sent to you via iMessage or WhatsApp — you copy it on your phone and paste it on the child's device). See Part A below.
 - About 20 minutes of uninterrupted time
 
 ---
@@ -187,35 +188,46 @@ Tailscale is a free, widely trusted app that connects your child's device to the
 
 ### 4.4 Step 2: Get Your Enrolment Key (2 minutes)
 
-The enrolment key is a code your IT admin generates on the server. It gives permission for your child's device to join the protected network. One key can be reused for all your family's devices and is valid for one year.
+The enrolment key is a code your IT admin generates on the server. It gives permission for your child's device to join the protected network. One key can be reused for all your family's devices and is valid for one year — you only need to ask for this once.
 
-1. Contact your FamilyShield IT admin — the person who set up the server
-2. Ask them to generate an enrolment key for you
-3. They will send you a code that looks like this:
+**How your IT admin sends it to you:**
 
-   ```
-   tskey-client-K6cX7mZ8wP9qYnK2jL3mOp4rQsT5uV6w
-   ```
+Your admin will generate the key on the server and send it to you using one of these methods:
+- A text message (SMS)
+- iMessage or WhatsApp
+- A QR code you scan with your phone's camera
 
-4. Copy the entire key, including the `tskey-client-` part at the beginning
+> **You do not need to copy anything from a computer screen.** The admin sends the key directly to your phone. Once you have it, you simply paste it when Tailscale asks for it.
 
 > **Already have a key?** Skip straight to Step 3.
 
 ---
 
-### 4.5 Step 3: Connect Child's Device to FamilyShield (3 minutes)
+### 4.5 Step 3: Connect Child's Device to FamilyShield (5 minutes)
 
-Back in the Tailscale app on the child's device:
+This is done inside the Tailscale app on the child's device. The app asks for the **VPN server address** first, then the enrolment key.
 
-1. Tap **Start** or **Sign up**
-2. You will see a **Sign in with GitHub** button or similar — scroll down past it
-3. At the bottom, look for **Use a pre-auth key** or **Connect using a key** — tap it
-4. Paste the enrolment key you received in Step 2
-5. Tap **Continue**
-6. Give the device a recognisable name (for example, `Emma's iPad`) and confirm
-7. You should see: **Connected!** with a green checkmark
+**Back in the Tailscale app on the child's device:**
 
-The device is now on the FamilyShield network. Your child will not notice any difference — the internet works exactly as before.
+1. Tap **Get started** or **Log in**
+2. Before you tap any "Sign in with Google/Apple" button, look for one of these options:
+   - A gear icon or **Settings** in the top corner
+   - A link that says **Use a custom control server** or **Self-hosted control server**
+   - Under "More options" → "Change server"
+3. Tap that option and enter the server address:
+
+   ```
+   https://vpn.familyshield.everythingcloud.ca
+   ```
+
+   Then tap **Save** or **Done**.
+
+4. The app will now show a field asking for an **Auth key** or **Pre-auth key**. Paste the enrolment key your admin sent you.
+5. Tap **Connect** or **Sign in**.
+6. The device will ask permission to add a VPN — tap **Allow**.
+7. You will see: **Connected** with a green indicator. A small VPN icon appears in the device's status bar — your child can see this icon, which is intentional (full transparency).
+
+> **iPhone/iPad tip:** If the app opens a browser instead of asking for a key, the browser page will have a text field where you can paste the enrolment key. Paste it there and tap **Connect**.
 
 ---
 
@@ -296,13 +308,15 @@ You will now receive a push notification any time the system detects high-risk c
 
 > **Who does this:** The person who set up the FamilyShield server (usually a technically confident parent or family member). If that is not you, ask them to do this part and send you the key. You can then skip to Part B.
 
-This step connects to the FamilyShield server and creates a **connection key** — a long string of letters and numbers that the Tailscale app will use to authenticate the device. One key can be reused for all your devices for up to one year, so you only need to do this once.
+This step connects to the FamilyShield server and creates a **connection key** — a code that the Tailscale app uses to authenticate the device. One key can be reused for all your devices for up to one year, so you only need to do this once.
+
+**The important thing:** You do not need to copy this key directly to the child's device. Generate it on the server, then send it to the parent's phone via iMessage, WhatsApp, or SMS. From the parent's phone it can be copy-pasted onto any device.
 
 **What you need:**
 
 - A computer (Mac, Windows, or Linux)
-- The SSH key file for the server (you created this during setup — it is saved as `familyshield` in your `.ssh` folder)
-- The server's address (your Cloudflare tunnel address, or the public IP of your server)
+- The SSH key file for the server (saved as `familyshield` in your `.ssh` folder)
+- The server's SSH address
 
 ---
 
@@ -311,76 +325,59 @@ This step connects to the FamilyShield server and creates a **connection key** �
 - **Mac:** Press `Command + Space`, type `Terminal`, and press Enter.
 - **Windows:** Press the Windows key, type `PowerShell`, and press Enter.
 
-A black or white window will open with a blinking cursor. This is the terminal — you will type commands here.
-
 ---
 
 **Step A-2 — Connect to the FamilyShield server**
 
-Type the following command exactly as shown and press Enter. Replace `YOUR-SERVER-ADDRESS` with either your Cloudflare tunnel address (e.g., `ssh-dev.everythingcloud.ca`) or your server's public IP address:
-
 ```
-ssh -i ~/.ssh/familyshield ubuntu@YOUR-SERVER-ADDRESS
+ssh -i ~/.ssh/familyshield ubuntu@ssh.everythingcloud.ca
 ```
 
-> **Example (Cloudflare tunnel):**
->
-> ```
-> ssh -i ~/.ssh/familyshield ubuntu@ssh-dev.everythingcloud.ca
-> ```
+> **First time connecting?** If you see "The authenticity of host … can't be established. Are you sure?", type `yes` and press Enter.
 
-If you see a warning saying something like "The authenticity of host … can't be established. Are you sure you want to continue connecting? (yes/no)", type `yes` and press Enter.
-
-You are connected when you see a prompt that looks like this:
-
-```
-ubuntu@familyshield-dev-vm:~$
-```
+You are connected when you see a prompt like: `ubuntu@familyshield-vm:~$`
 
 ---
 
-**Step A-3 — Check the user account on the server**
-
-Type this command and press Enter:
+**Step A-3 — Create the connection key**
 
 ```
-docker exec familyshield-headscale headscale users list
+docker exec familyshield-headscale headscale preauthkeys create --user familyshield --reusable --expiration 8760h
 ```
 
-You will see output like this:
+The output will show:
 
 ```
-ID | Name    | Created
-1  | default | 2026-04-01 12:00:00
+Key | 2026-04-18 12:00:00 | false | true | abc123def456abc123def456abc123def456abc123def456
 ```
 
-Note the **ID number** shown in the first column. In most cases it is `1`.
+**Copy only the last column** (the long string after the final `|`).
 
 ---
 
-**Step A-4 — Create the connection key**
+**Step A-4 — Send the key to the parent's phone**
 
-Type this command, replacing `1` with the ID number you just noted, then press Enter:
+The easiest options — pick whichever your family uses:
 
+**Option 1 — Send via iMessage or WhatsApp (recommended)**
+
+Paste the key into a message to yourself (your parent phone). Open the message on your phone, copy the key, then paste it on the child's device when Tailscale asks.
+
+**Option 2 — Generate a QR code on the server**
+
+If `qrencode` is installed on the server, run:
 ```
-docker exec familyshield-headscale headscale preauthkeys create --user 1 --reusable --expiration 8760h
+docker exec familyshield-headscale headscale preauthkeys list --user familyshield
+# Copy the key value, then:
+echo -n "YOUR-KEY-HERE" | qrencode -t UTF8
 ```
-
-The command will respond with something like this:
-
-```
-Key: abc123def456abc123def456abc123def456abc123def456abc123def456abc123
-```
-
-**Copy the entire key** (the long string after `Key:`). It is very long — make sure you copy all of it. Paste it into a note on your phone or computer so you have it for Part B.
-
-> **What does `--reusable` mean?** It means this single key works for multiple devices. You do not need to create a new key for each device — use the same key for every child's device. The key expires in 1 year (8760 hours), after which you repeat this step to create a new one.
+A QR code will print in the terminal. Scan it with the child's phone camera — the key goes straight into the clipboard.
 
 ---
 
 **Step A-5 — Disconnect from the server**
 
-Type `exit` and press Enter to close the connection to the server.
+Type `exit` and press Enter.
 
 ---
 
@@ -392,22 +389,26 @@ Now switch to the child's device. Follow the instructions for their device type 
 
 #### iPhone or iPad
 
-**What you need:** The iPhone or iPad, the connection key from Part A, and about 5 minutes.
+**What you need:** The iPhone or iPad, the enrolment key sent to you by your admin, and about 5 minutes.
 
-1. On the child's iPhone or iPad, open the **App Store** (the blue icon with a white capital A).
-2. Tap the **Search** tab at the bottom, type `Tailscale`, and tap **Search**.
-3. Tap **Get** next to the Tailscale app (it is free) and install it. You may need to enter your Apple ID password.
-4. Once installed, tap **Open** to launch Tailscale.
-5. Tailscale will ask you to log in. Tap **Log in**.
-6. On the login screen, look for a small link at the bottom that says **Use auth key** or **Sign in with auth key**. Tap it.
+1. On the child's iPhone or iPad, open the **App Store** and search for `Tailscale`. Install the official Tailscale app (it is free — blue icon).
+2. Open Tailscale. Tap **Get started**.
+3. **Before signing in**, look for a settings option to set a custom server:
+   - On some versions: tap the **gear icon** in the top-right corner before logging in
+   - On others: tap the three dots `···` or scroll down to find **"Use a custom control server"**
+4. Enter the server address:
 
-   > **Tip:** If you do not see this link immediately, look for an option that says "Other sign-in options" or scroll down — the auth key option may be hidden.
+   ```
+   https://vpn.familyshield.everythingcloud.ca
+   ```
 
-7. A text field will appear. Paste the connection key you copied in Step A-4.
-8. Tap **Connect** or **Sign in**.
-9. Tailscale will ask permission to add a VPN configuration to your iPhone. This is expected — tap **Allow**.
-10. If prompted, enter the child's iPhone passcode to confirm.
-11. You will see a screen that says **Connected** with a green indicator. You will also see a small VPN icon appear in the top right corner of the iPhone's status bar — your child can see this icon too, which is intentional.
+   Tap **Save** or **Done**.
+
+5. Now tap **Log in**. The app may open a browser page — look for a text field labelled **Pre-auth key** or **Auth key**.
+6. Paste the enrolment key your admin sent you (copy it from the iMessage/WhatsApp message).
+7. Tap **Connect** or **Submit**.
+8. iOS will ask permission to add a VPN configuration. Tap **Allow**. Enter the device passcode if asked.
+9. You will see **Connected** and a small VPN icon at the top of the screen.
 
 **Tailscale is now installed.** Continue to Part C to install the security certificate.
 
@@ -415,16 +416,25 @@ Now switch to the child's device. Follow the instructions for their device type 
 
 #### Android Phone or Tablet
 
-**What you need:** The Android device, the connection key from Part A, and about 5 minutes.
+**What you need:** The Android device, the enrolment key sent to you by your admin, and about 5 minutes.
 
-1. On the child's Android device, open the **Google Play Store** (the colourful triangle icon).
-2. Search for `Tailscale` and install it (free).
-3. Open Tailscale and tap **Get started**.
-4. On the sign-in screen, tap **Use auth key** or look for a field labelled **Auth key**. If you do not see it, tap **More options** or scroll down.
-5. Paste the connection key you copied in Step A-4 into the auth key field.
+1. On the child's Android device, open the **Google Play Store**, search for `Tailscale`, and install it (free).
+2. Open Tailscale and tap **Get started**.
+3. **Before signing in**, set the custom control server:
+   - Tap the three-dot menu `⋮` in the top-right corner
+   - Select **Settings** or **Custom control server**
+4. Enter the server address:
+
+   ```
+   https://vpn.familyshield.everythingcloud.ca
+   ```
+
+   Tap **Save**.
+
+5. Tap **Log in**. When prompted for an **Auth key**, paste the enrolment key your admin sent you.
 6. Tap **Connect**.
 7. Android will ask permission to create a VPN connection. Tap **OK**.
-8. Tailscale will show **Connected** with a key icon appearing in the Android status bar at the top of the screen.
+8. Tailscale will show **Connected** with a key icon in the status bar.
 
 **Tailscale is now installed.** Continue to Part C.
 
@@ -432,19 +442,15 @@ Now switch to the child's device. Follow the instructions for their device type 
 
 #### Windows PC or Laptop
 
-**What you need:** The Windows computer, the connection key from Part A, and about 5 minutes.
+**What you need:** The Windows computer, the enrolment key from Part A, and about 5 minutes.
 
-1. On the child's Windows computer, open a web browser and go to **<https://tailscale.com/download/windows>**.
-2. Click **Download Tailscale for Windows** and run the installer when it downloads.
-3. Follow the installer steps — just click **Next** through them. No special settings are needed.
-4. Once installed, look for the Tailscale icon in the system tray — that is the row of small icons in the bottom right corner of the screen, near the clock. The icon looks like a small shield or circle.
-
-   > **Tip:** If you do not see it, click the small upward arrow `^` near the clock to show hidden icons.
-
-5. Click the Tailscale icon, then click **Log in**.
-6. A browser window will open. Look for a link that says **Use an auth key** or **Sign in with auth key** and click it.
-7. Paste the connection key from Step A-4 and click **Sign in**.
-8. Tailscale will show a notification saying it is connected. You will also see the Tailscale icon in the system tray change to show it is active.
+1. Go to **<https://tailscale.com/download/windows>** and download the installer. Run it and click **Next** through the steps.
+2. Look for the Tailscale icon in the bottom-right system tray (near the clock). Click it, then click **Log in**.
+3. A browser window opens. Before signing in with an account, look for **"Use a custom control server"** or **"Self-hosted control server"** and click it.
+4. Enter: `https://vpn.familyshield.everythingcloud.ca` and click **Save**.
+5. The page now shows an **Auth key** field. Paste the enrolment key.
+6. Click **Sign in** or **Connect**.
+7. The Tailscale icon in the system tray will turn green or solid to show it is connected.
 
 **Tailscale is now installed.** Continue to Part C.
 
@@ -452,17 +458,16 @@ Now switch to the child's device. Follow the instructions for their device type 
 
 #### Mac (MacBook, iMac, Mac Mini)
 
-**What you need:** The Mac, the connection key from Part A, and about 5 minutes.
+**What you need:** The Mac, the enrolment key from Part A, and about 5 minutes.
 
-1. On the Mac, open the **App Store** (blue icon in the Dock).
-2. Search for `Tailscale` and install it (free).
-3. Once installed, click **Open**.
-4. Tailscale will add a small icon to the **menu bar** — the row of icons at the top right of the screen. Click that icon.
-5. In the menu that appears, click **Log in**.
-6. A browser window will open. Look for **Use an auth key** or **Sign in with auth key** and click it.
-7. Paste the connection key from Step A-4 and click **Sign in**.
-8. The Mac may ask permission to add a VPN configuration. Click **Allow** and enter your Mac password if asked.
-9. The Tailscale menu bar icon will turn green or solid to show it is connected.
+1. Open the **App Store** on the Mac, search for `Tailscale`, and install it (free).
+2. Click the Tailscale icon in the **menu bar** (top-right of the screen). Click **Log in**.
+3. A browser window opens. Before signing in with an account, look for **"Use a custom control server"** and click it.
+4. Enter: `https://vpn.familyshield.everythingcloud.ca` and click **Save**.
+5. The page shows an **Auth key** field. Paste the enrolment key.
+6. Click **Sign in**.
+7. If the Mac asks permission to add a VPN configuration, click **Allow** and enter the Mac password.
+8. The menu bar icon turns solid or green to show it is connected.
 
 **Tailscale is now installed.** Continue to Part C.
 

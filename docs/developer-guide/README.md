@@ -310,73 +310,109 @@ sudo docker logs familyshield-<service-name> --tail 50
 
 ---
 
-### Step 2 — Check the Headscale user account
+### Step 2 — Ensure the Headscale user exists
 
-Headscale manages the Tailscale VPN nodes. Confirm the default user exists:
+Headscale organises nodes into users (namespaces). FamilyShield uses a single user named `familyshield`:
 
 ```bash
 docker exec familyshield-headscale headscale users list
 ```
 
-Expected output:
-
-```
-ID | Name    | Created
-1  | default | 2026-04-XX XX:XX:XX
-```
-
-If no users exist, create the default user:
+If `familyshield` is not in the list, create it:
 
 ```bash
-docker exec familyshield-headscale headscale users create default
+docker exec familyshield-headscale headscale users create familyshield
 ```
 
 ---
 
 ### Step 3 — Generate a pre-authentication key
 
-A pre-auth key lets a device join the Tailscale network without manual approval. Use `--reusable` so you can enrol multiple test devices with one key.
+A pre-auth key lets any device join the VPN without the admin needing to manually approve each registration. Use `--reusable` so the same key works for all family devices.
 
 ```bash
 docker exec familyshield-headscale headscale preauthkeys create \
-  --user 1 \
+  --user familyshield \
   --reusable \
   --expiration 8760h
 ```
 
-Output will look like:
+Output:
 
 ```
-Key: abc123def456abc123def456abc123def456abc123def456abc123def456abc123
+Key | Created             | Ephemeral | Reusable | Key
+----+---------------------+-----------+----------+-----------------------------------------------------------
+1   | 2026-04-18 12:00:00 | false     | true     | abc123def456abc123def456abc123def456abc123def456
 ```
 
-**Copy the full key string.** You will use it in the next step. The key is valid for 1 year (8760 hours).
+**Copy only the last column** (the hex string). This is the enrolment key.
 
-To verify the key was created:
+Verify it was created:
 
 ```bash
-docker exec familyshield-headscale headscale preauthkeys list --user 1
+docker exec familyshield-headscale headscale preauthkeys list --user familyshield
+```
+
+**Delivering the key to the parent without copy-pasting from CLI:**
+
+Option 1 — send via iMessage/WhatsApp from your desktop to the parent's phone:
+```bash
+# Capture key into a variable (macOS)
+KEY=$(docker exec familyshield-headscale headscale preauthkeys create \
+  --user familyshield --reusable --expiration 8760h \
+  | awk 'NR==3{print $NF}')
+echo "FamilyShield enrolment key: $KEY"
+# Copy from terminal → paste into iMessage/WhatsApp/Signal
+```
+
+Option 2 — generate a QR code the parent can scan from the VM terminal:
+```bash
+# Install qrencode if not present
+sudo apt-get install -y qrencode
+
+# Print as a QR code in the terminal — scan with the parent's phone
+echo -n "$KEY" | qrencode -t UTF8
 ```
 
 ---
 
-### Step 4 — Install Tailscale on the test device
+### Step 4 — Install Tailscale on the test device using the custom control server URL
 
-On the device you want to enrol (use a phone or laptop):
+The Tailscale app must be pointed at the FamilyShield Headscale server **before** connecting. The server URL is the critical step that replaces the old "paste a 64-char key on first screen" flow.
 
-**iPhone/iPad:** App Store → search `Tailscale` → install → open → Log in → Use auth key → paste the key from Step 3
+**VPN server URL:**
+- Dev: `https://vpn.familyshield-dev.everythingcloud.ca`
+- Prod: `https://vpn.familyshield.everythingcloud.ca`
 
-**Android:** Google Play → `Tailscale` → install → open → Sign in → Use auth key → paste the key
+#### iPhone/iPad
 
-**Windows/Mac:** Download from `https://tailscale.com/download` → install → click Tailscale icon → Log in → Use auth key → paste the key
+1. App Store → install `Tailscale`
+2. Open app → tap gear icon or find **"Use a custom control server"** before tapping Log in
+3. Enter the VPN server URL → Save
+4. Tap **Log in** → paste the pre-auth key from Step 3 when prompted → Connect
+5. Tap **Allow** to add VPN configuration
 
-After connecting, the device receives a `100.64.x.x` IP address from Headscale. Confirm it registered:
+#### Android
+
+1. Google Play → install `Tailscale`
+2. Open app → three-dot menu `⋮` → **Settings** or **Custom control server**
+3. Enter the VPN server URL → Save
+4. Tap **Log in** → paste the pre-auth key → Connect → tap **OK** for VPN permission
+
+#### Windows/Mac
+
+1. Download from `https://tailscale.com/download` → install
+2. Click Tailscale icon → Log in → browser opens
+3. Look for **"Use a custom control server"** → enter VPN server URL → Save
+4. Paste the pre-auth key → Sign in
+
+After connecting, the device receives a `100.64.x.x` IP from Headscale. Confirm it registered:
 
 ```bash
 docker exec familyshield-headscale headscale nodes list
 ```
 
-You should see the new device listed with an IP address in `100.64.0.0/10`.
+You should see the device listed with an IP in `100.64.0.0/10`.
 
 ---
 
