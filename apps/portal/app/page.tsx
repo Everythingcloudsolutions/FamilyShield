@@ -37,15 +37,13 @@ function StatCard({
   return (
     <div
       data-testid="stat-card"
-      className={`card-premium group cursor-default ${accentBorder ?? ''}`}
+      className={`card-premium group cursor-default flex flex-col justify-between p-5 min-h-[110px] ${accentBorder ?? ''}`}
     >
-      <div className="flex flex-col justify-between h-full">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 group-hover:text-slate-300 transition-colors">{label}</p>
-          <p className={`mt-3 text-3xl font-display font-bold tracking-tight ${accent ?? 'text-slate-100'}`}>{value}</p>
-        </div>
-        {sub && <p className="mt-2 text-xs text-slate-500 group-hover:text-slate-400 transition-colors">{sub}</p>}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-widest text-slate-400 group-hover:text-slate-300 transition-colors">{label}</p>
+        <p className={`mt-2 text-4xl font-display font-bold tabular-nums ${accent ?? 'text-slate-100'}`}>{value}</p>
       </div>
+      {sub && <p className="text-xs text-slate-500 group-hover:text-slate-400 transition-colors">{sub}</p>}
     </div>
   )
 }
