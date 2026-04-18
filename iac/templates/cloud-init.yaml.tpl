@@ -36,13 +36,14 @@ write_files:
   # AFTER tofu apply completes. Using a placeholder here means changing docker-compose.yaml.tpl
   # does NOT change user_data, so the VM is NOT recreated on every app config change.
   # Volumes (adguard_conf, headscale_data, ntfy_data, etc.) persist across infra runs.
+  # NOTE: Must use root owner in write_files (ubuntu user not yet initialized)
   - path: /opt/familyshield/docker-compose.yml
     content: |
       # Placeholder — overwritten by infra workflow (infra-dev.yml / infra-prod.yml)
       # The infra workflow renders docker-compose.yaml.tpl and copies it here via SSH.
       # On reboots after first deploy, this file contains the real stack config.
       services: {}
-    owner: ubuntu:ubuntu
+    owner: root:root
     permissions: '0644'
 
   # Systemd service to start stack on boot
@@ -214,18 +215,26 @@ runcmd:
   # Create app dirs (boot volume — service configs, not data)
   - chown -R ubuntu:ubuntu /opt/familyshield
 
-  # Install Caddy (ARM64 binary for Headscale reverse proxy)
-  - mkdir -p /etc/caddy /var/lib/caddy
+  # Install Caddy (ARM64 binary for Headscale reverse proxy) with error handling
   - |
-    cd /tmp && \
-    CADDY_VERSION="v2.8.4" && \
-    CADDY_VERSION_NUM="$${CADDY_VERSION#v}" && \
-    wget -q "https://github.com/caddyserver/caddy/releases/download/$${CADDY_VERSION}/caddy_$${CADDY_VERSION_NUM}_linux_arm64.tar.gz" && \
-    tar xzf "caddy_$${CADDY_VERSION_NUM}_linux_arm64.tar.gz" caddy && \
-    mv caddy /usr/local/bin/ && \
-    chmod +x /usr/local/bin/caddy && \
-    rm -f "caddy_$${CADDY_VERSION_NUM}_linux_arm64.tar.gz" && \
+    bash <<'ENDCADDY'
+    set -euo pipefail
+    mkdir -p /etc/caddy /var/lib/caddy
+    cd /tmp
+    CADDY_VERSION="v2.8.4"
+    CADDY_VERSION_NUM="${CADDY_VERSION#v}"
+    CADDY_FILE="caddy_${CADDY_VERSION_NUM}_linux_arm64.tar.gz"
+    CADDY_URL="https://github.com/caddyserver/caddy/releases/download/${CADDY_VERSION}/${CADDY_FILE}"
+    echo "Downloading Caddy ${CADDY_VERSION} from ${CADDY_URL}..."
+    wget -q "$CADDY_URL" || { echo "❌ Failed to download Caddy"; exit 1; }
+    echo "Extracting Caddy..."
+    tar xzf "$CADDY_FILE" caddy || { echo "❌ Failed to extract Caddy"; exit 1; }
+    mv caddy /usr/local/bin/ || { echo "❌ Failed to move Caddy to /usr/local/bin/"; exit 1; }
+    chmod +x /usr/local/bin/caddy
+    rm -f "$CADDY_FILE"
+    echo "✅ Caddy installed successfully"
     /usr/local/bin/caddy version
+    ENDCADDY
 
   # Enable and start Caddy service
   - systemctl daemon-reload

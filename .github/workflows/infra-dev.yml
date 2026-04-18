@@ -354,12 +354,63 @@ jobs:
           # Pull and start infrastructure services (public images — always available)
           # App services (api, portal, mitmproxy) are managed by deploy-dev.yml
           # Use --ignore-pull-failures to skip missing app service images (not pushed yet)
+          echo "📦 Pulling infrastructure service images..."
           sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy
+
+          echo "🚀 Starting infrastructure services..."
           sudo docker compose up -d --no-deps adguard headscale redis influxdb grafana nodered ntfy
+
+          echo "Waiting for containers to initialize..."
+          sleep 10
+
+          echo "📋 Container status:"
+          sudo docker compose ps
+
+          # Verify critical services are running
+          echo "🔍 Verifying critical services..."
+          for service in headscale redis; do
+            CONTAINER_NAME="familyshield-${service}"
+            if sudo docker inspect "$CONTAINER_NAME" --format '{{.State.Running}}' 2>/dev/null | grep -q "true"; then
+              echo "✅ $service is running"
+            else
+              echo "❌ CRITICAL: $service is NOT running"
+              echo "Container logs:"
+              sudo docker logs "$CONTAINER_NAME" 2>&1 | tail -20 || true
+              exit 1
+            fi
+          done
+
           echo "✅ Infrastructure services started (api/portal/mitmproxy started by deploy-dev.yml)"
 
-          sleep 10
-          sudo docker compose ps
+          # Verify Caddy and cloudflared systemd services are configured
+          echo "🔐 Checking systemd services..."
+          if sudo systemctl list-unit-files | grep -q "caddy-headscale.service"; then
+            echo "✅ caddy-headscale.service is installed"
+            if sudo systemctl is-enabled caddy-headscale.service &>/dev/null; then
+              echo "✅ caddy-headscale.service is enabled"
+            else
+              echo "⚠️  caddy-headscale.service exists but is not enabled"
+            fi
+            if sudo systemctl is-active caddy-headscale.service &>/dev/null; then
+              echo "✅ caddy-headscale.service is active (RUNNING)"
+            else
+              echo "❌ caddy-headscale.service is not active"
+              echo "   Checking service status..."
+              sudo systemctl status caddy-headscale.service || true
+            fi
+          else
+            echo "❌ caddy-headscale.service not found in systemd"
+            exit 1
+          fi
+
+          # Verify Caddy binary exists
+          if [ -x /usr/local/bin/caddy ]; then
+            echo "✅ Caddy binary exists and is executable"
+            /usr/local/bin/caddy version
+          else
+            echo "❌ Caddy binary not found or not executable at /usr/local/bin/caddy"
+            exit 1
+          fi
           ENDSSH
 
       - name: Write tunnel token to VM and activate cloudflared
