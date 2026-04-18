@@ -1,5 +1,5 @@
 # iac/cloudflare/dns.tf
-# 8 CNAME records pointing to the tunnel's Cloudflare-assigned hostname.
+# 9 CNAME records pointing to the tunnel's Cloudflare-assigned hostname.
 # All proxied=true so traffic flows through Cloudflare network.
 # ttl=1 means "Auto" in Cloudflare (required when proxied=true).
 # env_suffix is "" for prod (clean URLs) and "-dev"/"-staging" for lower envs.
