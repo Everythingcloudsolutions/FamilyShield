@@ -216,6 +216,10 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
           INFLUXDB_PASSWORD: ${{ secrets.INFLUXDB_PASSWORD || 'FamilyShield-Influx-Dev' }}
           INFLUXDB_ADMIN_TOKEN: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN ||
             'FamilyShield-InfluxDB-Token-Dev' }}
@@ -239,6 +243,10 @@ jobs:
             -e "s|\${supabase_service_role_key}|$SUPABASE_SERVICE_ROLE_KEY|g" \
             -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
             -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
+            -e "s|\${youtube_api_key}|$YOUTUBE_API_KEY|g" \
+            -e "s|\${discord_bot_token}|$DISCORD_BOT_TOKEN|g" \
+            -e "s|\${twitch_client_id}|$TWITCH_CLIENT_ID|g" \
+            -e "s|\${twitch_client_secret}|$TWITCH_CLIENT_SECRET|g" \
             -e "s|\${influxdb_password}|$INFLUXDB_PASSWORD|g" \
             -e "s|\${influxdb_admin_token}|$INFLUXDB_ADMIN_TOKEN|g" \
             -e "s|\${grafana_password}|$GRAFANA_PASSWORD|g" \

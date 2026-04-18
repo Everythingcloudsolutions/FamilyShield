@@ -141,6 +141,10 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
         run: |
           mkdir -p ~/.ssh
           echo "$SSH_KEY" | tr -d '\r' > ~/.ssh/familyshield
@@ -160,6 +164,10 @@ jobs:
             -e "s|\${supabase_service_role_key}|$SUPABASE_SERVICE_ROLE_KEY|g" \
             -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
             -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
+            -e "s|\${youtube_api_key}|$YOUTUBE_API_KEY|g" \
+            -e "s|\${discord_bot_token}|$DISCORD_BOT_TOKEN|g" \
+            -e "s|\${twitch_client_id}|$TWITCH_CLIENT_ID|g" \
+            -e "s|\${twitch_client_secret}|$TWITCH_CLIENT_SECRET|g" \
             -e 's|\$\${|\${|g' \
             iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
           scp -i ~/.ssh/familyshield \
@@ -308,6 +316,10 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY_STAGING }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: |
@@ -340,6 +352,10 @@ jobs:
             -e "s|\${supabase_service_role_key}|$SUPABASE_SERVICE_ROLE_KEY|g" \
             -e "s|\${groq_api_key}|$GROQ_API_KEY|g" \
             -e "s|\${anthropic_api_key}|$ANTHROPIC_API_KEY|g" \
+            -e "s|\${youtube_api_key}|$YOUTUBE_API_KEY|g" \
+            -e "s|\${discord_bot_token}|$DISCORD_BOT_TOKEN|g" \
+            -e "s|\${twitch_client_id}|$TWITCH_CLIENT_ID|g" \
+            -e "s|\${twitch_client_secret}|$TWITCH_CLIENT_SECRET|g" \
             -e 's|\$\${|\${|g' \
             iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
           scp -i ~/.ssh/familyshield \
