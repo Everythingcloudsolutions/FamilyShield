@@ -391,8 +391,9 @@ jobs:
 
           # Pull and start infrastructure services (public images — always available)
           # App services (api, portal, mitmproxy) are managed by deploy-prod.yml
+          # --no-deps: nodered depends_on api in docker-compose.yml; skip unlisted dependencies
           sudo docker compose pull adguard headscale redis influxdb grafana nodered ntfy
-          sudo docker compose up -d adguard headscale redis influxdb grafana nodered ntfy
+          sudo docker compose up -d --no-deps adguard headscale redis influxdb grafana nodered ntfy
           echo "✅ Infrastructure services started (api/portal/mitmproxy started by deploy-prod.yml)"
 
           sleep 10
