@@ -38,17 +38,16 @@ export default defineConfig({
   // In CI (pr-check.yml), PLAYWRIGHT_BASE_URL is NOT set so this runs.
   // In scheduled runs (qa-e2e.yml), PLAYWRIGHT_BASE_URL points at the live dev/staging URL
   // so webServer is skipped and tests run directly against the deployed environment.
+  // Start Next.js dev server when no external URL is provided.
+  // Dev mode (NODE_ENV=development) keeps basic-auth disabled so Playwright
+  // can reach the root path. In scheduled runs (qa-e2e.yml), PLAYWRIGHT_BASE_URL
+  // points at the live dev/staging URL so webServer is skipped entirely.
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
     : {
-        // CI: pre-built by a separate step; locally: run `npm run build` first.
-        command: 'node .next/standalone/server.js',
+        command: 'npm run dev',
         url: 'http://localhost:3000',
         reuseExistingServer: !process.env.CI,
-        timeout: 30_000, // server starts quickly against pre-built output
-        env: {
-          PORT: '3000',
-          HOSTNAME: '0.0.0.0',
-        },
+        timeout: 60_000,
       },
 })

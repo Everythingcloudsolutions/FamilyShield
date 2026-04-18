@@ -273,7 +273,9 @@ jobs:
           retention-days: 7
 
   # ── E2E Tests — Portal (Playwright, Chromium, local server) ──────────────────
-  # Runs against a locally-built Next.js server so no live infrastructure is needed.
+  # Runs against a Next.js dev server so no pre-build is required.
+  # Dev mode keeps basic-auth disabled (NODE_ENV=development) so Playwright
+  # can reach the root path without credentials.
   # Tests mock all Supabase REST calls via Playwright route intercepts.
   # Only Chromium is used here for speed; Firefox + mobile are in qa-e2e.yml.
   e2e-portal:
@@ -292,13 +294,6 @@ jobs:
       - name: Install dependencies
         run: cd apps/portal && npm ci --prefer-offline
 
-      - name: Build portal
-        # NEXT_PUBLIC_* vars are baked in at build time — must be present here
-        run: cd apps/portal && npm run build
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-
       - name: Install Playwright Chromium browser
         run: cd apps/portal && npx playwright install chromium --with-deps
 
@@ -306,7 +301,7 @@ jobs:
         run: cd apps/portal && npx playwright test --project chromium
         env:
           CI: "true"
-          # PLAYWRIGHT_BASE_URL not set → playwright.config.ts starts `node .next/standalone/server.js`
+          # PLAYWRIGHT_BASE_URL not set → playwright.config.ts starts `npm run dev`
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
 
