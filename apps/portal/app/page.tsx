@@ -194,7 +194,7 @@ export default async function DashboardPage() {
                 data-testid="enroll-cta"
                 className="btn-primary mt-2 mx-auto"
               >
-                Enrol a device →
+                Enroll a device →
               </a>
             </div>
           ) : (

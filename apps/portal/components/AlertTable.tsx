@@ -12,7 +12,7 @@ interface AlertTableProps {
 }
 
 const RISK_LEVELS: RiskLevel[] = ['critical', 'high', 'medium', 'low']
-const PLATFORMS: Platform[] = ['youtube', 'roblox', 'discord', 'twitch', 'instagram', 'tiktok', 'other']
+const PLATFORMS: Platform[] = ['youtube', 'roblox', 'discord', 'instagram', 'tiktok', 'other']
 
 type SortField = 'created_at' | 'risk_level' | 'platform' | 'device_ip'
 type SortDir = 'asc' | 'desc'
