@@ -284,7 +284,8 @@ jobs:
           fi
 
           echo "Checking API health..."
-          API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$BASE_URL/api/health" || echo "000")
+          API_URL="https://api-prod.everythingcloud.ca/health"
+          API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$API_URL" || echo "000")
           if [[ "$API_STATUS" =~ ^(200|403)$ ]]; then
             echo "✅ API reachable (HTTP $API_STATUS)"
           else
