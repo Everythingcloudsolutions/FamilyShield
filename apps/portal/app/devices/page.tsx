@@ -2,13 +2,11 @@
 
 export const dynamic = 'force-dynamic'
 
-/**
- * Devices Page — device enrollment + management
- */
-import { useState } from 'react'
-import { useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { DeviceCard } from '../../components/DeviceCard'
+import { SkeletonCard } from '../../components/SkeletonCard'
 import { getSupabase, isSupabaseConfigured } from '../../lib/supabase'
+import { DEMO_DEVICES, isDemoMode } from '../../lib/demo-data'
 import type { Device, DeviceProfile } from '../../lib/types'
 
 interface EnrolFormData {
@@ -30,6 +28,7 @@ function EnrolModal({
   onClose: () => void
   onEnrolled: (device: Device) => void
 }) {
+  const modalRef = useRef<HTMLDivElement>(null)
   const [form, setForm] = useState<EnrolFormData>({
     device_ip: '',
     device_name: '',
@@ -37,6 +36,16 @@ function EnrolModal({
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -76,27 +85,34 @@ function EnrolModal({
   return (
     <div
       data-testid="enrol-modal"
+      ref={modalRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="enrol-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="font-semibold text-slate-100">Enrol a Device</h2>
+          <h2 id="enrol-modal-title" className="font-semibold text-slate-100">Enrol a Device</h2>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-200 transition-colors text-lg"
-            aria-label="Close"
+            className="text-slate-400 hover:text-slate-200 transition-colors p-1.5 rounded hover:bg-slate-800"
+            aria-label="Close modal"
           >
-            ✕
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-400">
+            <label htmlFor="device-name-input" className="mb-1.5 block text-xs font-medium text-slate-400">
               Device Name
             </label>
             <input
+              id="device-name-input"
               data-testid="input-device-name"
               type="text"
               required
@@ -108,10 +124,11 @@ function EnrolModal({
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-slate-400">
+            <label htmlFor="device-ip-input" className="mb-1.5 block text-xs font-medium text-slate-400">
               Static IP Address
             </label>
             <input
+              id="device-ip-input"
               data-testid="input-device-ip"
               type="text"
               required
@@ -191,7 +208,8 @@ export default function DevicesPage() {
     let isMounted = true
 
     if (!isSupabaseConfigured()) {
-      setLoadError('Supabase is inactive or not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.')
+      // Show demo mode
+      setDevices(DEMO_DEVICES)
       setLoading(false)
       return
     }
@@ -252,6 +270,8 @@ export default function DevicesPage() {
     }
   }, [])
 
+  const isDemo = isDemoMode([], devices)
+
   return (
     <div className="space-y-5" data-testid="devices-page">
       {/* Header */}
@@ -275,10 +295,12 @@ export default function DevicesPage() {
       {/* Device grid */}
       {loading ? (
         <div
-          className="rounded-xl border border-slate-700/60 bg-slate-800/40 py-16 text-center"
+          className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
           data-testid="loading-devices"
         >
-          <p className="text-slate-400">Loading devices…</p>
+          {[1, 2, 3].map((i) => (
+            <SkeletonCard key={i} rows={3} />
+          ))}
         </div>
       ) : loadError ? (
         <div
@@ -289,16 +311,33 @@ export default function DevicesPage() {
         </div>
       ) : devices.length === 0 ? (
         <div
-          className="rounded-xl border border-dashed border-slate-700 py-16 text-center"
+          className="rounded-xl border border-dashed border-slate-700 p-8 text-center space-y-4"
           data-testid="empty-devices"
         >
-          <p className="text-slate-500">No devices enrolled yet</p>
-          <button
-            onClick={() => setShowModal(true)}
-            className="mt-3 text-sm text-teal-400 hover:underline"
-          >
-            Enrol your first device →
-          </button>
+          <div className="flex justify-center">
+            <svg className="h-12 w-12 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4s4-2 4-6c0 0 2 2 2 6v7c0 4-2 6-6 6s-6-2-6-6V4c0-4 2-6 2-6-4 4-4 6-4 6" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="font-semibold text-slate-200">Protect your first device</h3>
+            <p className="mt-1 text-sm text-slate-500">Enrol a child's device to start monitoring internet activity and receiving safety alerts.</p>
+          </div>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <button
+              onClick={() => setShowModal(true)}
+              className="inline-flex items-center gap-1 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-500 transition-colors"
+            >
+              Enrol a device
+            </button>
+            <a
+              href="#"
+              className="text-sm text-slate-400 hover:text-slate-200 transition-colors"
+            >
+              Read setup guide →
+            </a>
+          </div>
         </div>
       ) : (
         <div
@@ -306,7 +345,7 @@ export default function DevicesPage() {
           data-testid="devices-grid"
         >
           {devices.map((device) => (
-            <DeviceCard key={device.device_ip} device={device} />
+            <DeviceCard key={device.device_ip} device={device} isDemo={isDemo} />
           ))}
         </div>
       )}

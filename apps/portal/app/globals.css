@@ -16,7 +16,19 @@
   }
 
   body {
-    @apply bg-slate-950 text-slate-100;
+    @apply bg-slate-950 text-slate-100 transition-colors duration-200;
+  }
+
+  html:not(.dark) body {
+    @apply bg-slate-50 text-slate-900;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-teal-500/60 ring-offset-2 ring-offset-slate-950;
+  }
+
+  html:not(.dark) :focus-visible {
+    @apply ring-offset-slate-50;
   }
 
   ::-webkit-scrollbar {
@@ -28,11 +40,32 @@
     @apply bg-slate-900;
   }
 
+  html:not(.dark) ::-webkit-scrollbar-track {
+    @apply bg-slate-200;
+  }
+
   ::-webkit-scrollbar-thumb {
     @apply rounded-full bg-slate-700;
+  }
+
+  html:not(.dark) ::-webkit-scrollbar-thumb {
+    @apply bg-slate-400;
   }
 
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-slate-600;
   }
+
+  html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-300;
+  }
+}
+
+.skeleton-shimmer {
+  @apply relative overflow-hidden rounded bg-slate-700/30;
+}
+
+.skeleton-shimmer::after {
+  content: '';
+  @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-slate-600/50 to-transparent;
 }

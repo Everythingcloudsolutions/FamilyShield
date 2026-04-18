@@ -5,6 +5,7 @@ import type { Device, DeviceProfile } from '../lib/types'
 
 interface DeviceCardProps {
   device: Device
+  isDemo?: boolean
 }
 
 const PROFILE_STYLE: Record<DeviceProfile, { label: string; color: string; desc: string }> = {
@@ -36,18 +37,29 @@ function DeviceIcon() {
   )
 }
 
-export function DeviceCard({ device }: DeviceCardProps) {
+export function DeviceCard({ device, isDemo }: DeviceCardProps) {
   const profile = PROFILE_STYLE[device.profile]
 
   return (
     <div
       data-testid="device-card"
       data-device-ip={device.device_ip}
-      className="group rounded-xl border border-slate-700/60 bg-slate-800/50 p-4 transition-all hover:border-teal-500/40 hover:bg-slate-800 hover:shadow-lg hover:shadow-teal-500/5"
+      role="article"
+      aria-label={device.device_name}
+      className="group relative rounded-xl border border-slate-700/60 bg-slate-800/50 p-4 transition-all hover:border-teal-500/40 hover:bg-slate-800 hover:shadow-lg hover:shadow-teal-500/5"
     >
+      {/* Demo badge */}
+      {isDemo && (
+        <div className="absolute top-3 right-3">
+          <span className="inline-flex items-center rounded-full bg-amber-500/20 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-400 ring-1 ring-amber-500/30">
+            Demo
+          </span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-3 flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 flex-1 min-w-0">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-700/60 text-slate-400 group-hover:text-teal-400 transition-colors">
             <DeviceIcon />
           </div>
@@ -86,7 +98,8 @@ export function DeviceCard({ device }: DeviceCardProps) {
         <Link
           href={`/alerts?device=${device.device_ip}`}
           data-testid="device-alerts-link"
-          className="text-[11px] font-medium text-teal-400/70 hover:text-teal-400 transition-colors"
+          aria-label={`View alerts for ${device.device_name}`}
+          className="text-[11px] font-medium text-teal-400/70 hover:text-teal-400 transition-colors focus:ring-2 focus:ring-teal-500/50 focus:rounded focus:outline-none"
         >
           View alerts →
         </Link>

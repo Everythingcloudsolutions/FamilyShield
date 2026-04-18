@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 
 import { createClient } from '@supabase/supabase-js'
 import { AlertTable } from '../../components/AlertTable'
+import { DEMO_ALERTS, isDemoMode } from '../../lib/demo-data'
 import type { Alert } from '../../lib/types'
 
 interface AlertsPageProps {
@@ -49,14 +50,25 @@ export default async function AlertsPage({ searchParams }: AlertsPageProps) {
     }
   }
 
+  const isDemo = isDemoMode(alerts, [])
+  const displayAlerts = isDemo ? DEMO_ALERTS : alerts
+
   return (
     <div className="space-y-5" data-testid="alerts-page">
       <div>
         <h1 className="text-lg font-semibold text-slate-100">Alerts</h1>
         <p className="mt-0.5 text-sm text-slate-500">
-          {deviceFilter
-            ? `Filtering by device ${deviceFilter}`
-            : 'All risk alerts across all devices'}
+          {deviceFilter ? (
+            <>
+              Filtering by device {deviceFilter}
+              {' '}
+              <a href="/alerts" className="text-teal-400 hover:underline text-xs">
+                (clear)
+              </a>
+            </>
+          ) : (
+            'All risk alerts across all devices'
+          )}
         </p>
       </div>
 
@@ -71,7 +83,7 @@ export default async function AlertsPage({ searchParams }: AlertsPageProps) {
         </div>
       )}
 
-      <AlertTable alerts={alerts} deviceFilter={deviceFilter} />
+      <AlertTable alerts={displayAlerts} deviceFilter={deviceFilter} isDemo={isDemo} />
     </div>
   )
 }

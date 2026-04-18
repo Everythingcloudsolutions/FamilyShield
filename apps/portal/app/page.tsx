@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic'
 import { createClient } from '@supabase/supabase-js'
 import { AlertFeed } from '../components/AlertFeed'
 import { DeviceCard } from '../components/DeviceCard'
+import { DEMO_DEVICES, DEMO_ALERTS, isDemoMode } from '../lib/demo-data'
 import type { Alert, Device } from '../lib/types'
 
 function getServerSupabase() {
@@ -25,21 +26,32 @@ function StatCard({
   value,
   sub,
   accent,
+  accentBorder,
 }: {
   label: string
   value: string | number
   sub?: string
   accent?: string
+  accentBorder?: string
 }) {
   return (
     <div
       data-testid="stat-card"
-      className="rounded-xl border border-slate-700/60 bg-slate-800/50 p-4"
+      className={`rounded-xl border bg-slate-800/50 p-4 ${accentBorder ?? 'border-slate-700/60'}`}
     >
       <p className="text-xs font-medium uppercase tracking-wider text-slate-500">{label}</p>
       <p className={`mt-1 text-2xl font-bold ${accent ?? 'text-slate-100'}`}>{value}</p>
       {sub && <p className="mt-0.5 text-xs text-slate-500">{sub}</p>}
     </div>
+  )
+}
+
+function ShieldPlusIcon() {
+  return (
+    <svg className="h-12 w-12 text-teal-500/30 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
   )
 }
 
@@ -86,7 +98,10 @@ export default async function DashboardPage() {
     }
   }
 
-  const criticalCount = alertList.filter((a) => a.risk_level === 'critical').length
+  const isDemo = isDemoMode(alertList, deviceList)
+  const displayAlerts = isDemo ? DEMO_ALERTS : alertList
+  const displayDevices = isDemo ? DEMO_DEVICES : deviceList
+  const criticalCount = displayAlerts.filter((a) => a.risk_level === 'critical').length
 
   return (
     <div className="space-y-6" data-testid="dashboard-page">
@@ -94,7 +109,7 @@ export default async function DashboardPage() {
       <div>
         <h1 className="text-lg font-semibold text-slate-100">Overview</h1>
         <p className="mt-0.5 text-sm text-slate-500">
-          {deviceList.length} device{deviceList.length !== 1 ? 's' : ''} monitored · updated in real-time
+          {displayDevices.length} device{displayDevices.length !== 1 ? 's' : ''} monitored · updated in real-time
         </p>
       </div>
 
@@ -111,35 +126,37 @@ export default async function DashboardPage() {
 
       {/* Stats row */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="stats-grid">
-        <StatCard
-          label="Devices"
-          value={deviceList.length}
-          sub="enrolled"
-        />
-        <StatCard
-          label="Events today"
-          value={eventsToday}
-          sub="captured"
-        />
-        <StatCard
-          label="Alerts today"
-          value={alertsToday}
-          sub="triggered"
-          accent={alertsToday > 0 ? 'text-orange-400' : 'text-slate-100'}
-        />
-        <StatCard
-          label="Critical"
-          value={criticalCount}
-          sub="last 20 alerts"
-          accent={criticalCount > 0 ? 'text-red-400' : 'text-slate-100'}
-        />
+          <StatCard
+            label="Devices"
+            value={displayDevices.length}
+            sub="enrolled"
+          />
+          <StatCard
+            label="Events today"
+            value={eventsToday}
+            sub="captured"
+          />
+          <StatCard
+            label="Alerts today"
+            value={alertsToday}
+            sub="triggered"
+            accent={alertsToday > 0 ? 'text-orange-400' : 'text-slate-100'}
+            accentBorder={alertsToday > 0 ? 'border-l-2 border-l-orange-500/50 border-slate-700/60' : 'border-slate-700/60'}
+          />
+          <StatCard
+            label="Critical"
+            value={criticalCount}
+            sub="last 20 alerts"
+            accent={criticalCount > 0 ? 'text-red-400' : 'text-slate-100'}
+            accentBorder={criticalCount > 0 ? 'border-l-2 border-l-red-500/50 border-slate-700/60' : 'border-slate-700/60'}
+          />
       </div>
 
       {/* Main grid: feed + devices */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Left — live alert feed takes 2/3 */}
         <div className="lg:col-span-2">
-          <AlertFeed initialAlerts={alertList} />
+          <AlertFeed initialAlerts={displayAlerts} />
         </div>
 
         {/* Right — enrolled devices */}
@@ -154,21 +171,25 @@ export default async function DashboardPage() {
             </a>
           </div>
 
-          {deviceList.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-700 p-6 text-center">
-              <p className="text-sm text-slate-500">No devices enrolled</p>
+          {displayDevices.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-700 p-6 text-center space-y-3">
+              <ShieldPlusIcon />
+              <div>
+                <p className="text-sm font-medium text-slate-300">No devices enrolled</p>
+                <p className="mt-1 text-xs text-slate-500">Start monitoring by enrolling your first device</p>
+              </div>
               <a
                 href="/devices"
                 data-testid="enroll-cta"
-                className="mt-2 inline-flex text-sm text-teal-400 hover:underline"
+                className="inline-flex items-center gap-1 rounded-lg bg-teal-600/20 px-3 py-1.5 text-sm text-teal-400 ring-1 ring-teal-500/20 hover:bg-teal-600/30 transition-colors"
               >
                 Enrol a device →
               </a>
             </div>
           ) : (
             <div className="flex flex-col gap-3" data-testid="device-list">
-              {deviceList.map((device) => (
-                <DeviceCard key={device.device_ip} device={device} />
+              {displayDevices.map((device) => (
+                <DeviceCard key={device.device_ip} device={device} isDemo={isDemo} />
               ))}
             </div>
           )}
