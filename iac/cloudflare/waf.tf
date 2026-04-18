@@ -23,9 +23,9 @@
 # Reference: https://developers.cloudflare.com/ruleset-engine/rules-language/
 
 resource "cloudflare_ruleset" "ssh_bot_bypass" {
-  # Zone-wide singleton — created on first apply, updated on subsequent applies
-  # All environments contribute to the same zone ruleset
-  count = 1
+  # Zone-wide singleton — only prod IaC owns it.
+  # Dev/staging: count=0 will not destroy (existing ruleset is zone-wide and shared).
+  count = var.environment == "prod" ? 1 : 0
 
   zone_id     = var.cloudflare_zone_id
   name        = "FamilyShield bot bypass rules"
