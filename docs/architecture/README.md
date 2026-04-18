@@ -28,6 +28,158 @@ These are the conditions this architecture depends on being true. If any assumpt
 
 ---
 
+## Service Topology
+
+### Infrastructure Overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Child's Device (iOS/Android)                           │
+│  ├─ Tailscale Client → all traffic routed via VPN       │
+│  └─ mitmproxy CA cert installed → HTTPS inspection      │
+└──────────────────┬──────────────────────────────────────┘
+                   │ VPN Tunnel (encrypted)
+                   │
+┌──────────────────▼──────────────────────────────────────┐
+│  OCI VM (ca-toronto-1) — 4 OCPU / 24GB RAM             │
+│                                                         │
+│  ┌─ Headscale (VPN Server) ─ port 8080                │
+│  │                                                     │
+│  ├─ AdGuard Home (DNS) ─ port 53 + port 80 (admin)    │
+│  │  ├─ Receives DNS queries from child device         │
+│  │  ├─ Returns filtered results (blocks malware, adult)│
+│  │  └─ Admin panel: adguard-dev.everythingcloud.ca    │
+│  │                                                     │
+│  ├─ mitmproxy (HTTPS inspection) ─ port 8888/8889     │
+│  │  ├─ Transparent proxy intercepting HTTPS           │
+│  │  ├─ Extracts content IDs (YouTube video_id, etc)   │
+│  │  └─ Sends to Redis queue                           │
+│  │                                                     │
+│  ├─ Redis (Event queue) ─ port 6379                   │
+│  │  └─ Buffers events between mitmproxy & API         │
+│  │                                                     │
+│  ├─ API Worker (Node.js) ─ port 3001                  │
+│  │  ├─ Polls Redis for events                         │
+│  │  ├─ Enriches via YouTube/Roblox/Twitch/Discord API │
+│  │  ├─ AI risk scoring (Groq → Anthropic fallback)    │
+│  │  └─ Stores in Supabase                             │
+│  │                                                     │
+│  ├─ ntfy (Push Notifications) ─ port 2586              │
+│  │  ├─ Receives alerts from API                        │
+│  │  ├─ Sends to parent's phone via ntfy app            │
+│  │  └─ Web: notify-dev.everythingcloud.ca              │
+│  │                                                     │
+│  ├─ Portal (Next.js) ─ port 3000                       │
+│  │  └─ Parent dashboard (served via Cloudflare)        │
+│  │                                                     │
+│  └─ (Post-MVP: Grafana, Node-RED, InfluxDB)           │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+         │
+         ├─ Cloudflare Tunnel (outbound only)
+         │  ├─ portal-dev.everythingcloud.ca → localhost:3000
+         │  ├─ adguard-dev.everythingcloud.ca → localhost:80
+         │  ├─ notify-dev.everythingcloud.ca → localhost:2586
+         │  └─ ssh-dev.everythingcloud.ca → localhost:22
+         │
+         └─ Supabase (Hosted PostgreSQL)
+            ├─ Stores: devices, alerts, content_events
+            └─ RLS: Row-level security per parent
+```
+
+### Cloudflare Tunnel Routes
+
+| Subdomain | Points To | Auth |
+|---|---|---|
+| portal-dev.everythingcloud.ca | VM localhost:3000 | None (public portal) |
+| adguard-dev.everythingcloud.ca | VM localhost:80 | Cloudflare Zero Trust (admin email) |
+| notify-dev.everythingcloud.ca | VM localhost:2586 | None (topic-based) |
+| ssh-dev.everythingcloud.ca | VM localhost:22 | Cloudflare Zero Trust (service token) |
+
+### Service Port Map
+
+| Service | Container Name | Internal Port | External Access |
+|---|---|---|---|
+| Headscale (VPN) | familyshield-headscale | 8080 | Direct VM IP:8080 (Tailscale clients only) |
+| AdGuard Home (DNS) | familyshield-adguard | 53 (DNS) + 80 (admin) | DNS via Tailscale VPN; admin via Cloudflare tunnel |
+| mitmproxy (HTTPS proxy) | familyshield-mitmproxy | 8888 + 8889 + 8081 (web UI) | Transparent — no direct access needed |
+| Redis (event queue) | familyshield-redis | 6379 | Internal only |
+| API Worker (Node.js) | familyshield-api | 3001 | Internal only |
+| ntfy (push notifications) | familyshield-ntfy | 2586 | Via Cloudflare tunnel |
+| Portal (Next.js) | familyshield-portal | 3000 | Via Cloudflare tunnel |
+
+---
+
+## End-to-End Data Flow
+
+### How a Child's Activity Becomes a Parent Alert
+
+```
+1. Child's iPhone on Tailscale
+   ├─ Connects via Headscale (VPN)
+   ├─ DNS automatically set to AdGuard (172.20.0.2:53)
+   ├─ mitmproxy cert installed
+   │
+   └─ Opens Safari → https://www.youtube.com/watch?v=dQw4w9WgXcQ
+
+2. mitmproxy (on VM)
+   ├─ Intercepts HTTPS traffic (child device trusts its cert)
+   ├─ Extracts: video_id = "dQw4w9WgXcQ"
+   ├─ Sends to Redis: {source: "youtube", video_id: "dQw4w9WgXcQ"}
+   │
+   └─ Forwards request to real YouTube (child sees video normally)
+
+3. API Worker (on VM)
+   ├─ Polls Redis
+   ├─ Gets: video_id = "dQw4w9WgXcQ"
+   ├─ Calls YouTube API → gets title, description
+   ├─ Sends to Groq AI → scores for violence, adult, etc
+   ├─ Scores: 85% violence → "HIGH RISK"
+   ├─ Stores in Supabase: INSERT into alerts
+   │
+   └─ Calls ntfy API → sends notification
+
+4. Parent's Phone
+   ├─ ntfy app receives notification
+   ├─ Parent sees: "YouTube — HIGH RISK (violence, 85%)"
+   ├─ Parent opens portal
+   └─ Sees full entry in Activity Feed
+
+5. Portal (Parent Dashboard)
+   ├─ Shows: "Emma's iPad — YouTube — Minecraft Violent Mod"
+   ├─ Risk score: 85%
+   └─ Timestamp: 2:45 PM today
+```
+
+---
+
+## Security Model
+
+### Child Device Sees Certificate
+
+- Expected — child's device must trust mitmproxy cert to decrypt HTTPS
+- Do not hide it — explain it is for safety
+- Cert cannot be removed without admin password on most devices
+
+### Headscale is Internal-Only
+
+- Only accessible from Tailscale clients
+- Not exposed via Cloudflare tunnel
+- No external attack surface
+
+### AdGuard Admin UI Protected
+
+- Cloudflare Zero Trust (requires parent's email)
+- DNS queries still work without auth (as they should)
+
+### mitmproxy Does Not Store Content
+
+- Only stores IDs and metadata
+- No message content, no images
+- Privacy-preserving by design
+
+---
+
 ## Key Design Decisions (Architecture Decision Records)
 
 Each ADR captures *what* was decided, *why*, and *what was rejected*.

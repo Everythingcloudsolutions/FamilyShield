@@ -1,14 +1,13 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { RiskBadge } from './RiskBadge'
 import { isDemoMode, DEMO_ALERTS } from '../lib/demo-data'
+import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
 import type { Alert, RiskLevel, Platform } from '../lib/types'
 
 interface AlertTableProps {
-  alerts: Alert[]
   deviceFilter?: string
-  isDemo?: boolean
 }
 
 const RISK_LEVELS: RiskLevel[] = ['critical', 'high', 'medium', 'low']
@@ -42,7 +41,9 @@ function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
   )
 }
 
-export function AlertTable({ alerts: initialAlerts, deviceFilter, isDemo: isdemoProp }: AlertTableProps) {
+export function AlertTable({ deviceFilter }: AlertTableProps) {
+  const [fetchedAlerts, setFetchedAlerts] = useState<Alert[]>([])
+  const [dataMode, setDataMode] = useState<'loading' | 'live' | 'inactive' | 'degraded'>('loading')
   const [riskFilter, setRiskFilter] = useState<string>('')
   const [platformFilter, setPlatformFilter] = useState<string>('')
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir }>({
@@ -50,8 +51,37 @@ export function AlertTable({ alerts: initialAlerts, deviceFilter, isDemo: isdemo
     dir: 'desc',
   })
 
-  const isDemo = isdemoProp || isDemoMode(initialAlerts, [])
-  const alerts = isDemo && initialAlerts.length === 0 ? DEMO_ALERTS : initialAlerts
+  useEffect(() => {
+    if (!isSupabaseConfigured()) {
+      setDataMode('inactive')
+      return
+    }
+
+    async function fetchAlerts() {
+      try {
+        const query = getSupabase()
+          .from('alerts')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(500)
+
+        const { data, error } = await query
+        if (error) {
+          setDataMode('degraded')
+        } else {
+          setFetchedAlerts((data ?? []) as Alert[])
+          setDataMode('live')
+        }
+      } catch {
+        setDataMode('degraded')
+      }
+    }
+
+    void fetchAlerts()
+  }, [])
+
+  const isDemo = isDemoMode(fetchedAlerts, []) && dataMode !== 'loading'
+  const alerts = isDemo ? DEMO_ALERTS : fetchedAlerts
 
   function toggleSort(field: SortField) {
     setSort((prev) =>
@@ -87,6 +117,18 @@ export function AlertTable({ alerts: initialAlerts, deviceFilter, isDemo: isdemo
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Supabase status banner */}
+      {(dataMode === 'inactive' || dataMode === 'degraded') && (
+        <div
+          data-testid="supabase-status-banner"
+          className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+        >
+          {dataMode === 'inactive'
+            ? 'Supabase is inactive or not configured. Alerts are unavailable in offline mode.'
+            : 'Supabase is temporarily unreachable. Alerts list may be incomplete.'}
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
         <select

@@ -924,29 +924,390 @@ See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wi
 
 ## 11. Working with Each Service
 
-### AdGuard Home
+Each service is documented with five parts: what it does, how it is deployed, first-time setup commands, how to verify it is working, and where to find troubleshooting guidance.
 
-- Admin UI: `https://adguard-dev.everythingcloud.ca` (Cloudflare Zero Trust auth)
-- Config: `/opt/familyshield/data/adguard/`
-- API docs: <http://localhost:3080/swagger>
+---
 
-### mitmproxy
+### 11.1 Headscale (VPN Server)
 
-- Web UI: `https://mitm-dev.everythingcloud.ca`
-- Addon code: `apps/mitm/familyshield_addon.py`
-- Logs: `docker logs familyshield-mitmproxy`
+**What it does**
 
-### API / Enrichment Worker
+Headscale is the VPN server that manages all connected Tailscale clients. When a child's device installs Tailscale and enters the enrolment key you provide, the device connects to Headscale and receives a private IP address on the `100.64.0.0/10` network. Headscale also pushes a DNS server configuration to every connected Tailscale client, pointing all DNS queries to the AdGuard container at `172.20.0.2`. This means the child never manually configures DNS — it happens automatically as part of the VPN connection.
+
+**How it's deployed**
+
+Container name: `familyshield-headscale`  
+Port: `8080` (Tailscale coordination endpoint — reachable by child devices via Cloudflare tunnel)  
+Config volume: `/opt/familyshield/data/headscale/`
+
+**First-time setup**
+
+Run these commands once after the first successful `infra-dev.yml` deployment:
+
+```bash
+ssh -i ~/.ssh/familyshield ubuntu@ssh-dev.everythingcloud.ca
+
+# Create a user for the parent account
+docker exec familyshield-headscale headscale users create parent
+
+# Confirm creation and note the numeric user ID
+docker exec familyshield-headscale headscale users list
+
+# Create a reusable pre-authentication key (1 year expiry)
+docker exec familyshield-headscale headscale preauthkeys create \
+  --user 1 \
+  --reusable \
+  --expiration 8760h
+# Output: tskey-client-K6cX7mZ8wP9qYnK2jL3mOp4rQsT5uV6w
+# Copy this key — give it to the parent for device enrolment
+```
+
+**Verify it's working**
+
+```bash
+docker exec familyshield-headscale headscale nodes list
+# Expected: table listing connected devices with 100.64.x.x addresses
+# An empty table is normal before any devices connect
+```
+
+**Troubleshooting**
+
+See [`../troubleshooting/README.md#headscale--tailscale-vpn-issues`](../troubleshooting/README.md#headscale--tailscale-vpn-issues)
+
+---
+
+### 11.2 AdGuard Home (DNS Filtering)
+
+**What it does**
+
+AdGuard Home intercepts all DNS queries from child devices and blocks adult content, gambling sites, and malware domains before the device can reach them. Child devices receive the AdGuard DNS server address (`172.20.0.2`) automatically from Headscale when Tailscale connects — no manual DNS configuration is needed on child devices.
+
+The admin UI requires authentication, but DNS queries on port 53 do not — this is correct and expected behavior. DNS is stateless UDP; requiring credentials on port 53 would break DNS entirely. The admin UI at `adguard-dev.everythingcloud.ca` is protected by Cloudflare Zero Trust email login and is only for IT admins changing settings.
+
+**How it's deployed**
+
+Container name: `familyshield-adguard`  
+Ports: `53` (DNS queries — no auth required, stateless UDP), `80` (admin web UI — auth required)  
+Config volume: `/opt/familyshield/data/adguard/`  
+API docs: `http://localhost:3080/swagger` (via SSH port-forward)
+
+**First-time setup**
+
+AdGuard requires a one-time setup wizard before the admin UI becomes available on port 80:
+
+```bash
+# On your local machine: SSH port-forward to the setup wizard
+ssh -L 3000:172.20.0.2:3000 -i ~/.ssh/familyshield ubuntu@ssh-dev.everythingcloud.ca -N
+# Leave this terminal open
+
+# Open a browser and go to:
+# http://localhost:3000
+```
+
+In the Setup Wizard:
+
+1. Set **Admin Web Interface** port to `80` (must be 80 — if left on 3000 it conflicts with the portal container)
+2. Set **DNS** port to `53`
+3. Set a strong admin password
+4. Complete the wizard
+
+After setup, the wizard URL (`localhost:3000`) closes. The admin UI moves permanently to port 80.
+
+**Accessing the admin UI after setup:**
+
+- Via Cloudflare tunnel: `https://adguard-dev.everythingcloud.ca` (requires Cloudflare Zero Trust email login)
+- Via SSH port-forward if tunnel is down: `ssh -L 3080:172.20.0.2:80 -i ~/.ssh/familyshield ubuntu@<vm-ip> -N` then open `http://localhost:3080`
+
+**Verify it's working**
+
+```bash
+# Check the container is running
+docker ps | grep adguard
+
+# Test DNS resolution using AdGuard as the resolver
+nslookup google.com 172.20.0.2
+# Expected: returns a valid IP address (e.g. 142.251.41.14)
+```
+
+**Troubleshooting**
+
+See [`../troubleshooting/README.md#adguard-home-issues`](../troubleshooting/README.md#adguard-home-issues)
+
+---
+
+### 11.3 mitmproxy (HTTPS Inspection)
+
+**What it does**
+
+mitmproxy is a transparent HTTPS proxy that sits between child devices and the internet. When a child browses YouTube, Roblox, Discord, or Twitch, mitmproxy decrypts the HTTPS traffic, extracts the content identifier (video ID, game place ID, guild ID, or channel name), pushes it to the Redis queue, and re-encrypts and forwards the traffic so the child sees the content normally. mitmproxy does not store any content — only IDs and metadata.
+
+The certificate installation page at `http://mitm.it` is hardcoded into mitmproxy itself; it is an official mitmproxy server that hosts CA certificates for download. When a child device visits `http://mitm.it` while connected to Tailscale, mitmproxy intercepts the request and serves its own certificate download page. This is the mechanism by which the child's device gets the certificate it needs to trust the mitmproxy CA.
+
+**How it's deployed**
+
+Container name: `familyshield-mitmproxy`  
+Ports: `8888` (transparent proxy), `8889` (alternative proxy mode), `8081` (web UI — debugging only)  
+Addon code: `apps/mitm/familyshield_addon.py`  
+Web UI: `https://mitm-dev.everythingcloud.ca`  
+Logs: `docker logs familyshield-mitmproxy`
+
+**First-time setup**
+
+mitmproxy starts automatically via `docker compose` and generates its CA certificate on first start — no server-side manual setup is required. Setup is per child device and must be done once on each enrolled device:
+
+**iOS (run these steps while Tailscale is connected):**
+
+1. Safari → `http://mitm.it`
+2. Tap "iOS" → download profile
+3. Settings → General → VPN & Device Management → Install Profile
+4. Settings → General → About → Certificate Trust Settings → toggle ON next to `mitmproxy`
+
+**Android (run these steps while Tailscale is connected):**
+
+1. Browser → `http://mitm.it`
+2. Tap "Android" → download certificate
+3. Settings → Security → Install Certificate from Storage
+
+**Verify it's working**
+
+```bash
+# Check the container is running
+docker ps | grep mitmproxy
+
+# Watch live traffic — run this while browsing on an enrolled device
+docker logs familyshield-mitmproxy --tail 20
+# Expected: lines of HTTP request/response entries for sites visited
+```
+
+**Troubleshooting**
+
+See [`../troubleshooting/README.md#mitmproxy-ssl-inspection-issues`](../troubleshooting/README.md#mitmproxy-ssl-inspection-issues)
+
+---
+
+### 11.4 ntfy (Push Notifications)
+
+**What it does**
+
+ntfy delivers real-time push alerts to the parent's phone when high or critical risk content is detected. When the API worker scores a content event as high or critical risk, it posts to the `familyshield-alerts` topic on the ntfy server. The parent's phone, with the ntfy app installed and subscribed to that topic, receives the push notification within seconds.
+
+**How it's deployed**
+
+Container name: `familyshield-ntfy`  
+Port: `2586` (HTTP API and web UI)  
+Web: `https://notify-dev.everythingcloud.ca`
+
+**First-time setup**
+
+```bash
+ssh -i ~/.ssh/familyshield ubuntu@ssh-dev.everythingcloud.ca
+
+# Create a parent user — the -it flag is required because this is interactive (prompts for password)
+docker exec -it familyshield-ntfy ntfy user add parent
+
+# Grant the user read/write access to the alert topic
+docker exec familyshield-ntfy ntfy access parent familyshield-alerts rw
+```
+
+**Parent phone setup:**
+
+1. Install ntfy app (App Store or Google Play — search "ntfy")
+2. Open app → tap "+" or "Subscribe to topic"
+3. Enter topic: `familyshield-alerts`
+4. Done — push notifications arrive when the API dispatches alerts
+
+**Verify it's working**
+
+```bash
+# Check the container is running
+docker ps | grep ntfy
+
+# Verify the topic endpoint is reachable and shows messages
+curl -v http://localhost:2586/familyshield-alerts
+# Expected: HTTP 200 with a JSON message list (empty if no alerts have been dispatched yet)
+```
+
+**Troubleshooting**
+
+See [`../troubleshooting/README.md#node-red-issues`](../troubleshooting/README.md#node-red-issues)
+
+---
+
+### 11.5 Supabase (Database)
+
+**What it does**
+
+Supabase is a hosted PostgreSQL database with built-in real-time WebSocket subscriptions. It stores three core tables: `devices` (enrolled child devices and their age profiles), `content_events` (every observed content ID with timestamp), and `alerts` (high and critical risk events with AI scores). Row Level Security is enabled on all tables so each parent only sees data for their own child's devices. The portal subscribes to the `alerts` table over WebSocket, which is how new alerts appear on the dashboard without a page refresh.
+
+Supabase is hosted (not self-hosted on the OCI VM) to get automatic backups, built-in RLS support, real-time subscriptions, and to avoid consuming VM disk space for database storage.
+
+**How it's deployed**
+
+Hosted at [supabase.com](https://supabase.com) — not a container on the VM. Credentials (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) are stored as GitHub Secrets and injected into the API and portal at deploy time. The API worker uses `SUPABASE_SERVICE_ROLE_KEY` for server-side writes; the portal browser client uses only the `SUPABASE_ANON_KEY` (published as `NEXT_PUBLIC_SUPABASE_ANON_KEY`).
+
+**First-time setup**
+
+In the Supabase dashboard → SQL Editor, run the following migration to create tables and enable RLS. The full migration file is also at `apps/api/supabase/migrations/20260416_0001_familyshield_core_rls.sql`.
+
+```sql
+-- Devices enrolled by a parent
+CREATE TABLE devices (
+  id BIGSERIAL PRIMARY KEY,
+  parent_id UUID NOT NULL,
+  device_ip INET NOT NULL,
+  device_name TEXT,
+  profile TEXT,
+  enrolled_at TIMESTAMP DEFAULT now(),
+  last_seen TIMESTAMP,
+  CONSTRAINT unique_device_ip UNIQUE(device_ip)
+);
+
+-- All observed content events
+CREATE TABLE content_events (
+  id BIGSERIAL PRIMARY KEY,
+  device_ip INET NOT NULL,
+  source TEXT,
+  content_id TEXT,
+  captured_at TIMESTAMP DEFAULT now()
+);
+
+-- High and critical risk alerts
+CREATE TABLE alerts (
+  id BIGSERIAL PRIMARY KEY,
+  device_ip INET NOT NULL,
+  content_type TEXT,
+  title TEXT,
+  risk_level TEXT,
+  ai_scores JSONB,
+  created_at TIMESTAMP DEFAULT now(),
+  dispatched_to_ntfy BOOLEAN DEFAULT false
+);
+
+-- Enable RLS with default-deny on all tables
+ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE content_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
+
+-- Least-privilege read policies scoped to the authenticated parent
+CREATE POLICY "parent_devices_select"
+  ON devices FOR SELECT
+  USING (auth.uid() = parent_id);
+
+CREATE POLICY "parent_devices_insert"
+  ON devices FOR INSERT
+  WITH CHECK (auth.uid() = parent_id);
+
+CREATE POLICY "parent_content_events_select"
+  ON content_events FOR SELECT
+  USING (
+    device_ip IN (
+      SELECT device_ip FROM devices WHERE parent_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "parent_alerts_select"
+  ON alerts FOR SELECT
+  USING (
+    device_ip IN (
+      SELECT device_ip FROM devices WHERE parent_id = auth.uid()
+    )
+  );
+```
+
+**Verify it's working**
+
+In the Supabase dashboard → Table Editor, confirm the three tables exist and show zero rows (correct for a fresh deployment). Rows appear after device enrolment and the first monitored browsing session.
+
+**Troubleshooting**
+
+See [`../troubleshooting/README.md#supabase-issues`](../troubleshooting/README.md#supabase-issues)
+
+---
+
+### 11.6 Redis (Event Queue)
+
+**What it does**
+
+Redis is the event queue that decouples mitmproxy from the API worker. When mitmproxy detects a content ID, it pushes a JSON event onto the `content_events` Redis list. The API worker polls this list, pops events one at a time, calls the appropriate platform API (YouTube, Roblox, Twitch, or Discord), runs AI risk scoring, and writes results to Supabase. This buffering means mitmproxy never blocks while waiting for API calls, and the API worker can process events at its own pace even during traffic bursts.
+
+**How it's deployed**
+
+Container name: `familyshield-redis`  
+Port: `6379` (Redis default — internal to the Docker bridge network only, not exposed externally)  
+No configuration files required. Redis starts with sensible defaults.
+
+**First-time setup**
+
+No first-time setup required. Redis starts automatically as part of `docker compose up` and is ready immediately. No password is configured because Redis is only reachable within the Docker bridge network and is not exposed to any external interface.
+
+**Verify it's working**
+
+```bash
+# Confirm Redis responds to the standard health check
+docker exec familyshield-redis redis-cli ping
+# Expected: PONG
+
+# List all keys (empty on fresh deployment; non-empty during active monitoring)
+docker exec familyshield-redis redis-cli KEYS '*'
+```
+
+**Troubleshooting**
+
+See [`../troubleshooting/README.md#redis-queue-issues`](../troubleshooting/README.md#redis-queue-issues)
+
+---
+
+### 11.7 API / Enrichment Worker
 
 - Health: `https://familyshield-dev.everythingcloud.ca/api/health`
 - Code: `apps/api/src/`
 - Env vars: see `iac/templates/docker-compose.yaml.tpl`
 
-### Portal (Next.js)
+### 11.8 Portal (Next.js)
 
 - URL: `https://familyshield-dev.everythingcloud.ca`
 - Code: `apps/portal/`
 - Local dev: `cd apps/portal && npm run dev` (requires tunnel or SSH port-forward)
+
+---
+
+### Common Admin Tasks
+
+#### Add a New Child Device
+
+```bash
+# 1. Generate a new pre-authentication key
+docker exec familyshield-headscale headscale preauthkeys create \
+  --user 1 --reusable --expiration 8760h
+# Output: tskey-client-...
+
+# 2. Give the key to the parent to enter in the Tailscale app on the new device
+
+# 3. After the parent connects, verify the device appears:
+docker exec familyshield-headscale headscale nodes list
+```
+
+#### Check Service Health
+
+```bash
+# Show all containers and their current state
+docker compose ps
+
+# Show a formatted table with health status column
+docker compose ps --format "table {{.Names}}\t{{.Status}}"
+# Expected: all rows show "Up" or "Up (healthy)"
+```
+
+#### Increase Log Level for Debugging
+
+```bash
+# Set debug environment variable and restart affected services
+export DEBUG=familyshield-*
+docker compose restart api mitmproxy
+
+# Tail logs from all services together
+docker compose logs -f --tail 100
+```
 
 ---
 
