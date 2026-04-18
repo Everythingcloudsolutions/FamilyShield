@@ -11,6 +11,7 @@
 
 import "dotenv/config";
 import express from "express";
+import rateLimit from "express-rate-limit";
 import pino from "pino";
 import { startEventWorker } from "./worker/event-consumer";
 import { createRedisClient } from "./lib/redis";
@@ -33,6 +34,13 @@ async function main() {
   const app = express();
   app.use(express.json());
 
+  const metricsLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 60, // limit each IP to 60 requests per window
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   app.get("/health", (_req, res) => {
     res.json({
       status: "ok",
@@ -42,7 +50,7 @@ async function main() {
     });
   });
 
-  app.get("/metrics", async (_req, res) => {
+  app.get("/metrics", metricsLimiter, async (_req, res) => {
     const queueLength = await redis.lLen("familyshield:content_events");
     res.json({ queue_depth: queueLength });
   });
