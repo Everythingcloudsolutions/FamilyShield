@@ -54,8 +54,9 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
     }
 
     ingress_rule {
-      hostname = "vpn${local.env_suffix}.${var.root_domain}"
-      service  = "http://localhost:8080" # headscale control plane
+      hostname                   = "vpn${local.env_suffix}.${var.root_domain}"
+      service                    = "http://localhost:8080" # headscale control plane
+      disable_chunked_encoding   = true # allow WebSocket Upgrade headers for Noise protocol (TS2021)
     }
 
     ingress_rule {
