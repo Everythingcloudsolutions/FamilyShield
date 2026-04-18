@@ -41,10 +41,11 @@ export default defineConfig({
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
     : {
-        command: 'npm run build && node .next/standalone/server.js',
+        // CI: pre-built by a separate step; locally: run `npm run build` first.
+        command: 'node .next/standalone/server.js',
         url: 'http://localhost:3000',
         reuseExistingServer: !process.env.CI,
-        timeout: 120_000,
+        timeout: 30_000, // server starts quickly against pre-built output
         env: {
           PORT: '3000',
           HOSTNAME: '0.0.0.0',

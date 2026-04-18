@@ -292,6 +292,13 @@ jobs:
       - name: Install dependencies
         run: cd apps/portal && npm ci --prefer-offline
 
+      - name: Build portal
+        # NEXT_PUBLIC_* vars are baked in at build time — must be present here
+        run: cd apps/portal && npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
       - name: Install Playwright Chromium browser
         run: cd apps/portal && npx playwright install chromium --with-deps
 
@@ -299,7 +306,7 @@ jobs:
         run: cd apps/portal && npx playwright test --project chromium
         env:
           CI: "true"
-          # No PLAYWRIGHT_BASE_URL set → playwright.config.ts runs `npm run build && node .next/standalone/server.js`
+          # PLAYWRIGHT_BASE_URL not set → playwright.config.ts starts `node .next/standalone/server.js`
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
 
