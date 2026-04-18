@@ -9,7 +9,7 @@ import { DEMO_ALERTS, isDemoMode } from '../../lib/demo-data'
 import type { Alert } from '../../lib/types'
 
 interface AlertsPageProps {
-  searchParams: { device?: string }
+  searchParams: Promise<{ device?: string }>
 }
 
 function getServerSupabase() {
@@ -24,7 +24,8 @@ function getServerSupabase() {
 }
 
 export default async function AlertsPage({ searchParams }: AlertsPageProps) {
-  const deviceFilter = searchParams.device
+  const resolvedParams = await searchParams
+  const deviceFilter = resolvedParams.device
   let dataMode: 'live' | 'inactive' | 'degraded' = 'live'
   let alerts: Alert[] = []
 

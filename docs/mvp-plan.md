@@ -99,6 +99,7 @@ OCI ARM VM (ca-toronto-1)
 | F-22 | Multi-Child Support | Portal + Supabase | Support multiple devices mapped to multiple children from one parent account. Profile per device. | 🟡 Medium |
 | F-23 | Staging & Production Environments | IaC | Separate staging (ephemeral QA) and production environments with own Supabase projects and Cloudflare tunnels. | 🔴 High — needed before family use |
 | F-24 | Supabase Authentication | Portal + Supabase | Replace basic auth scaffold with proper Supabase Auth so parent has a real login with password reset. | 🔴 High — before production |
+| F-25 | Auto GitHub Issue Creation from CI Failures | GitHub Actions | When a scheduled QA run (qa-e2e.yml) or PR check fails, automatically open a GitHub Issue tagged with the workflow name, failure summary, and run URL. Issues are de-duped so the same failure doesn't create multiple open issues. Closed automatically when the next run passes. | 🟡 Medium — improves observability |
 
 ---
 
