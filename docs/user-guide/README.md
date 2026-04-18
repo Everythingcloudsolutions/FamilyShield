@@ -2,7 +2,7 @@
 
 > **Last updated:** April 2026
 > **Portal address:** <https://familyshield.everythingcloud.ca>
-> **Support:** See [Getting Help](#12-getting-help) at the end of this guide
+> **Support:** See [Getting Help](#13-getting-help) at the end of this guide
 
 ---
 
@@ -19,7 +19,8 @@
 9. [Monitoring Specific Platforms](#9-monitoring-specific-platforms)
 10. [Your Child's Privacy](#10-your-childs-privacy)
 11. [Frequently Asked Questions](#11-frequently-asked-questions)
-12. [Getting Help](#12-getting-help)
+12. [Parent Troubleshooting — Quick Reference](#12-parent-troubleshooting--quick-reference)
+13. [Getting Help](#13-getting-help)
 
 ---
 
@@ -150,6 +151,144 @@ There are four parts to enrolling a device:
 **What is Tailscale?** It is a free, widely trusted VPN app. Once installed, it creates a secure private connection between your child's device and the FamilyShield monitoring server. Think of it as a secure tunnel — all your child's internet traffic passes through the server so FamilyShield can inspect it.
 
 **What is a security certificate?** It is a small digital file that lets FamilyShield read encrypted websites (like YouTube or Roblox). Without it, FamilyShield can only see that your child visited a site, not which video they watched or which game they played. The certificate cannot read passwords, payment details, or private messages.
+
+---
+
+### 4.1 What You Need Before Starting
+
+Before you start, make sure you have:
+
+- A parent phone and the child's phone — both connected to WiFi
+- An enrolment key from your IT admin. It looks like this: `tskey-client-K6cX7mZ8wP9qYnK2jL3mOp4rQsT5uV6w`. Your IT admin will generate this for you on the server — you do not need to create it yourself.
+- About 20 minutes of uninterrupted time
+
+---
+
+### 4.2 How FamilyShield Protection Works (Plain English)
+
+All internet from your child's device travels through a protective filter before reaching the real internet. The filter blocks bad websites (adult sites, gambling, malware), identifies what they watch (YouTube video titles, Roblox game names, Twitch channels), and sends you an alert on your phone when something concerning is detected. Once setup is complete, your child just uses their phone normally — there is nothing extra for them to do, and they will not notice any difference in speed or how apps work.
+
+---
+
+### 4.3 Step 1: Install Tailscale on Child's Device (5 minutes)
+
+Tailscale is a free, widely trusted app that connects your child's device to the FamilyShield network. Think of it as the doorway into the protected network.
+
+1. On the child's phone, open the **App Store** (iPhone) or **Google Play** (Android)
+2. Search for: `Tailscale`
+3. Install the official Tailscale app — it has a blue icon
+4. Open the app — you will see a login screen
+
+**Wait — do not log in yet.** You need the enrolment key first. Get that in Step 2 below, then come back.
+
+> **For Windows PCs and Macs:** See Part B later in this section for detailed device-specific instructions.
+
+---
+
+### 4.4 Step 2: Get Your Enrolment Key (2 minutes)
+
+The enrolment key is a code your IT admin generates on the server. It gives permission for your child's device to join the protected network. One key can be reused for all your family's devices and is valid for one year.
+
+1. Contact your FamilyShield IT admin — the person who set up the server
+2. Ask them to generate an enrolment key for you
+3. They will send you a code that looks like this:
+
+   ```
+   tskey-client-K6cX7mZ8wP9qYnK2jL3mOp4rQsT5uV6w
+   ```
+
+4. Copy the entire key, including the `tskey-client-` part at the beginning
+
+> **Already have a key?** Skip straight to Step 3.
+
+---
+
+### 4.5 Step 3: Connect Child's Device to FamilyShield (3 minutes)
+
+Back in the Tailscale app on the child's device:
+
+1. Tap **Start** or **Sign up**
+2. You will see a **Sign in with GitHub** button or similar — scroll down past it
+3. At the bottom, look for **Use a pre-auth key** or **Connect using a key** — tap it
+4. Paste the enrolment key you received in Step 2
+5. Tap **Continue**
+6. Give the device a recognisable name (for example, `Emma's iPad`) and confirm
+7. You should see: **Connected!** with a green checkmark
+
+The device is now on the FamilyShield network. Your child will not notice any difference — the internet works exactly as before.
+
+---
+
+### 4.6 Step 4: Install the Safety Certificate (3 minutes)
+
+**Why is this needed?** So FamilyShield can see what your child is watching — YouTube video titles, Roblox game names, and so on. Without this certificate, we can only see that they visited YouTube, not which video they watched. The certificate cannot read passwords, payment details, or private messages.
+
+**Make sure Tailscale shows Connected before doing these steps.**
+
+#### iPhone
+
+1. On the child's iPhone, open **Safari**
+2. Type this address into the address bar and tap Go:
+
+   ```
+   http://mitm.it
+   ```
+
+   (Use `http://` not `https://` — this is intentional and correct)
+
+3. You will see the mitmproxy certificate download page
+4. Tap **iOS** or **Install**
+5. A popup appears saying **Profile Download** — tap **Allow**
+6. Open the **Settings** app → tap **General** → tap **Profiles and Device Management** (or **VPN & Device Management** on newer iPhones)
+7. Find **mitmproxy** and tap it
+8. Tap **Install** in the top right corner, then enter the child's device passcode
+9. Tap **Install** again on the warning screen, then tap **Done**
+10. Now go to **Settings → General → About** → scroll to the very bottom → tap **Certificate Trust Settings**
+11. Find the **mitmproxy** certificate and toggle the switch to **ON** (it turns green) — tap **Continue** to confirm
+
+#### Android
+
+1. On the child's Android phone, open any web browser
+2. Go to: `http://mitm.it`
+3. Tap **Android**
+4. A file downloads named `mitmproxy-ca-cert.cer`
+5. Open **Settings → Security and Privacy → Security** (the exact path varies by phone — on Samsung try **Biometrics and Security → Other security settings → Install from device storage**)
+6. Look for **Install from storage** or **Install certificates**
+7. Select the downloaded file
+8. Give it a name: `FamilyShield`
+9. Tap **OK**
+
+> **For Windows and Mac certificates:** See Part C later in this section for detailed device-specific instructions.
+
+---
+
+### 4.7 Step 5: Set Up Notifications on Your Phone (5 minutes)
+
+You will receive real-time alerts on your phone — for example: "YouTube — HIGH RISK (violent content)." Alerts come through a free app called ntfy (pronounced "notify").
+
+These steps are for **your phone** — the parent's phone — not the child's device.
+
+1. Open the App Store (iPhone) or Google Play (Android) on your phone
+2. Search for: `ntfy`
+3. Install **ntfy** (free — it has an orange notification icon)
+4. Open ntfy
+5. Tap the **+** button or **Subscribe**
+6. Enter this topic name exactly as shown: `familyshield-alerts` (all lowercase, no spaces)
+7. Tap **Subscribe**
+
+You will now receive a push notification any time the system detects high-risk content on your child's device — even when you are not looking at the portal.
+
+---
+
+### 4.8 Step 6: Log into Your Parent Dashboard (1 minute)
+
+1. On your phone or computer, open a web browser
+2. Go to the portal URL your IT admin gave you (for example, `https://familyshield.everythingcloud.ca`)
+3. Log in with your email and password
+4. You should see three sections: **Dashboard**, **Devices**, and **Alerts**
+5. Your child's device should appear in **Devices** within a few minutes of completing the steps above
+
+**You are done.** FamilyShield is now active on your child's device. The system runs automatically in the background — no ongoing steps needed.
 
 ---
 
@@ -934,7 +1073,86 @@ A: FamilyShield uses industry-standard security: encrypted connections (HTTPS), 
 
 ---
 
-## 12. Getting Help
+**Q: Can my child see the certificate I installed?**
+
+A: On iPhone, they can go to Settings → General → Profiles and see "mitmproxy". They cannot remove it without your device passcode, so seeing it does not give them any way to bypass monitoring. On Android, the certificate is visible in Settings → Security — same situation.
+
+---
+
+**Q: What if my child disconnects Tailscale?**
+
+A: Their device loses internet access immediately. FamilyShield is configured so that all internet access must go through the VPN (the protected tunnel). They would need to reconnect Tailscale before they can browse anything. You will see their device go offline in the Devices section of the portal.
+
+---
+
+**Q: Will the VPN icon bother my child?**
+
+A: Most children stop noticing it within a day or two. You can explain it openly: it is a safety tool, like a seatbelt — always on, not intrusive. FamilyShield is built on full transparency, so there is no need to hide it.
+
+---
+
+**Q: I see YouTube activity but no video titles — why?**
+
+A: The safety certificate is not installed on that device, or was not completed correctly. Follow the certificate installation steps in Section 4.6 to install it. On iPhone, make sure you complete the Certificate Trust Settings step (Settings → General → About → Certificate Trust Settings) — that step is easy to miss.
+
+---
+
+**Q: My child's Tailscale shows them as connected but they say the internet is slow?**
+
+A: The FamilyShield server may be under temporary load, or the connection between the device and server may be weak. Ask your IT admin to check that the server is healthy. If slowness persists for more than a few hours, contact support.
+
+---
+
+## 12. Parent Troubleshooting — Quick Reference
+
+These are the most common issues parents run into during and after setup, with plain-English fixes. For technical errors and developer-level issues, see the full troubleshooting guide at `docs/troubleshooting/README.md`.
+
+---
+
+**My child's device won't connect to Tailscale**
+
+- Check: Is WiFi or mobile data turned on?
+- Try: Close the Tailscale app completely, restart the phone, then reopen Tailscale.
+- If the connection still fails after restarting: The enrolment key may have expired. Contact your IT admin and ask them to generate a new one. Keys expire after one year.
+
+---
+
+**I am not getting ntfy notifications**
+
+- Check 1: Is the ntfy app installed on your phone (the parent's phone)?
+- Check 2: Is your phone's Do Not Disturb turned off? On iPhone: swipe down from the top right corner of the screen — the crescent moon icon should not be highlighted. On Android: go to Settings → Sounds → Do Not Disturb → make sure it is off.
+- Check 3: Did you subscribe to exactly `familyshield-alerts` — all lowercase, no spaces?
+- Fix: Uninstall and reinstall ntfy, then resubscribe to the topic.
+
+---
+
+**Safari shows "This connection is not private"**
+
+This warning is expected the first time you visit an HTTPS website after installing the safety certificate. It does not mean anything is wrong.
+
+- Fix: Tap **Show Details** → scroll down → tap **Visit this website**.
+- After that, Safari remembers your choice and will not show the warning for that site again.
+
+---
+
+**My child can see a VPN icon in their status bar**
+
+This is completely normal. The small VPN icon means their device is connected to the FamilyShield network and protection is active.
+
+- You can explain it to your child: "FamilyShield is keeping you safe online — it works like a seatbelt, always on and not in the way."
+- Your child will not notice any speed difference or extra steps when browsing.
+
+---
+
+**I see activity from YouTube but no video titles**
+
+The safety certificate is probably not installed correctly, or the trust step was skipped.
+
+- Fix: Go back to Section 4.6 and follow the certificate installation steps again on the child's device. On iPhone, pay special attention to the final Certificate Trust Settings step: Settings → General → About → Certificate Trust Settings → toggle mitmproxy to ON.
+
+---
+
+## 13. Getting Help
 
 ### In-portal help
 

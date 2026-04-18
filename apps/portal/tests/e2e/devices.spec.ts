@@ -80,8 +80,8 @@ test.describe('Devices Page', () => {
     await page.getByTestId('open-enroll-modal').click()
     await expect(page.getByTestId('enroll-modal')).toBeVisible()
 
-    // Click outside modal (backdrop area)
-    await page.mouse.click(10, 10)
+    // Click outside modal content (top-left of backdrop overlay)
+    await page.getByTestId('enroll-modal').click({ position: { x: 5, y: 5 } })
 
     await expect(page.getByTestId('enroll-modal')).not.toBeVisible()
   })

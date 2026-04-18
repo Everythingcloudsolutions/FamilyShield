@@ -99,6 +99,7 @@ OCI ARM VM (ca-toronto-1)
 | F-22 | Multi-Child Support | Portal + Supabase | Support multiple devices mapped to multiple children from one parent account. Profile per device. | 🟡 Medium |
 | F-23 | Staging & Production Environments | IaC | Separate staging (ephemeral QA) and production environments with own Supabase projects and Cloudflare tunnels. | 🔴 High — needed before family use |
 | F-24 | Supabase Authentication | Portal + Supabase | Replace basic auth scaffold with proper Supabase Auth so parent has a real login with password reset. | 🔴 High — before production |
+| F-25 | Auto GitHub Issue Creation from CI Failures | GitHub Actions | When a scheduled QA run (qa-e2e.yml) or PR check fails, automatically open a GitHub Issue tagged with the workflow name, failure summary, and run URL. Issues are de-duped so the same failure doesn't create multiple open issues. Closed automatically when the next run passes. | 🟡 Medium — improves observability |
 
 ---
 
@@ -122,6 +123,8 @@ OCI ARM VM (ca-toronto-1)
 | 1.9 | ntfy: create parent user + alert topic | `docker exec -it familyshield-ntfy ntfy user add parent` (must use `-it` for password prompt) then `ntfy access parent familyshield-alerts rw` | Parent user created, `familyshield-alerts` topic accessible | ✅ Done |
 | 1.10 | Verify all services healthy | SSH → `docker compose ps` | All 10 services: `Up (healthy)` | ✅ Done (VM 40.233.115.22) |
 
+> 📖 **Step 1.7 reference docs:** [Developer Guide — AdGuard Setup](developer-guide/README.md#112-adguard-home-dns-filtering) | [Troubleshoot AdGuard](troubleshooting/README.md#adguard-home-issues)
+>
 > **Step 1.7 note — AdGuard first-time setup via SSH port-forward:**
 > The Cloudflare tunnel routes `adguard-dev.everythingcloud.ca` → VM host:3080 → container:80.
 > AdGuard's setup wizard runs on container:3000 (not mapped to host), so the tunnel can't reach it until setup is done.
@@ -136,6 +139,8 @@ OCI ARM VM (ca-toronto-1)
 > After completing setup, port 3000 wizard disappears (Connection refused = setup is done). AdGuard serves on
 > port 80. The Cloudflare tunnel and healthcheck now both work.
 >
+> 📖 **Step 1.8 reference docs:** [Developer Guide — Headscale Setup](developer-guide/README.md#111-headscale-vpn-server) | [Troubleshoot Tailscale/Headscale](troubleshooting/README.md#headscale--tailscale-vpn-issues)
+>
 > **Step 1.8 note — Headscale `--user` flag takes numeric ID, not username:**
 > As of recent headscale versions, `--user` requires the numeric user ID from `headscale users list`, not the name:
 > ```bash
@@ -144,6 +149,8 @@ OCI ARM VM (ca-toronto-1)
 > # Note the ID column (e.g. 1)
 > docker exec familyshield-headscale headscale preauthkeys create --user 1 --reusable --expiration 8760h
 > ```
+>
+> 📖 **Step 1.9 reference docs:** [Developer Guide — ntfy Setup](developer-guide/README.md#114-ntfy-push-notifications) | [Troubleshoot ntfy](troubleshooting/README.md#issue-ntfy-not-sending-alerts)
 >
 > **Step 1.9 note — ntfy `user add` requires interactive TTY:**
 > Running `docker exec familyshield-ntfy ntfy user add parent` without `-it` fails with
@@ -162,9 +169,9 @@ OCI ARM VM (ca-toronto-1)
 
 | # | Task | How | Acceptance | Status |
 |---|---|---|---|---|
-| 2.1 | Install Tailscale on test device | Install Tailscale app → login with preauth key from step 1.8 | Device appears in `headscale nodes list` | 🔲 Todo (needs Mohit) |
-| 2.2 | Install mitmproxy CA cert on test device | Download cert from `http://mitm.it` while on VPN → install as trusted root | HTTPS sites load without cert warning | 🔲 Todo (needs Mohit) |
-| 2.3 | Route device DNS to AdGuard | Set DNS server to `172.20.0.2` (AdGuard IP) in Tailscale subnet | `nslookup google.com` resolves via AdGuard | 🔲 Todo (needs Mohit) |
+| 2.1 | Install Tailscale on test device | Install Tailscale app → login with preauth key from step 1.8 — 📖 [Parent Guide — Step 3](user-guide/README.md#43-step-3-connect-childs-device-to-familyshield-3-minutes) | [Headscale setup](developer-guide/README.md#111-headscale-vpn-server) | Device appears in `headscale nodes list` | 🔲 Todo (needs Mohit) |
+| 2.2 | Install mitmproxy CA cert on test device | Download cert from `http://mitm.it` while on VPN → install as trusted root — 📖 [Parent Guide — Step 4](user-guide/README.md#46-step-4-install-the-safety-certificate-3-minutes) | [mitmproxy setup](developer-guide/README.md#113-mitmproxy-https-inspection) | HTTPS sites load without cert warning | 🔲 Todo (needs Mohit) |
+| 2.3 | Route device DNS to AdGuard | Set DNS server to `172.20.0.2` (AdGuard IP) in Tailscale subnet — 📖 [AdGuard setup](developer-guide/README.md#112-adguard-home-dns-filtering) | [Headscale DNS push](developer-guide/README.md#111-headscale-vpn-server) | `nslookup google.com` resolves via AdGuard | 🔲 Todo (needs Mohit) |
 | 2.4 | Insert device record in Supabase | Via portal Devices page (anon INSERT policy now ✅) | `devices` table has entry for device IP | 🔲 Todo |
 | 2.5 | Open YouTube on test device | Watch any video for 10 seconds | Redis queue receives event (`redis-cli LLEN familyshield:events > 0`) | 🔲 Todo |
 | 2.6 | Verify enrichment pipeline | Check API logs | `content_events` row in Supabase with title + risk_level filled | 🔲 Todo |
