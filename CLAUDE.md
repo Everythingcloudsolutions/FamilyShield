@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-17 (MVP plan document; Supabase security fix; ntfy/Grafana config; Phase 1 stabilisation in progress)
+> Last updated: 2026-04-18 (Portal E2E testing; VPN hostname refactor; WAF singleton fix; Headscale URL enrollment; Phase 2 device testing in progress)
 
 ## Active Development Anchor
 
@@ -10,8 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This file defines the MVP feature list (F-01 to F-13), post-MVP backlog (F-14 to F-24), and phase-by-phase todo checklists. **Always check `docs/mvp-plan.md` first when picking up a new task.** Update it when items are completed.
 
-**Current phase:** Phase 1 — Service Stabilisation (steps 1.1–1.10)
-**Next milestone:** All 10 services healthy → Phase 2 (first device enrolled, first alert received)
+**Current phase:** Phase 2 — Device-Testable Application (steps 2.1–2.8)
+**Current milestone:** Enrol one device, generate real traffic, see alerts end-to-end. Parent receives ntfy alert after child opens YouTube.
 
 ---
 
@@ -140,19 +140,150 @@ pytest -v            # Run all tests with verbose output
 pytest tests/test_addon.py::TestClass::test_method  # Run single test
 ```
 
-**Portal (Next.js):**
+**Portal (Next.js 16):**
 
 ```bash
 cd apps/portal
 npm install
-npm run dev          # Dev server on http://localhost:3000 (requires running API at localhost:3001)
-npm test             # Run Jest unit tests
-npm run test:e2e     # Run Playwright E2E tests (dashboard, alerts, devices)
-npm run test:e2e -- --debug  # Run E2E with headed browser
-npm run lint         # Run ESLint
+npm run dev                              # Dev server on http://localhost:3000
+npm run build                            # Build for production
+npm run lint                             # Run ESLint
+npm run type-check                       # TypeScript type checking
+
+# E2E Testing (Playwright)
+npm run test:e2e                         # Run all E2E tests (Chromium, Firefox, Mobile Chrome)
+npm run test:e2e -- --project chromium  # Run only Chromium tests
+npm run test:e2e -- --debug              # Run with headed browser (interactive)
+npm run test:e2e:ui                      # Run with Playwright UI (shows test interaction)
+npm run test:e2e:report                  # Show HTML test report
+npm run test:e2e -- tests/e2e/dashboard.spec.ts  # Run single test file
 ```
 
-**Note:** Portal requires API running locally (`npm run dev` in `apps/api/`) and Supabase project configured in `.env.local`.
+**Requirements:**
+
+- API running locally: `cd apps/api && npm run dev` (portal calls localhost:3001/health)
+- Supabase configured: `.env.local` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- Port 3000 available (dev server)
+
+**Test environment (scheduled):**
+
+- Daily: `qa-e2e.yml` runs at 11:00 UTC against live dev URL (`https://familyshield-dev.everythingcloud.ca`)
+- Weekly: Adds OWASP ZAP DAST security scan
+- Can also trigger manually via `workflow_dispatch` for dev or staging
+
+---
+
+## Portal Development — Critical Patterns
+
+### Next.js 16: Async `searchParams` in Server Components
+
+**Pattern:** In Next.js 16, `searchParams` is a `Promise` and must be `await`-ed.
+
+```tsx
+// ❌ Wrong — searchParams is a Promise
+export default function Page({ searchParams }) {
+  const device = searchParams.device  // Runtime error!
+}
+
+// ✅ Right — await the Promise first
+export default async function Page({ searchParams }: {
+  searchParams: Promise<{ device?: string }>
+}) {
+  const resolved = await searchParams
+  const device = resolved.device  // ✅ works
+}
+```
+
+**Why this matters:** Forgetting to `await` crashes the page at runtime. This is a breaking change in Next.js 16.
+
+### Portal Data Fetching: Server vs Client-Side
+
+**Critical insight:** Playwright's `page.route()` intercepts **browser HTTP requests only**, not SSR fetches.
+
+**Pattern: Use client-side fetching for components whose test data needs mocking**
+
+```tsx
+// ❌ Server-side fetch (bypasses Playwright mocks) — DON'T use for testable data
+export default async function AlertsPage() {
+  const { data } = await supabase.from('alerts').select('*')
+  return <AlertTable initialAlerts={data} />
+}
+
+// ✅ Client-side fetch (Playwright can mock via page.route) — USE this
+'use client'
+export function AlertTable() {
+  const [alerts, setAlerts] = useState<Alert[]>([])
+  
+  useEffect(() => {
+    getSupabase()
+      .from('alerts')
+      .select('*')
+      .then(({ data }) => setAlerts(data ?? []))
+  }, [])
+  
+  // Playwright mocks intercept this fetch
+}
+```
+
+**When to use each:**
+- **Server-side (RSC):** Static data, SEO-critical content, secrets that can't reach browser
+- **Client-side (useEffect):** Data that tests need to mock, real-time updates, user-dependent content
+
+**Example from codebase:**
+- `apps/portal/app/alerts/page.tsx` — minimal server component, reads `searchParams` only, delegates fetch to `<AlertTable>`
+- `apps/portal/components/AlertTable.tsx` — client component, fetches via `useEffect`, Playwright can mock the request
+
+### Supabase RLS Policies in Portal
+
+All three tables have **anon access** for MVP (replaced by F-14 auth before production):
+
+| Table | SELECT | INSERT | UPDATE | DELETE |
+|---|---|---|---|---|
+| `devices` | ✅ anon | ✅ anon | ❌ | ❌ |
+| `content_events` | ✅ anon | ❌ | ❌ | ❌ |
+| `alerts` | ✅ anon | ❌ | ❌ | ❌ |
+
+**Before production:** Replace anon policies with Supabase Auth (`auth.uid() = parent_user_id`).
+
+### Playwright E2E Testing Patterns
+
+**Mocking Supabase responses:**
+
+```typescript
+test.beforeEach(async ({ page }) => {
+  // Intercept browser-side REST calls only
+  await page.route('**/rest/v1/alerts*', (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(MOCK_ALERTS),
+    })
+  })
+})
+```
+
+**Common test patterns:**
+
+```typescript
+// Wait for element with specific test ID
+await expect(page.getByTestId('alert-row')).toHaveCount(4)
+
+// Click element by test ID
+await page.getByTestId('filter-risk').click()
+
+// Check class presence (e.g. active nav link)
+await expect(page.getByTestId('nav-link-dashboard'))
+  .toHaveClass(/text-accent-400/)  // Use regex for partial match
+
+// Modal backdrop click (click relative to element, not viewport)
+await page.getByTestId('enroll-modal').click({ position: { x: 5, y: 5 } })
+```
+
+**What NOT to mock:**
+- Don't mock server-side fetches (RSC data) — they bypass `page.route()`
+- If component fetches server-side, move fetch to client-side first
+
+**Demo mode:** `isDemoMode()` returns true only when `!isSupabaseConfigured()`. In CI (where Supabase is configured), demo mode never activates. Use Playwright mocks instead.
 
 **Local Docker builds (before pushing to GHCR):**
 
@@ -1026,6 +1157,90 @@ The "Edit zone DNS" template only grants the first scope — insufficient. The o
 
 ---
 
+## Recent Improvements & Key Commits (2026-04-18)
+
+**Infrastructure:**
+
+- PR #25: `--no-deps` flag added to bootstrap Docker Compose (prevents service dependency issues)
+- PR #24, #23, #21, #22: VPN hostname renamed for Universal SSL coverage (`headscale-dev` → `headscale`)
+- PR #20: Refactored Cloudflare URLs to remove `-prod` suffix (clean domain names across all environments)
+- PR #19: Headscale URL-based enrollment + Cloudflare WAF bypass for VPN traffic
+- PR #18: Standardized production URLs and improved CI workflows
+- Commit 3bb77ef: Fixed Cloudflare WAF ruleset zone singleton (prod-only, covers all environments)
+
+**Application:**
+
+- Portal E2E tests: Fixed 7 alerts test failures by converting `AlertTable` to client-side `useEffect` fetching
+- Next.js 16 patterns: Documented async `searchParams` requirements and server vs client-side fetching decisions
+- Playwright testing: Clarified route interception scope (browser requests only, not SSR fetches)
+
+**Automation:**
+
+- `scheduled-health-check.yml`: Daily service health monitoring with README auto-updates
+- `security-scan.yml`: Scheduled OWASP ZAP and npm audit runs
+- `qa-e2e.yml`: Scheduled Playwright E2E runs (daily dev, weekly dev + ZAP) with manual override
+
+---
+
+## Troubleshooting Portal E2E Tests
+
+### 0 alert-row elements in alerts tests
+
+**Symptom:** `getByTestId('alert-row')` returns 0 elements, even though MOCK_ALERTS is defined.
+
+**Root cause:** `AlertTable` was fetching data server-side (RSC), which bypasses Playwright's `page.route()` mocks.
+
+**Solution:** Move fetch to client-side `useEffect`:
+
+```tsx
+// ❌ Server-side fetch (RSC) — Playwright can't mock
+export default async function AlertsPage() {
+  const { data } = await supabase.from('alerts').select('*')
+  return <AlertTable initialAlerts={data} />
+}
+
+// ✅ Client-side fetch (useEffect) — Playwright can mock via page.route()
+'use client'
+export function AlertTable() {
+  const [alerts, setAlerts] = useState<Alert[]>([])
+  useEffect(() => {
+    getSupabase().from('alerts').select('*')
+      .then(({ data }) => setAlerts(data ?? []))
+  }, [])
+}
+```
+
+### Wrong empty state message or active link color
+
+**Wrong text:** Test expects `'No alerts yet'` but component renders `'All clear — no alerts yet'`
+**Wrong class:** Test expects `text-teal-400` but active nav link uses `text-accent-400`
+
+**Solution:** Check actual rendered text/classes in component source before updating test assertions. Component takes precedence over test expectations.
+
+### Modal backdrop click not working
+
+**Problem:** `page.mouse.click(10, 10)` uses absolute viewport coordinates, can be intercepted by NavBar (z-50).
+
+**Solution:** Click relative to the element itself:
+
+```typescript
+// ❌ Wrong — viewport-absolute, unreliable
+await page.mouse.click(10, 10)
+
+// ✅ Right — relative to element
+await page.getByTestId('enroll-modal').click({ position: { x: 5, y: 5 } })
+```
+
+### Tests pass locally but fail in CI
+
+**Common cause:** `NEXT_PUBLIC_SUPABASE_URL` is set in CI (isSupabaseConfigured() = true), so demo mode never activates. Use Playwright mocks instead.
+
+**In local tests:** Playwright mocks intercept browser-side requests, falling back to MOCK_ALERTS defined in test.
+
+**In CI:** Same mocks apply, no demo mode fallback needed.
+
+---
+
 ## How to Continue in Claude Code
 
 When starting a new Claude Code session, just say:
@@ -1053,57 +1268,47 @@ Infrastructure, CI/CD, IaC modules, mitmproxy addon (complete with 15 tests), AP
 
 Full architecture documentation, C4 model, user guide, troubleshooting, Claude Agent SDK agents, slash command skills.
 
-### 🔄 Phase 2: Deployment & API/Portal (IN PROGRESS)
+### 🔄 Phase 2: Device-Testable Application (IN PROGRESS)
 
 **Infrastructure & Deployment:**
 
-- ✅ OCI IAM bootstrap policy (Step 6) created and verified
-- ✅ Cloudflare API token — all 3 required scopes (DNS, Tunnel, Access)
-- ✅ GitHub Actions workflows configured with AWS credentials for S3 backend
-- ✅ **ARCHITECTURE CHANGE (2026-04-13):** Cloudflare resources now managed via API (separate workflow)
-  - Removed Cloudflare module from IaC (`iac/main.tf`)
-  - Created `deploy-cloudflare.yml` workflow (triggered after IaC succeeds)
-  - Created `cleanup-cloudflare.yml` workflow (manual trigger)
-  - Created `scripts/cloudflare-api.sh` helper for API operations
-  - Updated all workflows to remove Cloudflare variables from IaC
-  - Simplified `tofu-apply` action (no Cloudflare state conflict workarounds)
-- ✅ **ARCHITECTURE CHANGE (2026-04-14):** IaC module sequencing & compartment query logic
-  - Bootstrap script Step 7 now creates three compartments: `familyshield-dev`, `familyshield-staging`, `familyshield-prod`
-  - IaC compartments module changed from creation to data source queries (no duplicate compartments)
-  - Re-enabled compartments module in main.tf with proper dependency order
-  - Updated compute module to accept environment-specific sizing via tfvars
-  - Resource allocation: Dev (1C/6GB) + Staging ephemeral (1C/6GB) + Prod (2C/6GB) = within 4C/24GB Always Free
-  - Per-environment state buckets: `familyshield-tfstate-{environment}`
-  - Bucket import logic handles existing resources without 409 conflicts
-- ✅ **Deployment pipeline stabilised (2026-04-15):** All three workflows follow the same 6-job pattern; 8 blockers resolved (output pollution, token delivery, SSH key encoding, state lock, cloud-init race, staging gate, docker-compose bootstrap). Full details in `docs/troubleshooting/infrastructure.md`.
-- ✅ **SSH security redesigned (2026-04-16):** Deploy-first, secure-last approach. Deploy with `0.0.0.0/0`, then `tighten-ssh-{env}` job restricts to admin IP (173.33.214.49/32) after smoke tests pass.
-- ✅ **Workflow architecture split (2026-04-16):** IaC and app workflows separate. Infra triggers on `iac/**`, app triggers on `apps/**`. App workflows use CF tunnel SSH (work regardless of NSG state). Mixed commits: `wait-for-infra` polls GitHub API for up to 10 min.
-- ✅ **Cloudflare migrated to OpenTofu IaC (2026-04-16):** `iac/cloudflare/` module manages tunnel, DNS, access apps, service token, WAF rules
-  - Separate state: `cloudflare/{env}/terraform.tfstate`
-  - Service token auto-written to GitHub Secrets
-  - Requires 5-scope API token (DNS, Tunnel, Access Apps, Service Tokens, Config Rules)
-  - cloudflared uses explicit `--service-token-id` / `--service-token-secret` flags (not env vars)
-  - Bot Fight Mode requires manual dashboard toggle (free tier, no API control)
-- 🔲 First full end-to-end successful dev pipeline run (infra-dev.yml: all 4 jobs green + deploy-dev.yml: all 5 jobs green)
-- 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
+- ✅ All core architecture decisions locked in place
+- ✅ IaC and app workflows split by path (`iac/**` vs `apps/**`)
+- ✅ Cloudflare migrated to OpenTofu IaC with singleton WAF ruleset fix
+- ✅ **Bootstrap improvements (2026-04-18):**
+  - Added `--no-deps` flag to `docker compose up` in bootstrap step (prevents conflicting service startups)
+  - Fixed GHCR image pull with `set +e` guards and exit code handling
+  - SSH key heredoc variable escaping for remote script execution
+- ✅ **VPN enrollment refactor (2026-04-18):**
+  - Renamed VPN hostname `headscale-dev` → `headscale` for Universal SSL certificate coverage
+  - Implemented URL-based Headscale enrollment (parent can generate keys from portal, device enrolls via URL)
+  - Removed `-prod` suffix from Cloudflare URLs (now clean: `adguard-dev.everythingcloud.ca`)
+- ✅ **Automation improvements:**
+  - `scheduled-health-check.yml` — daily service health monitoring with README status table updates
+  - `auto-fix-vulnerabilities.yml` — Dependabot auto-merge for security patches
+  - `security-scan.yml` — npm audit + OWASP ZAP scheduled scans
+- 🔲 First full end-to-end successful dev pipeline run (infra-dev.yml: all jobs green + deploy-dev.yml: all jobs green)
+- 🔲 Deploy-staging and deploy-prod workflows follow after dev passes
 
 **Application Development:**
 
-- ✅ API structure defined, enrichers for all 4 platforms (YouTube, Roblox, Discord, Twitch) — fully implemented
+- ✅ API fully implemented: enrichers (YouTube, Roblox, Discord, Twitch), alert dispatcher, LLM router with fallback
 - ✅ mitmproxy addon complete with 15 tests
-- ✅ Portal: Next.js 14 fully built (`apps/portal/`)
-  - Pages: dashboard (server-side), /devices (client-side), /alerts (server-side + client filter)
-  - Components: NavBar, RiskBadge, DeviceCard, AlertFeed (Supabase Realtime), AlertTable (filter + sort)
-  - lib/supabase.ts (browser singleton), lib/types.ts (portal-specific types)
-  - Playwright E2E tests: `tests/e2e/` — dashboard (7 tests), alerts (8 tests), devices (9 tests)
-  - playwright.config.ts — Chromium + Firefox + Mobile Chrome, CI-aware retry/workers
-- ✅ API: types.ts extended (age_restricted, mature_flag, description, channel_name, player_count, viewer_count)
-- ✅ API: alerts/dispatcher.ts complete — ntfy push + Supabase INSERT + Redis 5-min dedup
-- ✅ API: jest.config.js + full test suite (6 test files: youtube, roblox, discord, twitch enrichers + dispatcher + LLM router)
-- 🔲 Deploy-dev must successfully complete one full run end-to-end (IaC → Cloudflare → App)
-- 🔲 Deploy-staging and deploy-prod workflows must follow after dev passes (staging ephemeral teardown documented)
-- 🔲 Docker build workflows for api and portal images (build-and-push matrix job missing)
-- 🔲 Supabase tables must be created: `content_events`, `alerts`, `devices` (schema migration needed)
+- ✅ **Portal: Next.js 16 fully built (`apps/portal/`):**
+  - All 3 pages working: dashboard, /devices, /alerts
+  - All components: NavBar (active link styling), RiskBadge, DeviceCard, AlertFeed, AlertTable (filtering + sorting)
+  - Client-side data fetching via `useEffect` for Playwright test mockability
+  - Supabase Realtime integration (WebSocket live updates)
+  - RLS policies: anon SELECT on all tables, anon INSERT on devices (for MVP, replaced before prod)
+- ✅ **Portal E2E testing (Playwright):**
+  - 24 tests across 3 test files: dashboard (7), devices (9), alerts (8)
+  - Test environment: Chromium, Firefox, Mobile Chrome with CI retry logic
+  - Daily scheduled runs via `qa-e2e.yml` against live dev URL
+  - Weekly runs with OWASP ZAP DAST security scanning
+  - Local runs with mocked Supabase via `page.route()` interception
+- ✅ Supabase tables created: `devices`, `content_events`, `alerts` with RLS enabled
+- ✅ **Critical Next.js 16 patterns documented** (async `searchParams`, server vs client-side fetching, Playwright mocking)
+- 🔲 Phase 2 acceptance: Enrol one device, generate real traffic, see alerts end-to-end, parent receives ntfy notification
 
 ### 📋 Phase 3: E2E Testing & Production Release
 
