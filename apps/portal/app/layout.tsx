@@ -1,7 +1,20 @@
 import type { Metadata } from 'next'
+import { IBM_Plex_Sans, Bricolage_Grotesque } from 'next/font/google'
 import './globals.css'
 import { ThemeProvider } from '@/components/ThemeProvider'
 import { NavBar } from '../components/NavBar'
+
+const sans = IBM_Plex_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-sans',
+})
+
+const display = Bricolage_Grotesque({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-display',
+})
 
 export const metadata: Metadata = {
   title: 'FamilyShield — Parent Portal',
@@ -10,7 +23,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" className={`dark ${sans.variable} ${display.variable}`} suppressHydrationWarning>
       <body className="min-h-screen bg-slate-950 text-slate-100 antialiased transition-colors duration-200">
         <ThemeProvider>
           <a

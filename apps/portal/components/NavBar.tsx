@@ -25,7 +25,7 @@ function ShieldIcon() {
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className="text-teal-400"
+      className="text-accent-500"
     >
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     </svg>
@@ -108,7 +108,7 @@ export function NavBar() {
   return (
     <>
       <header
-        className="sticky top-0 z-50 border-b border-slate-700/50 bg-slate-900/80 backdrop-blur-md"
+        className="sticky top-0 z-50 border-b border-surface-200/10 bg-surface-100/40 backdrop-blur-md shadow-sm-glass"
         data-testid="navbar"
       >
         <nav
@@ -121,11 +121,11 @@ export function NavBar() {
             className="flex items-center gap-2.5 select-none group"
             data-testid="navbar-logo"
           >
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-500/10 ring-1 ring-teal-500/30 transition-colors group-hover:bg-teal-500/20">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent-500/10 ring-1 ring-accent-500/30 transition-all group-hover:bg-accent-500/20 group-hover:ring-accent-500/50 group-hover:shadow-lg group-hover:shadow-accent-500/20">
               <ShieldIcon />
             </div>
-            <span className="font-semibold text-slate-100 tracking-tight">
-              Family<span className="text-teal-400">Shield</span>
+            <span className="font-display font-bold text-slate-100 tracking-tight text-lg">
+              Family<span className="text-accent-500">Shield</span>
             </span>
           </Link>
 
@@ -140,15 +140,15 @@ export function NavBar() {
                     data-testid={`nav-link-${label.toLowerCase()}`}
                     aria-current={active ? 'page' : undefined}
                     className={[
-                      'relative inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                      'relative inline-flex items-center rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-200',
                       active
-                        ? 'text-teal-400'
-                        : 'text-slate-400 hover:text-slate-200',
+                        ? 'text-accent-400 bg-accent-500/10'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-surface-200/20',
                     ].join(' ')}
                   >
                     {label}
                     {active && (
-                      <span className="absolute inset-x-1 -bottom-px h-px bg-teal-400 rounded-full" />
+                      <span className="absolute inset-x-1 -bottom-px h-0.5 bg-gradient-to-r from-accent-500 to-orange-500 rounded-full" />
                     )}
                   </Link>
                 </li>
@@ -161,7 +161,7 @@ export function NavBar() {
             <button
               onClick={toggleTheme}
               aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-              className="rounded-lg p-1.5 text-slate-400 hover:text-slate-200 transition-colors"
+              className="rounded-lg p-2 text-slate-400 hover:text-accent-400 hover:bg-accent-500/10 transition-all duration-200"
               data-testid="theme-toggle"
             >
               {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
@@ -173,7 +173,7 @@ export function NavBar() {
               aria-expanded={menuOpen}
               aria-controls="mobile-nav"
               aria-label={menuOpen ? 'Close navigation menu' : 'Open navigation menu'}
-              className="sm:hidden rounded-lg p-1.5 text-slate-400 hover:text-slate-200 transition-colors"
+              className="sm:hidden rounded-lg p-2 text-slate-400 hover:text-accent-400 hover:bg-accent-500/10 transition-all duration-200"
               data-testid="mobile-menu-toggle"
             >
               <HamburgerIcon open={menuOpen} />
@@ -183,7 +183,7 @@ export function NavBar() {
 
         {/* Mobile Menu */}
         {menuOpen && (
-          <div className="sm:hidden border-t border-slate-700/50 bg-slate-800/50 backdrop-blur-sm">
+          <div className="sm:hidden border-t border-surface-200/10 bg-surface-100/30 backdrop-blur-sm animate-slide-up">
             <ul
               id="mobile-nav"
               className="flex flex-col gap-1 px-4 py-3"
@@ -200,10 +200,10 @@ export function NavBar() {
                       aria-current={active ? 'page' : undefined}
                       onClick={() => setMenuOpen(false)}
                       className={[
-                        'block rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                        'block rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200',
                         active
-                          ? 'text-teal-400 bg-teal-500/10'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/30',
+                          ? 'text-accent-400 bg-accent-500/10 border-l-2 border-l-accent-500'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-surface-200/20',
                       ].join(' ')}
                     >
                       {label}
