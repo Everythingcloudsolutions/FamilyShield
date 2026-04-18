@@ -371,11 +371,16 @@ jobs:
           sudo docker compose up -d adguard headscale redis influxdb grafana nodered ntfy
 
           # Attempt GHCR images — may not exist on first deploy (built by deploy-prod.yml)
-          if sudo docker compose pull api portal mitmproxy 2>/dev/null; then
+          # set +e so set -euo pipefail doesn't abort on a pull failure for missing images
+          set +e
+          sudo docker compose pull api portal mitmproxy 2>&1
+          GHCR_PULL_EXIT=$?
+          set -e
+          if [ "$GHCR_PULL_EXIT" -eq 0 ]; then
             sudo docker compose up -d --remove-orphans
             echo "✅ Full stack started"
           else
-            echo "⚠️  GHCR images not yet built — infra services running; deploy-prod.yml will start api/portal/mitmproxy"
+            echo "⚠️  GHCR images not yet built (exit $GHCR_PULL_EXIT) — infra services running; deploy-prod.yml will start api/portal/mitmproxy"
           fi
 
           sleep 10
