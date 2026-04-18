@@ -11,6 +11,13 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci && npm cache clean --force
 COPY . .
+# Build-time env vars for NEXT_PUBLIC_* — must be set before `next build`
+# so the client-side JS bundle contains the real values (not undefined).
+# These are intentionally public (Supabase anon key is browser-safe).
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 RUN npm run build
 
 # Runtime stage — arm64 image, no npm install needed
