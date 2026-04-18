@@ -5,12 +5,13 @@ import type { Device, DeviceProfile } from '../lib/types'
 
 interface DeviceCardProps {
   device: Device
+  isDemo?: boolean
 }
 
 const PROFILE_STYLE: Record<DeviceProfile, { label: string; color: string; desc: string }> = {
-  strict: { label: 'Strict', color: 'bg-green-500/10 text-green-400 ring-green-500/30', desc: 'Ages 6–10' },
-  moderate: { label: 'Moderate', color: 'bg-teal-500/10 text-teal-400 ring-teal-500/30', desc: 'Ages 11–14' },
-  guided: { label: 'Guided', color: 'bg-blue-500/10 text-blue-400 ring-blue-500/30', desc: 'Ages 15–17' },
+  strict: { label: 'Strict', color: 'bg-green-500/15 text-green-300 ring-green-500/40 border border-green-500/30', desc: 'Ages 6–10' },
+  moderate: { label: 'Moderate', color: 'bg-cyan-500/15 text-cyan-300 ring-cyan-500/40 border border-cyan-500/30', desc: 'Ages 11–14' },
+  guided: { label: 'Guided', color: 'bg-blue-500/15 text-blue-300 ring-blue-500/40 border border-blue-500/30', desc: 'Ages 15–17' },
 }
 
 function formatLastSeen(iso: string | undefined): string {
@@ -36,19 +37,30 @@ function DeviceIcon() {
   )
 }
 
-export function DeviceCard({ device }: DeviceCardProps) {
+export function DeviceCard({ device, isDemo }: DeviceCardProps) {
   const profile = PROFILE_STYLE[device.profile]
 
   return (
     <div
       data-testid="device-card"
       data-device-ip={device.device_ip}
-      className="group rounded-xl border border-slate-700/60 bg-slate-800/50 p-4 transition-all hover:border-teal-500/40 hover:bg-slate-800 hover:shadow-lg hover:shadow-teal-500/5"
+      role="article"
+      aria-label={device.device_name}
+      className="group card-premium p-4 cursor-pointer"
     >
+      {/* Demo badge */}
+      {isDemo && (
+        <div className="absolute top-3 right-3">
+          <span className="inline-flex items-center rounded-full bg-amber-500/20 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-400 ring-1 ring-amber-500/30">
+            Demo
+          </span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-3 flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-700/60 text-slate-400 group-hover:text-teal-400 transition-colors">
+        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-200/30 text-slate-400 group-hover:text-accent-400 group-hover:bg-accent-500/10 transition-all">
             <DeviceIcon />
           </div>
           <div className="min-w-0">
@@ -76,17 +88,18 @@ export function DeviceCard({ device }: DeviceCardProps) {
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between border-t border-slate-700/40 pt-3">
-        <span className="text-[11px] text-slate-500">
+      <div className="flex items-center justify-between border-t border-surface-200/20 pt-3 mt-3">
+        <span className="text-xs text-slate-500">
           <span className="text-slate-400">{profile.desc}</span>
           {' · '}
-          <span data-testid="device-last-seen">{formatLastSeen(device.last_seen)}</span>
+          <span data-testid="device-last-seen" className="text-slate-500">{formatLastSeen(device.last_seen)}</span>
         </span>
 
         <Link
           href={`/alerts?device=${device.device_ip}`}
           data-testid="device-alerts-link"
-          className="text-[11px] font-medium text-teal-400/70 hover:text-teal-400 transition-colors"
+          aria-label={`View alerts for ${device.device_name}`}
+          className="text-xs font-medium text-accent-400/80 hover:text-accent-300 transition-colors focus:ring-2 focus:ring-accent-500/30 focus:rounded focus:outline-none"
         >
           View alerts →
         </Link>

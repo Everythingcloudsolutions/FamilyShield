@@ -163,6 +163,9 @@ jobs:
           tags: |
             ghcr.io/everythingcloudsolutions/familyshield-${{ matrix.app }}:dev
             ghcr.io/everythingcloudsolutions/familyshield-${{ matrix.app }}:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/arm64 # OCI Always Free ARM
@@ -225,6 +228,10 @@ jobs:
           GHCR_USER: ${{ github.actor }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
         run: |
           SSH_HOST="ssh-dev.everythingcloud.ca"
 
@@ -235,6 +242,17 @@ jobs:
             ubuntu@"${SSH_HOST}" bash -s <<ENDSSH
           set -euo pipefail
           cd /opt/familyshield
+
+          # Write runtime API secrets to .env — docker compose reads this automatically
+          # Secrets baked into docker-compose.yaml by Terraform (SUPABASE_*, GROQ_*, ANTHROPIC_*)
+          # These four require shell interpolation from .env at compose-up time
+          cat > /opt/familyshield/.env <<'ENVEOF'
+          YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+          DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+          TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID}
+          TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET}
+          ENVEOF
+          chmod 600 /opt/familyshield/.env
 
           echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
@@ -288,7 +306,8 @@ jobs:
           fi
 
           echo "Checking API health..."
-          API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$BASE_URL/api/health" || echo "000")
+          API_URL="https://api-dev.everythingcloud.ca/health"
+          API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${CF_HEADERS[@]}" "$API_URL" || echo "000")
           if [[ "$API_STATUS" =~ ^(200|403)$ ]]; then
             echo "✅ API reachable (HTTP $API_STATUS)"
           else

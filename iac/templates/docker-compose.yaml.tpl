@@ -141,6 +141,7 @@ services:
       - GROQ_API_KEY=${groq_api_key}
       - ANTHROPIC_API_KEY=${anthropic_api_key}
       - YOUTUBE_API_KEY=$${YOUTUBE_API_KEY}
+      - DISCORD_BOT_TOKEN=$${DISCORD_BOT_TOKEN}
       - TWITCH_CLIENT_ID=$${TWITCH_CLIENT_ID}
       - TWITCH_CLIENT_SECRET=$${TWITCH_CLIENT_SECRET}
     depends_on:

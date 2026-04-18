@@ -1,0 +1,308 @@
+# .github/workflows/qa-e2e.yml
+#
+# Scheduled E2E quality assurance runs for FamilyShield.
+#
+# Cadence:
+#   - Daily at 06:00 ET (11:00 UTC)    → Full Playwright suite against live dev URL
+#   - Weekly on Sunday at 02:00 ET     → Playwright + OWASP ZAP DAST scan
+#   - workflow_dispatch (manual)       → Choose environment + optional ZAP
+#
+# Why GitHub Actions, not local VS Code?
+#   - No local Node/browser setup required
+#   - Tests run against the real deployed environment (not mocked)
+#   - Results are archived as artifacts and posted as job summaries
+#   - Failures create visible signal in the Actions tab without any local setup
+#
+# Tests in apps/portal/tests/e2e/ mock Supabase REST calls via Playwright route
+# intercepts (pr-check.yml local runs). This scheduled workflow runs WITHOUT
+# mocks — it hits the real Supabase behind the live portal, giving genuine
+# integration signal.
+
+name: "FamilyShield — QA E2E"
+
+on:
+  schedule:
+    # Daily: 11:00 UTC = 06:00 ET — before business hours
+    - cron: "0 11 * * *"
+    # Weekly ZAP: Sunday 07:00 UTC = 02:00 ET
+    - cron: "0 7 * * 0"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options: [ dev, staging ]
+      run_zap:
+        description: "Run OWASP ZAP DAST scan (takes ~15 min extra)"
+        required: false
+        default: "false"
+        type: choice
+        options: [ "true", "false" ]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: qa-e2e-${{ github.event.inputs.environment || 'dev' }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Determine target URL ────────────────────────────────────────────────────
+  setup:
+    name: "Resolve target environment"
+    runs-on: ubuntu-latest
+    outputs:
+      base_url: ${{ steps.resolve.outputs.base_url }}
+      environment: ${{ steps.resolve.outputs.environment }}
+      run_zap: ${{ steps.resolve.outputs.run_zap }}
+    steps:
+      - name: Resolve target
+        id: resolve
+        run: |
+          # workflow_dispatch: use chosen input
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+            ZAP="${{ github.event.inputs.run_zap }}"
+          # Sunday cron → run ZAP too
+          elif [ "$(date -u +%u)" = "7" ]; then
+            ENV="dev"
+            ZAP="true"
+          # Daily cron → Playwright only, no ZAP
+          else
+            ENV="dev"
+            ZAP="false"
+          fi
+
+          if [ "$ENV" = "staging" ]; then
+            BASE_URL="https://familyshield-staging.everythingcloud.ca"
+          else
+            BASE_URL="https://familyshield-dev.everythingcloud.ca"
+          fi
+
+          echo "base_url=$BASE_URL" >> $GITHUB_OUTPUT
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "run_zap=$ZAP" >> $GITHUB_OUTPUT
+          echo "🎯 Target: $ENV ($BASE_URL) | ZAP: $ZAP"
+
+  # ── Pre-flight health check ─────────────────────────────────────────────────
+  preflight:
+    name: "Pre-flight: portal + API reachable"
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - name: Check portal
+        run: |
+          BASE_URL="${{ needs.setup.outputs.base_url }}"
+          echo "Checking portal at $BASE_URL..."
+          for i in {1..6}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "CF-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}" \
+              -H "CF-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}" \
+              --max-time 15 "$BASE_URL" || echo "000")
+            if [[ "$STATUS" =~ ^(200|302|403)$ ]]; then
+              echo "✅ Portal reachable (HTTP $STATUS)"
+              exit 0
+            fi
+            echo "Attempt $i/6 — HTTP $STATUS, waiting 10s..."
+            sleep 10
+          done
+          echo "❌ Portal not reachable — aborting E2E run"
+          exit 1
+
+      - name: Check API
+        run: |
+          ENV="${{ needs.setup.outputs.environment }}"
+          API_URL="https://api-${ENV}.everythingcloud.ca/health"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "CF-Access-Client-Id: ${{ secrets.CF_ACCESS_CLIENT_ID }}" \
+            -H "CF-Access-Client-Secret: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}" \
+            --max-time 15 "$API_URL" || echo "000")
+          if [[ "$STATUS" =~ ^(200|403)$ ]]; then
+            echo "✅ API healthy (HTTP $STATUS)"
+          else
+            echo "❌ API health check failed (HTTP $STATUS)"
+            exit 1
+          fi
+
+  # ── Playwright E2E — Chromium ───────────────────────────────────────────────
+  e2e-chromium:
+    name: "Playwright — Chromium"
+    runs-on: ubuntu-latest
+    needs: [ setup, preflight ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/portal/package-lock.json
+
+      - name: Install dependencies
+        run: cd apps/portal && npm ci --prefer-offline
+
+      - name: Install Playwright Chromium
+        run: cd apps/portal && npx playwright install chromium --with-deps
+
+      - name: Run Playwright (Chromium)
+        run: cd apps/portal && npx playwright test --project chromium
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: ${{ needs.setup.outputs.base_url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-chromium-${{ needs.setup.outputs.environment }}
+          path: apps/portal/playwright-report/
+          retention-days: 14
+
+      - name: Upload failure artefacts
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-chromium-failures-${{ needs.setup.outputs.environment }}
+          path: apps/portal/test-results/
+          retention-days: 14
+
+  # ── Playwright E2E — Firefox ────────────────────────────────────────────────
+  e2e-firefox:
+    name: "Playwright — Firefox"
+    runs-on: ubuntu-latest
+    needs: [ setup, preflight ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/portal/package-lock.json
+
+      - name: Install dependencies
+        run: cd apps/portal && npm ci --prefer-offline
+
+      - name: Install Playwright Firefox
+        run: cd apps/portal && npx playwright install firefox --with-deps
+
+      - name: Run Playwright (Firefox)
+        run: cd apps/portal && npx playwright test --project firefox
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: ${{ needs.setup.outputs.base_url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-firefox-${{ needs.setup.outputs.environment }}
+          path: apps/portal/playwright-report/
+          retention-days: 14
+
+  # ── Playwright E2E — Mobile Chrome ─────────────────────────────────────────
+  e2e-mobile:
+    name: "Playwright — Mobile Chrome (Pixel 5)"
+    runs-on: ubuntu-latest
+    needs: [ setup, preflight ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/portal/package-lock.json
+
+      - name: Install dependencies
+        run: cd apps/portal && npm ci --prefer-offline
+
+      - name: Install Playwright Chromium (for mobile emulation)
+        run: cd apps/portal && npx playwright install chromium --with-deps
+
+      - name: Run Playwright (Mobile Chrome)
+        run: cd apps/portal && npx playwright test --project mobile-chrome
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: ${{ needs.setup.outputs.base_url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-mobile-${{ needs.setup.outputs.environment }}
+          path: apps/portal/playwright-report/
+          retention-days: 14
+
+  # ── OWASP ZAP DAST Scan (weekly + manual opt-in) ───────────────────────────
+  # Runs OWASP ZAP baseline scan against the portal.
+  # Baseline scan: crawls the app, checks for OWASP Top 10, does NOT attack it.
+  # Results are uploaded as artifacts. Failures are warnings (soft_fail) so
+  # they never block a deploy — use findings to drive Phase B hardening.
+  owasp-zap:
+    name: "OWASP ZAP — DAST baseline scan"
+    runs-on: ubuntu-latest
+    needs: [ setup, preflight ]
+    if: needs.setup.outputs.run_zap == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ needs.setup.outputs.base_url }}
+          # Passive scan only — no active attack
+          rules_file_name: ".github/zap-rules.tsv"
+          cmd_options: "-a"
+          fail_action: false # Warn only — don't fail the workflow
+          artifact_name: zap-report-${{ needs.setup.outputs.environment }}
+
+  # ── Summary ─────────────────────────────────────────────────────────────────
+  summary:
+    name: "QA summary"
+    runs-on: ubuntu-latest
+    needs: [ setup, e2e-chromium, e2e-firefox, e2e-mobile ]
+    if: always()
+    steps:
+      - name: Post summary
+        run: |
+          CHROMIUM="${{ needs.e2e-chromium.result }}"
+          FIREFOX="${{ needs.e2e-firefox.result }}"
+          MOBILE="${{ needs.e2e-mobile.result }}"
+          ENV="${{ needs.setup.outputs.environment }}"
+          BASE_URL="${{ needs.setup.outputs.base_url }}"
+
+          icon() { [ "$1" = "success" ] && echo "✅" || echo "❌"; }
+
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## FamilyShield QA E2E — $(date -u +"%Y-%m-%d %H:%M UTC")
+
+          **Environment:** \`$ENV\` → $BASE_URL
+
+          | Browser | Result |
+          |---|---|
+          | Chromium | $(icon $CHROMIUM) $CHROMIUM |
+          | Firefox  | $(icon $FIREFOX) $FIREFOX |
+          | Mobile Chrome (Pixel 5) | $(icon $MOBILE) $MOBILE |
+
+          **Artifacts:** Playwright HTML reports available in the Actions run artifacts tab (retained 14 days).
+          EOF
+
+          # Fail the summary job if any browser failed
+          if [ "$CHROMIUM" != "success" ] || [ "$FIREFOX" != "success" ] || [ "$MOBILE" != "success" ]; then
+            echo "❌ One or more browser suites failed"
+            exit 1
+          fi
+          echo "✅ All browser suites passed"

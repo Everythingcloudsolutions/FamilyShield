@@ -53,7 +53,7 @@ test.describe('Dashboard', () => {
     await page.goto('/')
     const feed = page.getByTestId('alert-feed')
     await expect(feed).toBeVisible()
-    await expect(feed).toContainText('No alerts yet')
+    await expect(feed).toContainText('All clear — no alerts yet')
   })
 
   test('shows empty device state with enrol CTA', async ({ page }) => {
@@ -64,8 +64,8 @@ test.describe('Dashboard', () => {
   test('active nav link is highlighted on dashboard', async ({ page }) => {
     await page.goto('/')
     const dashLink = page.getByTestId('nav-link-dashboard')
-    // Active link has teal colour class applied
-    await expect(dashLink).toHaveClass(/text-teal-400/)
+    // Active link has accent colour class applied
+    await expect(dashLink).toHaveClass(/text-accent-400/)
   })
 
   test('navigates to devices page from nav', async ({ page }) => {

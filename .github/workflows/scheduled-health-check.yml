@@ -33,84 +33,109 @@ jobs:
           chmod +x scripts/check-health.sh
           bash scripts/check-health.sh all | tee /tmp/health-report.txt
 
-      - name: Parse health report
-        id: parse
-        run: |
-          # Count healthy services
-          DEV_HEALTHY=$(grep -c "✅" /tmp/health-report.txt || echo "0")
-          DEV_TOTAL=$(grep -E "^\| [A-Za-z]" /tmp/health-report.txt | head -15 | wc -l)
-
-          echo "dev_healthy=$DEV_HEALTHY" >> "$GITHUB_OUTPUT"
-          echo "dev_total=$DEV_TOTAL" >> "$GITHUB_OUTPUT"
-
       - name: Update README.md
         run: |
-          # Check if health status section exists
-          if grep -q "## 🏥 Health Status" README.md; then
-            # Replace existing health section
           python3 <<'EOF'
           import re
           from datetime import datetime
 
+          README_PATH = 'README.md'
+          REPORT_PATH = '/tmp/health-report.txt'
+
+          with open(README_PATH, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+          with open(REPORT_PATH, 'r', encoding='utf-8') as f:
+            report = f.read()
+
+          def extract_env_table(text: str, env: str) -> str:
+            pattern = rf"## Environment: `{env}`\n\n(\| Service \| Status \| Response Time \|\n\|[-| ]+\n(?:\|.*\n)+)"
+            m = re.search(pattern, text)
+            if m:
+              return m.group(1).strip()
+            return "| Service | Status | Response Time |\n|---------|--------|----------------|\n| (no data) | ⚠️ unknown | n/a |"
+
+          dev_table = extract_env_table(report, 'dev')
+          prod_table = extract_env_table(report, 'prod')
+
+          timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+
+          health_section = "\n".join([
+            "## 🏥 Health Status",
+            "",
+            f"**Last checked:** {timestamp}",
+            "",
+            "### Dev Environment",
+            "",
+            "<!-- HEALTH_TABLE_DEV_START -->",
+            dev_table,
+            "<!-- HEALTH_TABLE_DEV_END -->",
+            "",
+            "### Prod Environment",
+            "",
+            "<!-- HEALTH_TABLE_PROD_START -->",
+            prod_table,
+            "<!-- HEALTH_TABLE_PROD_END -->",
+            "",
+            "---",
+          ])
+
+          if '## 🏥 Health Status' in content:
+            pattern = r'## 🏥 Health Status[\s\S]*?(?=\n## What Is FamilyShield\?)'
+            content = re.sub(pattern, health_section + "\n", content)
+          else:
+            insert_before = '\n## What Is FamilyShield?'
+            idx = content.find(insert_before)
+            if idx == -1:
+              content = content.rstrip() + "\n\n" + health_section + "\n"
+            else:
+              content = content[:idx] + "\n" + health_section + "\n" + content[idx + 1:]
+
+          with open(README_PATH, 'w', encoding='utf-8') as f:
+            f.write(content)
+          EOF
+
+      - name: Validate README health section structure
+        run: |
+          python3 <<'EOF'
+          import re
+          import sys
+
           with open('README.md', 'r', encoding='utf-8') as f:
             content = f.read()
 
-          with open('/tmp/health-report.txt', 'r', encoding='utf-8') as f:
-            health_report = f.read()
+          section_count = len(re.findall(r'^## 🏥 Health Status\b', content, flags=re.MULTILINE))
+          if section_count != 1:
+            print(f"ERROR: Expected exactly 1 health section, found {section_count}")
+            sys.exit(1)
 
-          timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-          health_section = f"""## 🏥 Health Status
+          checks = {
+            '### Dev Environment': content.count('### Dev Environment'),
+            '### Prod Environment': content.count('### Prod Environment'),
+            '<!-- HEALTH_TABLE_DEV_START -->': content.count('<!-- HEALTH_TABLE_DEV_START -->'),
+            '<!-- HEALTH_TABLE_DEV_END -->': content.count('<!-- HEALTH_TABLE_DEV_END -->'),
+            '<!-- HEALTH_TABLE_PROD_START -->': content.count('<!-- HEALTH_TABLE_PROD_START -->'),
+            '<!-- HEALTH_TABLE_PROD_END -->': content.count('<!-- HEALTH_TABLE_PROD_END -->'),
+          }
 
-          **Last checked:** {timestamp}
+          bad = {k: v for k, v in checks.items() if v != 1}
+          if bad:
+            print('ERROR: README health markers/headings are malformed:')
+            for k, v in bad.items():
+              print(f"  - {k}: found {v}, expected 1")
+            sys.exit(1)
 
-          {health_report}
+          dev_start = content.index('<!-- HEALTH_TABLE_DEV_START -->')
+          dev_end = content.index('<!-- HEALTH_TABLE_DEV_END -->')
+          prod_start = content.index('<!-- HEALTH_TABLE_PROD_START -->')
+          prod_end = content.index('<!-- HEALTH_TABLE_PROD_END -->')
 
-          ---
-          """
+          if not (dev_start < dev_end < prod_start < prod_end):
+            print('ERROR: README health table marker order is invalid')
+            sys.exit(1)
 
-          pattern = r'## 🏥 Health Status.*?(?=\n## |\Z)'
-          content = re.sub(pattern, health_section.strip(), content, flags=re.DOTALL)
-
-          with open('README.md', 'w', encoding='utf-8') as f:
-            f.write(content)
+          print('README health section structure is valid')
           EOF
-          else
-            # Insert health section after title/intro (before first ##)
-          python3 <<'EOF'
-          from datetime import datetime
-
-          with open('README.md', 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-
-          with open('/tmp/health-report.txt', 'r', encoding='utf-8') as f:
-            health_report = f.read()
-
-          timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-          health_section = f"""## 🏥 Health Status
-
-          **Last checked:** {timestamp}
-
-          {health_report}
-
-          ---
-
-          """
-
-          insert_pos = 0
-          for i, line in enumerate(lines):
-            if line.startswith('## ') and i > 0:
-              insert_pos = i
-              break
-
-          if insert_pos == 0:
-            insert_pos = len(lines)
-
-          lines.insert(insert_pos, health_section)
-
-          with open('README.md', 'w', encoding='utf-8') as f:
-            f.writelines(lines)
-          EOF
-          fi
 
       - name: Commit and push
         run: |

@@ -22,6 +22,7 @@
   - [9. I added a new device but it's not being monitored](#9-i-added-a-new-device-but-its-not-being-monitored)
   - [10. Activity shows the wrong child](#10-activity-shows-the-wrong-child)
 - [Section 2: Developer / Technical Troubleshooting](#section-2-developer--technical-troubleshooting)
+  - [Quick Health Check](#quick-health-check-start-here)
   - [Checking Container Health](#checking-container-health)
   - [AdGuard Home Issues](#adguard-home-issues)
   - [Headscale / Tailscale VPN Issues](#headscale--tailscale-vpn-issues)
@@ -33,6 +34,15 @@
   - [Node-RED Issues](#node-red-issues)
   - [OCI VM Issues](#oci-vm-issues)
   - [GitHub Actions CI/CD Issues](#github-actions-cicd-issues)
+  - [Issue: Device Can't Connect to Tailscale](#issue-device-cant-connect-to-tailscale)
+  - [Issue: Device Connected to Tailscale but No Internet](#issue-device-connected-to-tailscale-but-no-internet)
+  - [Issue: mitmproxy Not Intercepting HTTPS](#issue-mitmproxy-not-intercepting-https)
+  - [Issue: API Not Receiving Events from mitmproxy](#issue-api-not-receiving-events-from-mitmproxy)
+  - [Issue: Alerts Not Appearing in Portal](#issue-alerts-not-appearing-in-portal)
+  - [Issue: ntfy Not Sending Alerts](#issue-ntfy-not-sending-alerts)
+  - [Issue: High Memory Usage](#issue-high-memory-usage)
+  - [Service Restart Order](#service-restart-order)
+  - [Still Broken? Debug Checklist](#still-broken-debug-checklist)
 
 ---
 
@@ -264,6 +274,37 @@ This section is for the developer (Mohit). It assumes SSH access to the OCI VM a
 
 **OCI VM:** Ubuntu 22.04 ARM64, ca-toronto-1
 **SSH:** `ssh ubuntu@<vm-public-ip>` (or via Tailscale: `ssh ubuntu@100.x.x.x`)
+
+---
+
+### Quick Health Check (Start Here)
+
+Run this every time something breaks:
+
+```bash
+ssh -i ~/.ssh/familyshield ubuntu@<vm-ip>
+
+# All services running?
+docker compose ps
+
+# Expected output:
+# NAME                    STATUS
+# familyshield-adguard    Up (healthy)
+# familyshield-headscale  Up (healthy)
+# familyshield-mitmproxy  Up (healthy)
+# familyshield-redis      Up (healthy)
+# familyshield-api        Up (healthy)
+# familyshield-ntfy       Up (healthy)
+# familyshield-portal     Up (healthy)
+
+# Any failed?
+docker compose ps --filter "status=exited"
+
+# Check last 50 lines of logs
+docker compose logs --tail 50 --timestamps
+```
+
+**If any service is DOWN:** Jump to that service's section below.
 
 ---
 
@@ -1731,6 +1772,806 @@ curl -H "Authorization: Bearer $GITHUB_TOKEN" \
 # Pull and test a specific image
 docker pull ghcr.io/everythingcloudsolutions/familyshield-api:latest
 docker run --rm ghcr.io/everythingcloudsolutions/familyshield-api:latest node -e "console.log('OK')"
+```
+
+---
+
+### Issue: Device Can't Connect to Tailscale
+
+**Symptom**
+
+- Child installs Tailscale + enters preauth key
+- Gets error: "Failed to connect" or "Authentication failed"
+- Device has internet (WiFi works, other apps can connect)
+
+**Diagnosis**
+
+**Step 1: Is Headscale running?**
+
+```bash
+docker ps | grep headscale
+# Should show: familyshield-headscale ... Up
+
+docker logs familyshield-headscale --tail 20
+# Should show no error logs
+```
+
+**Step 2: Is preauth key valid?**
+
+```bash
+docker exec familyshield-headscale headscale preauthkeys list
+
+# Should show something like:
+# Key              | User   | Reusable | Expiration
+# tskey-client-... | parent | true     | 2027-04-18
+
+# Check expiration is in future
+```
+
+**Step 3: Can child reach Headscale?**
+
+```bash
+# From parent's machine:
+nslookup headscale-dev.everythingcloud.ca
+# Should resolve to VM IP
+
+# Or test from child's device:
+# Open Terminal app → ping headscale-dev.everythingcloud.ca
+# Should get responses (if ping enabled)
+```
+
+**Step 4: Check Cloudflare tunnel is routing correctly**
+
+```bash
+# If tunnel exists:
+cloudflared tunnel ingress validate
+
+# Should show headscale route is configured
+```
+
+**Solutions**
+
+**Solution 1: Preauth key expired**
+
+```bash
+# Generate new key
+docker exec familyshield-headscale headscale preauthkeys create \
+  --user 1 --reusable --expiration 8760h
+
+# Output: tskey-client-NEWKEY
+# Give to parent, retry on child device
+```
+
+**Solution 2: Headscale container crashed**
+
+```bash
+# Restart it
+docker restart familyshield-headscale
+
+# Verify health
+docker exec familyshield-headscale headscale nodes list
+# Should work
+```
+
+**Solution 3: Headscale can't reach external Tailscale servers**
+
+```bash
+# Check container networking
+docker network inspect familyshield_default
+
+# Verify it has internet access
+docker exec familyshield-headscale curl https://tailscale.com
+# Should get HTTP 200
+```
+
+**Solution 4: DNS resolution broken**
+
+```bash
+# From VM:
+nslookup headscale-dev.everythingcloud.ca 8.8.8.8
+# If fails, contact DevOps to check Cloudflare routing
+
+# Workaround: Use VM IP directly in Tailscale app
+# Instead of "headscale-dev.everythingcloud.ca"
+# Use: 40.233.115.22:8080 (example VM IP)
+```
+
+---
+
+### Issue: Device Connected to Tailscale but No Internet
+
+**Symptom**
+
+- Tailscale shows "Connected"
+- Device has VPN IP (e.g., `100.64.1.5`)
+- But can't browse websites or DNS queries fail
+
+**Diagnosis**
+
+**Step 1: Verify device has correct DNS**
+
+```bash
+# From child device (on Tailscale):
+# iOS: Settings → Wi-Fi → (network) → DNS
+# Android: Settings → Network & Internet → Advanced → DNS
+
+# Should show: AdGuard container IP OR
+#             127.0.0.1 (if DNS is proxied locally)
+```
+
+**Step 2: Test DNS directly**
+
+```bash
+# From child device:
+# iOS: App: "DNS" app or use Terminal
+# Android: Use ping app or terminal
+
+# Test: nslookup google.com 172.20.0.2
+# Should return: 142.251.41.14
+
+# If hangs or times out: DNS not responding
+```
+
+**Step 3: Is AdGuard running?**
+
+```bash
+docker ps | grep adguard
+# Should show: familyshield-adguard ... Up
+
+docker logs familyshield-adguard --tail 20
+# Should show no errors
+```
+
+**Step 4: Check transparent proxy / iptables**
+
+```bash
+# Verify traffic is being routed through mitmproxy
+iptables -L -n | grep 8888
+# Should show rules for port 8888
+
+# If empty: iptables rules not configured
+```
+
+**Solutions**
+
+**Solution 1: AdGuard not responding on DNS**
+
+```bash
+# Verify DNS port is open
+docker exec familyshield-adguard netstat -tlnp | grep 53
+# Should show: 0.0.0.0:53
+
+# If not listening on 53:
+# Check AdGuard setup (port should be 53, not 5053)
+# Edit `/opt/familyshield/adguard/AdGuardHome.yaml`:
+# dns:
+#   port: 53  # NOT 5053
+
+docker restart familyshield-adguard
+```
+
+**Solution 2: Firewall blocking DNS**
+
+```bash
+# On VM, check firewall allows UDP 53
+sudo ufw status
+# Should show: dns (53) ALLOW
+
+# If not:
+sudo ufw allow 53/udp
+sudo ufw reload
+```
+
+**Solution 3: Tailscale DNS config not pushed to device**
+
+```bash
+# On VM:
+docker exec familyshield-headscale cat /etc/headscale/config.yaml | grep -A 5 dns
+
+# Should show:
+# dns:
+#   nameservers:
+#     - 172.20.0.2  # AdGuard
+
+# If AdGuard IP is wrong, update config and restart Headscale
+
+docker restart familyshield-headscale
+
+# On child: Tailscale settings → Clear saved settings → reconnect
+```
+
+**Solution 4: Docker bridge network routing broken**
+
+```bash
+# Verify AdGuard container can be reached from Tailscale network
+docker exec familyshield-api curl http://172.20.0.2:80
+# Should return AdGuard web UI HTML
+
+# If times out: container IP wrong or network isolation issue
+```
+
+---
+
+### Issue: mitmproxy Not Intercepting HTTPS
+
+**Symptom**
+
+- Child has Tailscale + mitmproxy cert installed
+- Child browses HTTPS sites (YouTube, etc.)
+- But mitmproxy not logging traffic
+- API not receiving content IDs
+
+**Diagnosis**
+
+**Step 1: Is certificate installed on device?**
+
+```bash
+# Ask parent to verify:
+# iOS: Settings → General → VPN & Device Management → check "mitmproxy" exists
+# Android: Settings → Security → Device Admin → check mitmproxy
+
+# If not found: certificate installation failed
+```
+
+**Step 2: Is mitmproxy running?**
+
+```bash
+docker ps | grep mitmproxy
+# Should show: familyshield-mitmproxy ... Up
+
+docker logs familyshield-mitmproxy --tail 50
+# Should show proxy listening on port 8888
+```
+
+**Step 3: Are HTTPS requests hitting mitmproxy?**
+
+```bash
+# Watch real-time traffic
+docker exec familyshield-mitmproxy tail -f ~/.mitmproxy/flow.log 2>/dev/null | head -20
+
+# If no output: traffic not reaching mitmproxy
+```
+
+**Step 4: Check transparent proxy is configured**
+
+```bash
+# Verify iptables routes traffic to mitmproxy
+sudo iptables -L -n -v | grep -i redir
+# Should show rules redirecting port 443/80 to 8888/8889
+
+# If empty: iptables not configured (cloud-init issue)
+```
+
+**Step 5: Can device reach mitmproxy?**
+
+```bash
+# From child device (on Tailscale):
+# curl http://mitm.it:8080
+# Should return certificate download page
+
+# If times out: mitmproxy not reachable from VPN
+```
+
+**Solutions**
+
+**Solution 1: Certificate not installed**
+
+```bash
+# Parent retry:
+# 1. Safari → http://mitm.it
+# 2. Tap correct OS (iOS/Android)
+# 3. Follow installation steps
+# 4. Verify in Settings
+
+# If still fails: cert may be corrupted
+# Delete from device, retry download
+```
+
+**Solution 2: iptables rules missing**
+
+```bash
+# Verify cloud-init ran successfully
+sudo systemctl status cloud-final
+# Should show: "active (exited)"
+
+# If failed:
+cat /var/log/cloud-init-output.log | tail -50
+# Look for iptables commands
+
+# Manual fix:
+sudo iptables -t nat -A OUTPUT -p tcp --dport 80 -j REDIRECT --to-port 8080
+sudo iptables -t nat -A OUTPUT -p tcp --dport 443 -j REDIRECT --to-port 8443
+
+# Persist (cloud-init should do this):
+sudo iptables-save | sudo tee /etc/iptables/rules.v4
+sudo systemctl restart netfilter-persistent
+```
+
+**Solution 3: mitmproxy cert expired**
+
+```bash
+# Check cert validity
+docker exec familyshield-mitmproxy openssl x509 -in ~/.mitmproxy/mitmproxy-ca.pem -text -noout | grep -A 2 "Not"
+# Should show expiration is in future (years)
+
+# If expired (unlikely unless VM is very old):
+docker exec familyshield-mitmproxy rm ~/.mitmproxy/mitmproxy-ca*
+docker restart familyshield-mitmproxy
+# Child must re-download cert from http://mitm.it
+```
+
+**Solution 4: Wrong transparent proxy mode**
+
+```bash
+# Check mitmproxy command
+docker inspect familyshield-mitmproxy | grep "Cmd"
+# Should show: "mitmproxy --listen-port 8888 --mode transparent"
+
+# If mode is wrong, fix docker-compose and rebuild:
+docker compose down
+docker compose up -d
+```
+
+---
+
+### Issue: API Not Receiving Events from mitmproxy
+
+**Symptom**
+
+- mitmproxy is running and logging traffic
+- But Redis queue is empty
+- API not processing events
+- Alerts not being created
+
+**Diagnosis**
+
+**Step 1: Is Redis running?**
+
+```bash
+docker ps | grep redis
+# Should show: familyshield-redis ... Up
+
+docker logs familyshield-redis --tail 20
+# Should show no errors
+```
+
+**Step 2: Any events in Redis?**
+
+```bash
+docker exec familyshield-redis redis-cli
+# Inside redis-cli:
+> KEYS *
+# Should show keys like: contentevents, alerts, etc
+
+> LLEN contentevents
+# If > 0: events are queued
+
+> LRANGE contentevents 0 -1
+# Shows actual events in queue
+```
+
+**Step 3: Is API running?**
+
+```bash
+docker ps | grep api
+# Should show: familyshield-api ... Up
+
+docker logs familyshield-api --tail 50
+# Should show: "Polling Redis..." and processing events
+
+# If errors: check YOUTUBE_API_KEY, TWITCH_CLIENT_ID secrets
+```
+
+**Step 4: Does mitmproxy know about Redis?**
+
+```bash
+docker logs familyshield-mitmproxy --tail 50 | grep -i redis
+# Should show successful Redis connection
+
+# Or check mitmproxy config:
+cat /etc/familyshield/mitmproxy/familyshield_addon.py | grep redis
+# Should reference Redis host:port
+```
+
+**Solutions**
+
+**Solution 1: mitmproxy not connecting to Redis**
+
+```bash
+# Verify Redis is reachable from mitmproxy container
+docker exec familyshield-mitmproxy ping familyshield-redis
+# Or: telnet familyshield-redis 6379
+
+# If fails: Docker network broken
+
+# Fix: restart both
+docker restart familyshield-redis familyshield-mitmproxy
+```
+
+**Solution 2: API not polling Redis**
+
+```bash
+# Check API environment variables
+docker exec familyshield-api env | grep -i redis
+# Should show: REDIS_URL=redis://familyshield-redis:6379
+
+# If empty: env not set
+
+# Fix: set in docker-compose and restart
+docker compose down
+docker compose up -d familyshield-api
+```
+
+**Solution 3: Events not being generated by mitmproxy**
+
+```bash
+# Verify mitmproxy is actually intercepting traffic
+# Have child open browser → visit youtube.com while watching:
+
+docker logs familyshield-mitmproxy --tail 30 --follow
+# Should show HTTP request logs
+
+# If no logs: traffic not reaching mitmproxy (see HTTPS interception section)
+```
+
+**Solution 4: API missing API keys**
+
+```bash
+# Check secrets are set
+docker exec familyshield-api env | grep API_KEY
+# Should show: YOUTUBE_API_KEY=AIzaSy...
+
+# If empty: GitHub secret not set
+
+# Fix:
+# GitHub → Settings → Secrets & Variables → Actions
+# Ensure YOUTUBE_API_KEY, TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET exist
+
+# Re-run deployment workflow
+```
+
+---
+
+### Issue: Alerts Not Appearing in Portal
+
+**Symptom**
+
+- API is processing events (logs show no errors)
+- Alerts table is being written to Supabase
+- But parent dashboard is empty
+
+**Diagnosis**
+
+**Step 1: Do alerts exist in Supabase?**
+
+```sql
+-- Supabase Dashboard → SQL Editor:
+SELECT COUNT(*) FROM alerts;
+-- Should show > 0
+
+-- If 0: API not writing to Supabase
+-- If > 0: data exists, may be RLS issue or portal bug
+```
+
+**Step 2: Check RLS policies**
+
+```sql
+-- Supabase SQL Editor:
+SELECT * FROM pg_policies WHERE tablename = 'alerts';
+-- Should show a policy restricting to parent_id = auth.uid()
+
+-- Test policy allows access:
+-- Log in as parent in portal
+-- DevTools → Network → check SQL query succeeds (200 OK)
+```
+
+**Step 3: Is portal making the right query?**
+
+```bash
+# Parent opens portal, DevTools (F12) → Network
+# Look for: /rest/v1/alerts?...
+# Should see: 200 OK response with data
+
+# If 401 Unauthorized: auth not working
+# If empty array: no data matching current user
+```
+
+**Step 4: Check parent ID is set correctly**
+
+```sql
+-- In Supabase alerts table:
+SELECT DISTINCT device_ip FROM alerts LIMIT 5;
+-- Should show device IPs like: 100.64.1.5
+
+-- Check if alerts match parent's devices:
+SELECT * FROM alerts WHERE device_ip = '100.64.1.5' LIMIT 1;
+-- Should return data
+```
+
+**Solutions**
+
+**Solution 1: API not writing to Supabase**
+
+```bash
+# Check API logs
+docker logs familyshield-api --tail 50 | grep -i supabase
+# Should show: "Storing alert in Supabase"
+
+# If errors like "Connection refused":
+# Verify Supabase URL is correct
+
+docker exec familyshield-api env | grep SUPABASE_URL
+# Should show: SUPABASE_URL=https://xxxx.supabase.co
+
+# Test connection:
+docker exec familyshield-api curl https://xxxx.supabase.co/rest/v1/
+# Should return 200 (not 404)
+```
+
+**Solution 2: RLS blocking parent from seeing data**
+
+```sql
+-- Temporarily disable RLS to test:
+ALTER TABLE alerts DISABLE ROW LEVEL SECURITY;
+
+-- Retry in portal → should see all alerts
+
+-- If it works, RLS policy is too strict
+-- Check and fix the policy:
+DROP POLICY "parent_sees_own_alerts" ON alerts;
+
+CREATE POLICY "parent_sees_own_alerts" ON alerts
+  FOR SELECT
+  USING (
+    device_ip IN (
+      SELECT device_ip FROM devices WHERE parent_id = auth.uid()
+    )
+  );
+
+ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
+```
+
+**Solution 3: Parent auth not working**
+
+```bash
+# Check Supabase auth is configured
+docker exec familyshield-portal env | grep SUPABASE
+# Should show: SUPABASE_URL, SUPABASE_ANON_KEY
+
+# Test auth in portal:
+# Open portal → try to log in
+# DevTools → Network → check /auth/v1/ requests
+# Should see 200 OK
+
+# If 401: SUPABASE_ANON_KEY may be wrong
+```
+
+**Solution 4: Wrong device IP in alerts**
+
+```sql
+-- Check which IPs are in alerts vs which devices parent owns:
+SELECT DISTINCT a.device_ip FROM alerts a
+LEFT JOIN devices d ON a.device_ip = d.device_ip
+WHERE d.parent_id IS NULL;
+-- Any rows here = orphaned alerts with no matching device record
+-- Fix: update devices table to include the correct IP
+```
+
+---
+
+### Issue: ntfy Not Sending Alerts
+
+**Symptom**
+
+- API detects high-risk content
+- Calls ntfy successfully (no errors in logs)
+- But parent's phone doesn't receive notification
+
+**Diagnosis**
+
+**Step 1: Is ntfy running?**
+
+```bash
+docker ps | grep ntfy
+# Should show: familyshield-ntfy ... Up
+
+docker logs familyshield-ntfy --tail 20
+```
+
+**Step 2: Did API call ntfy?**
+
+```bash
+docker logs familyshield-api --tail 50 | grep -i ntfy
+# Should show: "Sending to ntfy: POST /familyshield-alerts"
+
+# If no output: API didn't reach ntfy code
+```
+
+**Step 3: Did ntfy receive the call?**
+
+```bash
+docker logs familyshield-ntfy --tail 50 | grep POST
+# Should show: "POST /familyshield-alerts HTTP/1.1 200"
+
+# If 404 or no POST: message didn't arrive
+```
+
+**Step 4: Are there subscribers?**
+
+```bash
+# Check ntfy subscribers to the topic
+docker exec familyshield-ntfy sqlite3 /var/lib/ntfy/ntfy.db \
+  "SELECT username, topic FROM subscriptions WHERE topic='familyshield-alerts';"
+
+# Should show: parent | familyshield-alerts
+# If empty: parent never subscribed
+```
+
+**Step 5: Is parent's phone subscribed?**
+
+```bash
+# Parent opens ntfy app
+# Should see: "familyshield-alerts" in subscription list
+# If not: not subscribed
+
+# Parent re-subscribe:
+# Tap "+" → enter "familyshield-alerts" → "Subscribe"
+```
+
+**Solutions**
+
+**Solution 1: Parent not subscribed**
+
+```bash
+# Parent opens ntfy app
+# Tap "+" or "Subscribe"
+# Enter: familyshield-alerts
+# Subscribe
+
+# Or via web:
+# https://notify-dev.everythingcloud.ca/familyshield-alerts
+# Tap "Subscribe" button at bottom
+```
+
+**Solution 2: ntfy not receiving calls from API**
+
+```bash
+# Check API knows ntfy URL
+docker exec familyshield-api env | grep NTFY_URL
+# Should show: NTFY_URL=http://familyshield-ntfy:2586
+
+# Verify connectivity:
+docker exec familyshield-api curl http://familyshield-ntfy:2586/
+# Should get response (not "Connection refused")
+```
+
+**Solution 3: Parent's phone Do Not Disturb is on**
+
+```bash
+# Parent phone:
+# iOS: Control Center → Do Not Disturb (crescent moon icon) → turn OFF
+# Android: Settings → Sounds & Vibration → Do Not Disturb → OFF
+
+# Retry: API should detect high-risk content
+# ntfy app should show notification
+```
+
+**Solution 4: ntfy notifications filtered by app**
+
+```bash
+# Parent's phone:
+# iOS: Settings → ntfy → Notifications → Allow Notifications (ON)
+# Android: Settings → Apps → ntfy → Notifications → ON
+
+# Clear app cache if stuck:
+# iOS: offload app (Settings → App → Offload) then reinstall
+# Android: Settings → Apps → ntfy → Storage → Clear Cache
+```
+
+---
+
+### Issue: High Memory Usage
+
+**Symptom**
+
+- VM running slowly
+- `free -h` shows little available memory
+- Docker containers being killed
+
+**Diagnosis**
+
+```bash
+# Check memory per container
+docker stats --no-stream
+
+# Should show each container's memory usage
+
+# Total memory available:
+free -h
+# Limit: 24GB (OCI A1.Flex Always Free)
+
+# If > 20GB used: something is leaking memory
+```
+
+**Solutions**
+
+**Solution 1: Redis consuming too much**
+
+```bash
+# Check Redis memory
+docker exec familyshield-redis redis-cli INFO memory
+# Look for: used_memory_human
+
+# If > 1GB: old data not being evicted
+
+# Check Redis eviction policy:
+docker exec familyshield-redis redis-cli CONFIG GET maxmemory-policy
+# Should be: allkeys-lru or similar
+
+# If not set:
+docker exec familyshield-redis redis-cli CONFIG SET maxmemory 2gb
+docker exec familyshield-redis redis-cli CONFIG SET maxmemory-policy allkeys-lru
+```
+
+**Solution 2: API has memory leak**
+
+```bash
+# Check API logs for memory growth
+docker stats familyshield-api --no-stream
+
+# Run for 10 minutes with watch:
+watch -n 5 'docker stats --no-stream | grep api'
+# If memory keeps growing: memory leak
+
+# Restart API:
+docker restart familyshield-api
+
+# If immediately grows again: bug in code
+```
+
+---
+
+### Service Restart Order
+
+Use this when multiple services are unhealthy or after a VM reboot where containers did not auto-start:
+
+```bash
+# Safe order to restart all services:
+docker compose down
+
+# Wait 10 seconds
+sleep 10
+
+# Bring back up
+docker compose up -d
+
+# Verify all healthy:
+docker compose ps
+```
+
+---
+
+### Still Broken? Debug Checklist
+
+If the per-service sections above have not resolved the issue, collect full diagnostic data before escalating:
+
+```bash
+# 1. Collect all logs
+docker compose logs > /tmp/familyshield-logs.txt
+
+# 2. Check system resources
+top -b -n 1 > /tmp/top.txt
+df -h > /tmp/disk.txt
+
+# 3. Network diagnostics
+netstat -tlnp | grep LISTEN > /tmp/ports.txt
+iptables -L -n -v > /tmp/iptables.txt
+
+# 4. Contact support with:
+# - These log files
+# - Output of: docker compose ps
+# - What you were trying to do
+# - When it started failing
 ```
 
 ---

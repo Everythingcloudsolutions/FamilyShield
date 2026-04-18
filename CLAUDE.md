@@ -553,6 +553,32 @@ When asked to create or move any file, check its type against this table first. 
 
 ---
 
+## Documentation Rules (Non-Negotiable)
+
+These rules govern where documentation content lives. Follow them for every session.
+
+### Where Content Belongs
+
+| Content Type | Target File |
+|---|---|
+| System design, ADRs, topology diagrams, data flows, security model | `docs/architecture/README.md` |
+| Parent-facing guides, zero technical knowledge assumed | `docs/user-guide/README.md` |
+| Developer and admin setup, service configuration, daily workflow | `docs/developer-guide/README.md` |
+| Test strategy, coverage targets, E2E journeys | `docs/qa-framework/README.md` |
+| Symptom → diagnosis → fix (both parents and admins) | `docs/troubleshooting/README.md` |
+
+### Rules
+
+1. **`docs/mvp-plan.md` is a tracker only.** Progress checkboxes and links to relevant sections. No explanatory content goes here. If a feature needs context, link to the relevant doc section.
+
+2. **`CLAUDE.md` is project context, not a documentation target.** Do not add feature docs, service explanations, or setup guides here. The only exception: update these Documentation Rules if they change.
+
+3. **Never create new documentation files without explicit user approval.** Always update an existing file instead. If content does not fit any existing file, ask before creating.
+
+4. **Each doc serves one audience.** Do not duplicate content across files. Cross-reference with links instead.
+
+---
+
 ## Coding Standards
 
 - **TypeScript:** strict mode, no `any`, Zod for runtime validation

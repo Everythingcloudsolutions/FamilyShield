@@ -99,7 +99,8 @@ PLATFORM_PATTERNS: dict[str, list[tuple]] = {
     ],
     "twitch": [
         # Stream page: twitch.tv/CHANNEL_NAME
-        (re.compile(r"twitch\.tv/([a-zA-Z0-9_]{4,25})(?:/|$)(?!directory|clips|videos)"), "stream", 1),
+        # Negative lookahead before the capture group excludes /directory/, /clips/, /videos/
+        (re.compile(r"twitch\.tv/(?!directory/|clips/|videos/)([a-zA-Z0-9_]{4,25})(?:/|$)"), "stream", 1),
         # Twitch GQL API (used by app)
         (re.compile(r"gql\.twitch\.tv.*\"login\":\"([a-zA-Z0-9_]{4,25})\""), "stream", 1),
     ],

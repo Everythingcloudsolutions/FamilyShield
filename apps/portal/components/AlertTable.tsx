@@ -1,16 +1,17 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { RiskBadge } from './RiskBadge'
+import { isDemoMode, DEMO_ALERTS } from '../lib/demo-data'
+import { getSupabase, isSupabaseConfigured } from '../lib/supabase'
 import type { Alert, RiskLevel, Platform } from '../lib/types'
 
 interface AlertTableProps {
-  alerts: Alert[]
   deviceFilter?: string
 }
 
 const RISK_LEVELS: RiskLevel[] = ['critical', 'high', 'medium', 'low']
-const PLATFORMS: Platform[] = ['youtube', 'roblox', 'discord', 'twitch', 'instagram', 'tiktok', 'other']
+const PLATFORMS: Platform[] = ['youtube', 'roblox', 'discord', 'instagram', 'tiktok', 'other']
 
 type SortField = 'created_at' | 'risk_level' | 'platform' | 'device_ip'
 type SortDir = 'asc' | 'desc'
@@ -24,6 +25,14 @@ function formatTime(iso: string): string {
   })
 }
 
+function FunnelIcon() {
+  return (
+    <svg className="h-8 w-8 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 4a1 1 0 00-.894.553M3 4l6.893 10.002m0 0l6.897-10.002M3 4h18M17.107 14.107L24 4m-21 10h18" />
+    </svg>
+  )
+}
+
 function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
   return (
     <span className={`ml-1 inline-block transition-colors ${active ? 'text-teal-400' : 'text-slate-600'}`}>
@@ -32,13 +41,47 @@ function SortIcon({ active, dir }: { active: boolean; dir: SortDir }) {
   )
 }
 
-export function AlertTable({ alerts, deviceFilter }: AlertTableProps) {
+export function AlertTable({ deviceFilter }: AlertTableProps) {
+  const [fetchedAlerts, setFetchedAlerts] = useState<Alert[]>([])
+  const [dataMode, setDataMode] = useState<'loading' | 'live' | 'inactive' | 'degraded'>('loading')
   const [riskFilter, setRiskFilter] = useState<string>('')
   const [platformFilter, setPlatformFilter] = useState<string>('')
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir }>({
     field: 'created_at',
     dir: 'desc',
   })
+
+  useEffect(() => {
+    if (!isSupabaseConfigured()) {
+      setDataMode('inactive')
+      return
+    }
+
+    async function fetchAlerts() {
+      try {
+        const query = getSupabase()
+          .from('alerts')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(500)
+
+        const { data, error } = await query
+        if (error) {
+          setDataMode('degraded')
+        } else {
+          setFetchedAlerts((data ?? []) as Alert[])
+          setDataMode('live')
+        }
+      } catch {
+        setDataMode('degraded')
+      }
+    }
+
+    void fetchAlerts()
+  }, [])
+
+  const isDemo = isDemoMode(fetchedAlerts, []) && dataMode !== 'loading'
+  const alerts = isDemo ? DEMO_ALERTS : fetchedAlerts
 
   function toggleSort(field: SortField) {
     setSort((prev) =>
@@ -74,12 +117,25 @@ export function AlertTable({ alerts, deviceFilter }: AlertTableProps) {
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Supabase status banner */}
+      {(dataMode === 'inactive' || dataMode === 'degraded') && (
+        <div
+          data-testid="supabase-status-banner"
+          className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+        >
+          {dataMode === 'inactive'
+            ? 'Supabase is inactive or not configured. Alerts are unavailable in offline mode.'
+            : 'Supabase is temporarily unreachable. Alerts list may be incomplete.'}
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
         <select
           data-testid="filter-risk"
           value={riskFilter}
           onChange={(e) => setRiskFilter(e.target.value)}
+          aria-label="Filter by risk level"
           className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-300 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500/30"
         >
           <option value="">All risks</option>
@@ -92,6 +148,7 @@ export function AlertTable({ alerts, deviceFilter }: AlertTableProps) {
           data-testid="filter-platform"
           value={platformFilter}
           onChange={(e) => setPlatformFilter(e.target.value)}
+          aria-label="Filter by platform"
           className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-300 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500/30"
         >
           <option value="">All platforms</option>
@@ -103,6 +160,7 @@ export function AlertTable({ alerts, deviceFilter }: AlertTableProps) {
         {(riskFilter || platformFilter) && (
           <button
             onClick={() => { setRiskFilter(''); setPlatformFilter('') }}
+            aria-label="Clear all active filters"
             className="rounded-lg px-3 py-1.5 text-sm text-slate-400 hover:text-teal-400 transition-colors"
           >
             Clear filters
@@ -114,13 +172,54 @@ export function AlertTable({ alerts, deviceFilter }: AlertTableProps) {
         </span>
       </div>
 
-      {/* Table */}
+      {/* Mobile Card View (sm:hidden) */}
+      <div className="sm:hidden flex flex-col gap-2">
+        {filtered.length === 0 && (
+          <div className="flex flex-col items-center py-12 gap-2 rounded-lg border border-slate-700/60 bg-slate-800/20">
+            <FunnelIcon />
+            <p className="text-sm text-slate-400">No alerts match the current filters</p>
+            <button
+              onClick={() => { setRiskFilter(''); setPlatformFilter('') }}
+              className="text-xs text-teal-400 hover:underline mt-2"
+            >
+              Clear filters
+            </button>
+          </div>
+        )}
+        {filtered.map((alert) => (
+          <div
+            key={alert.id}
+            data-testid="alert-card"
+            data-alert-id={alert.id}
+            data-risk={alert.risk_level}
+            className="rounded-lg border border-slate-700/60 bg-slate-800/20 p-3 space-y-2"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-slate-200 truncate">{alert.title}</p>
+                <p className="text-xs text-slate-500 mt-0.5">{alert.platform} • {formatTime(alert.created_at)}</p>
+              </div>
+              <RiskBadge level={alert.risk_level} size="sm" />
+            </div>
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span className="font-mono">{alert.device_ip}</span>
+              <span>
+                {alert.risk_confidence != null
+                  ? `${(alert.risk_confidence * 100).toFixed(0)}%`
+                  : '—'}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop Table View (hidden sm:block) */}
       <div
         data-testid="alert-table"
-        className="overflow-hidden rounded-xl border border-slate-700/60"
+        className="hidden sm:block overflow-hidden rounded-xl border border-slate-700/60"
       >
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full text-sm" aria-label="Risk alerts" aria-rowcount={filtered.length}>
             <thead>
               <tr className="border-b border-slate-700/60 bg-slate-800/80">
                 {(
@@ -137,6 +236,16 @@ export function AlertTable({ alerts, deviceFilter }: AlertTableProps) {
                   <th
                     key={label}
                     onClick={field ? () => toggleSort(field) : undefined}
+                    scope="col"
+                    aria-sort={
+                      field
+                        ? sort.field === field
+                          ? sort.dir === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                        : undefined
+                    }
                     className={[
                       'px-4 py-2.5 text-left font-medium text-slate-400 text-xs tracking-wider',
                       field ? 'cursor-pointer select-none hover:text-slate-200' : '',
@@ -157,8 +266,17 @@ export function AlertTable({ alerts, deviceFilter }: AlertTableProps) {
             <tbody className="divide-y divide-slate-700/30 bg-slate-800/20">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-500">
-                    No alerts match the current filters
+                  <td colSpan={7} className="py-12">
+                    <div className="flex flex-col items-center gap-2">
+                      <FunnelIcon />
+                      <p className="text-sm text-slate-400">No alerts match the current filters</p>
+                      <button
+                        onClick={() => { setRiskFilter(''); setPlatformFilter('') }}
+                        className="text-xs text-teal-400 hover:underline mt-2"
+                      >
+                        Clear filters
+                      </button>
+                    </div>
                   </td>
                 </tr>
               )}

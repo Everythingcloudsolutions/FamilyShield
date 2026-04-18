@@ -8,7 +8,7 @@ resource "oci_core_vcn" "main" {
   compartment_id = var.compartment_id
   cidr_blocks    = [var.vcn_cidr]
   display_name   = "familyshield-${var.environment}-vcn"
-  dns_label      = "familyshield${var.environment}"
+  dns_label      = "fs${var.environment}"
   freeform_tags  = var.tags
 }
 
