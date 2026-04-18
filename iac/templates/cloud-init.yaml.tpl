@@ -216,25 +216,8 @@ runcmd:
   - chown -R ubuntu:ubuntu /opt/familyshield
 
   # Install Caddy (ARM64 binary for Headscale reverse proxy) with error handling
-  - |
-    bash <<'ENDCADDY'
-    set -euo pipefail
-    mkdir -p /etc/caddy /var/lib/caddy
-    cd /tmp
-    CADDY_VERSION="v2.8.4"
-    CADDY_VERSION_NUM="${CADDY_VERSION#v}"
-    CADDY_FILE="caddy_${CADDY_VERSION_NUM}_linux_arm64.tar.gz"
-    CADDY_URL="https://github.com/caddyserver/caddy/releases/download/${CADDY_VERSION}/${CADDY_FILE}"
-    echo "Downloading Caddy ${CADDY_VERSION} from ${CADDY_URL}..."
-    wget -q "$CADDY_URL" || { echo "❌ Failed to download Caddy"; exit 1; }
-    echo "Extracting Caddy..."
-    tar xzf "$CADDY_FILE" caddy || { echo "❌ Failed to extract Caddy"; exit 1; }
-    mv caddy /usr/local/bin/ || { echo "❌ Failed to move Caddy to /usr/local/bin/"; exit 1; }
-    chmod +x /usr/local/bin/caddy
-    rm -f "$CADDY_FILE"
-    echo "✅ Caddy installed successfully"
-    /usr/local/bin/caddy version
-    ENDCADDY
+  - mkdir -p /etc/caddy /var/lib/caddy
+  - bash -c 'set -euo pipefail; cd /tmp; CADDY_VERSION="v2.8.4"; CADDY_VERSION_NUM="${CADDY_VERSION#v}"; CADDY_FILE="caddy_${CADDY_VERSION_NUM}_linux_arm64.tar.gz"; echo "Downloading Caddy ${CADDY_VERSION}..."; wget -q "https://github.com/caddyserver/caddy/releases/download/${CADDY_VERSION}/${CADDY_FILE}" || { echo "Failed to download Caddy"; exit 1; }; tar xzf "$CADDY_FILE" caddy || { echo "Failed to extract Caddy"; exit 1; }; mv caddy /usr/local/bin/ && chmod +x /usr/local/bin/caddy && rm -f "$CADDY_FILE" && echo "Caddy installed" && /usr/local/bin/caddy version'
 
   # Enable and start Caddy service
   - systemctl daemon-reload
