@@ -10,6 +10,9 @@ const config = {
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/index.ts',
+    '!src/lib/**',           // redis/supabase clients — infrastructure, not unit-testable
+    '!src/worker/**',        // event-consumer — requires live Redis, not unit-testable
+    '!src/enrichers/index.ts', // barrel re-export
   ],
   coverageThreshold: {
     global: {
