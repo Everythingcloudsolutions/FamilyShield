@@ -1,0 +1,107 @@
+# .github/workflows/e2e.yml
+# Manual E2E test runner — Playwright across all browsers and environments.
+# Trigger: workflow_dispatch only (never runs on PR or push).
+#
+# Modes:
+#   local  — starts a Next.js dev server on the runner (no live infra needed)
+#   dev    — runs against https://familyshield-dev.everythingcloud.ca
+#   prod   — runs against https://familyshield.everythingcloud.ca
+
+name: "E2E Tests — Portal (Playwright)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Test target"
+        required: true
+        default: "local"
+        type: choice
+        options:
+          - local # Next.js dev server on runner — no live infra required
+          - dev # familyshield-dev.everythingcloud.ca
+          - prod # familyshield.everythingcloud.ca
+      browsers:
+        description: "Browsers to test"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all # Chromium + Firefox + Mobile Chrome
+          - chromium
+          - firefox
+          - mobile
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: "Playwright — ${{ inputs.target }} / ${{ inputs.browsers }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: apps/portal/package-lock.json
+
+      - name: Install dependencies
+        run: cd apps/portal && npm ci --prefer-offline
+
+      - name: Install Playwright browsers
+        run: |
+          cd apps/portal
+          case "${{ inputs.browsers }}" in
+            all)    npx playwright install --with-deps ;;
+            mobile) npx playwright install chromium --with-deps ;;
+            *)      npx playwright install ${{ inputs.browsers }} --with-deps ;;
+          esac
+
+      - name: Resolve browser project flag
+        id: projects
+        run: |
+          case "${{ inputs.browsers }}" in
+            all)      echo "flag=" >> "$GITHUB_OUTPUT" ;;
+            chromium) echo "flag=--project chromium" >> "$GITHUB_OUTPUT" ;;
+            firefox)  echo "flag=--project firefox" >> "$GITHUB_OUTPUT" ;;
+            mobile)   echo "flag=--project mobile" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Resolve base URL
+        id: url
+        run: |
+          case "${{ inputs.target }}" in
+            local) echo "base_url=" >> "$GITHUB_OUTPUT" ;;   # playwright.config.ts launches dev server
+            dev)   echo "base_url=https://familyshield-dev.everythingcloud.ca" >> "$GITHUB_OUTPUT" ;;
+            prod)  echo "base_url=https://familyshield.everythingcloud.ca" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Run Playwright tests
+        run: cd apps/portal && npx playwright test ${{ steps.projects.outputs.flag }}
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: ${{ steps.url.outputs.base_url }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ inputs.target == 'prod' &&
+            secrets.SUPABASE_URL_PROD || secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ inputs.target == 'prod' &&
+            secrets.SUPABASE_ANON_KEY_PROD || secrets.SUPABASE_ANON_KEY }}
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-${{ inputs.target }}-${{ inputs.browsers }}
+          path: apps/portal/playwright-report/
+          retention-days: 14
+
+      - name: Upload failure screenshots
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-screenshots-${{ inputs.target }}-${{ inputs.browsers }}
+          path: apps/portal/test-results/
+          retention-days: 14

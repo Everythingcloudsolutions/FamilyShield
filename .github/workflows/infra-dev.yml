@@ -12,7 +12,7 @@ name: "FamilyShield — Infrastructure Dev"
 
 on:
   push:
-    branches: [development]
+    branches: [ development ]
     paths:
       - "iac/**"
       - ".github/workflows/infra-dev.yml"
@@ -217,7 +217,8 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           INFLUXDB_PASSWORD: ${{ secrets.INFLUXDB_PASSWORD || 'FamilyShield-Influx-Dev' }}
-          INFLUXDB_ADMIN_TOKEN: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN || 'FamilyShield-InfluxDB-Token-Dev' }}
+          INFLUXDB_ADMIN_TOKEN: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN ||
+            'FamilyShield-InfluxDB-Token-Dev' }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD || 'FamilyShield-Grafana-Dev' }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
@@ -231,6 +232,7 @@ jobs:
           echo "📝 Rendering docker-compose.yml from template..."
           sed \
             -e "s|\${environment}|dev|g" \
+            -e "s|\${env_suffix}|-dev|g" \
             -e "s|\${tunnel_token}|TUNNEL_TOKEN_PLACEHOLDER_dev|g" \
             -e "s|\${supabase_url}|$SUPABASE_URL|g" \
             -e "s|\${supabase_anon_key}|$SUPABASE_ANON_KEY|g" \
@@ -394,7 +396,7 @@ jobs:
   smoke-infra-dev:
     name: "Smoke test — infra (cloudflared registered)"
     runs-on: ubuntu-latest
-    needs: [deploy-infra-dev, setup-cloudflare-dev]
+    needs: [ deploy-infra-dev, setup-cloudflare-dev ]
     steps:
       - name: Verify cloudflared registered via public IP SSH
         env:
@@ -440,7 +442,7 @@ jobs:
   tighten-ssh-dev:
     name: "Tighten SSH → admin IP only (via tofu)"
     runs-on: ubuntu-latest
-    needs: [deploy-infra-dev, smoke-infra-dev]
+    needs: [ deploy-infra-dev, smoke-infra-dev ]
     environment:
       name: dev
     steps:
@@ -477,7 +479,7 @@ jobs:
           TF_VAR_influxdb_password: ${{ secrets.INFLUXDB_PASSWORD }}
           TF_VAR_influxdb_admin_token: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN }}
           TF_VAR_grafana_password: ${{ secrets.GRAFANA_PASSWORD }}
-          TF_VAR_admin_ssh_cidrs: '["173.33.214.49/32"]'
+          TF_VAR_admin_ssh_cidrs: "[\"173.33.214.49/32\"]"
         shell: bash
         run: |
           set -euo pipefail

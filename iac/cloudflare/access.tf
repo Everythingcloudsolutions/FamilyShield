@@ -22,7 +22,7 @@ resource "cloudflare_zero_trust_access_service_token" "github_actions" {
 resource "cloudflare_zero_trust_access_application" "adguard" {
   account_id       = var.cloudflare_account_id
   name             = "FamilyShield AdGuard ${var.environment}"
-  domain           = "adguard-${var.environment}.${var.root_domain}"
+  domain           = "adguard${local.env_suffix}.${var.root_domain}"
   type             = "self_hosted"
   session_duration = "8h"
 
@@ -60,7 +60,7 @@ resource "cloudflare_zero_trust_access_policy" "adguard_admin_email" {
 resource "cloudflare_zero_trust_access_application" "grafana" {
   account_id       = var.cloudflare_account_id
   name             = "FamilyShield Grafana ${var.environment}"
-  domain           = "grafana-${var.environment}.${var.root_domain}"
+  domain           = "grafana${local.env_suffix}.${var.root_domain}"
   type             = "self_hosted"
   session_duration = "8h"
 
@@ -99,7 +99,7 @@ resource "cloudflare_zero_trust_access_policy" "grafana_admin_email" {
 resource "cloudflare_zero_trust_access_application" "ssh" {
   account_id       = var.cloudflare_account_id
   name             = "FamilyShield SSH ${var.environment}"
-  domain           = "ssh-${var.environment}.${var.root_domain}"
+  domain           = "ssh${local.env_suffix}.${var.root_domain}"
   type             = "self_hosted"
   session_duration = "8h"
 
