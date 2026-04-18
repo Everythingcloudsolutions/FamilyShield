@@ -3,7 +3,7 @@
 > Last updated: 2026-04-17
 > Audience: Developer (Mohit) + Claude Code — this is the anchor document for all active development
 > Status tracker: See Phase checklists below. Update this file as items are completed.
-> **Current phase:** Phase 1 complete → Phase 2 starting (device enrolment)
+> **Current phase:** Phase 2 — Device-Testable Application (steps 2.1–2.8)
 
 ---
 
@@ -162,14 +162,20 @@ OCI ARM VM (ca-toronto-1)
 
 | # | Task | How | Acceptance | Status |
 |---|---|---|---|---|
-| 2.1 | Install Tailscale on test device | Install Tailscale app → login with preauth key from step 1.8 | Device appears in `headscale nodes list` | 🔲 Todo |
-| 2.2 | Install mitmproxy CA cert on test device | Download cert from `http://mitm.it` while on VPN → install as trusted root | HTTPS sites load without cert warning | 🔲 Todo |
-| 2.3 | Route device DNS to AdGuard | Set DNS server to `172.20.0.2` (AdGuard IP) in Tailscale subnet | `nslookup google.com` resolves via AdGuard | 🔲 Todo |
-| 2.4 | Insert device record in Supabase | Via portal Devices page or Supabase Studio SQL | `devices` table has entry for device IP | 🔲 Todo |
+| 2.1 | Install Tailscale on test device | Install Tailscale app → login with preauth key from step 1.8 | Device appears in `headscale nodes list` | 🔲 Todo (needs Mohit) |
+| 2.2 | Install mitmproxy CA cert on test device | Download cert from `http://mitm.it` while on VPN → install as trusted root | HTTPS sites load without cert warning | 🔲 Todo (needs Mohit) |
+| 2.3 | Route device DNS to AdGuard | Set DNS server to `172.20.0.2` (AdGuard IP) in Tailscale subnet | `nslookup google.com` resolves via AdGuard | 🔲 Todo (needs Mohit) |
+| 2.4 | Insert device record in Supabase | Via portal Devices page (anon INSERT policy now ✅) | `devices` table has entry for device IP | 🔲 Todo |
 | 2.5 | Open YouTube on test device | Watch any video for 10 seconds | Redis queue receives event (`redis-cli LLEN familyshield:events > 0`) | 🔲 Todo |
 | 2.6 | Verify enrichment pipeline | Check API logs | `content_events` row in Supabase with title + risk_level filled | 🔲 Todo |
 | 2.7 | Verify alert on phone | Install ntfy app on parent phone, subscribe to topic | High-risk content triggers ntfy notification within 30s | 🔲 Todo |
 | 2.8 | Verify portal shows activity | Open portal in browser | Dashboard shows event, Alerts page shows flagged items | 🔲 Todo |
+
+> **Pre-work completed (2026-04-17):**
+> - Supabase anon SELECT policies added for `devices`, `content_events`, `alerts` — portal can now read data without auth
+> - Supabase anon INSERT policy added for `devices` — portal can enroll devices without auth (dev-only, replaced by F-14 in prod)
+> - `DISCORD_BOT_TOKEN` added to docker-compose template; deploy now writes API secrets to `/opt/familyshield/.env`
+> - **Missing GitHub Secrets needed before 2.5:** `DISCORD_BOT_TOKEN` — add at github.com/Everythingcloudsolutions/FamilyShield/settings/secrets/actions
 
 ---
 
@@ -376,8 +382,9 @@ Categories: Adult Content, Violence
 | `devices` table | ✅ Created, RLS enabled, 0 rows |
 | `content_events` table | ✅ Created, RLS enabled, 0 rows |
 | `alerts` table | ✅ Created, RLS enabled, 0 rows |
-| RLS policies | ✅ Default-deny + parent_user_id scoped policies |
-| Security warning | ⚠️ `set_updated_at_timestamp` function has mutable search_path — fix pending |
+| RLS policies (authenticated) | ✅ Default-deny + parent_user_id scoped for all CRUD |
+| RLS policies (anon — dev MVP) | ✅ anon SELECT on all 3 tables + anon INSERT on devices (removed before prod, replaced by F-14 auth) |
+| Security warning | ✅ Fixed — `set_updated_at_timestamp` search_path patched |
 | Migration tracking | ⚠️ Applied manually — not tracked in Supabase migrations table |
 
 ---
@@ -400,9 +407,10 @@ Categories: Adult Content, Violence
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ Set | |
 | `GROQ_API_KEY` | ✅ Set | |
 | `ANTHROPIC_API_KEY` | ✅ Set | |
-| `YOUTUBE_API_KEY` | 🔲 Missing | Required for YouTube enricher |
-| `TWITCH_CLIENT_ID` | 🔲 Missing | Required for Twitch enricher |
-| `TWITCH_CLIENT_SECRET` | 🔲 Missing | Required for Twitch enricher |
+| `YOUTUBE_API_KEY` | ✅ Set | Required for YouTube enricher |
+| `TWITCH_CLIENT_ID` | 🔲 Missing | Required for Twitch enricher (parked — not urgent) |
+| `TWITCH_CLIENT_SECRET` | 🔲 Missing | Required for Twitch enricher (parked — not urgent) |
+| `DISCORD_BOT_TOKEN` | 🔲 Missing | Required for Discord enricher — get from discord.com/developers |
 
 ---
 

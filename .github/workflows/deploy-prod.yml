@@ -224,6 +224,10 @@ jobs:
           GHCR_USER: ${{ github.actor }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
         run: |
           SSH_HOST="ssh-prod.everythingcloud.ca"
 
@@ -234,6 +238,14 @@ jobs:
             ubuntu@"${SSH_HOST}" bash -s <<ENDSSH
           set -euo pipefail
           cd /opt/familyshield
+
+          cat > /opt/familyshield/.env <<'ENVEOF'
+          YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+          DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+          TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID}
+          TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET}
+          ENVEOF
+          chmod 600 /opt/familyshield/.env
 
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
