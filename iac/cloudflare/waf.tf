@@ -48,7 +48,7 @@ resource "cloudflare_ruleset" "ssh_bot_bypass" {
   rules {
     ref         = "vpn_bot_bypass_all"
     description = "Allow Tailscale/Headscale client connections — disable bot challenge for all environments"
-    expression  = "(http.host eq \"vpn.familyshield.${var.root_domain}\") or (http.host eq \"vpn.familyshield-dev.${var.root_domain}\") or (http.host eq \"vpn.familyshield-staging.${var.root_domain}\")"
+    expression  = "(http.host eq \"vpn.${var.root_domain}\") or (http.host eq \"vpn-dev.${var.root_domain}\") or (http.host eq \"vpn-staging.${var.root_domain}\")"
     action      = "set_config"
     enabled     = true
 
