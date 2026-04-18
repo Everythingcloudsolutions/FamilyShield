@@ -12,13 +12,14 @@
 4. [GitHub Secrets Configuration](#4-github-secrets-configuration)
 5. [VS Code Remote SSH Setup](#5-vs-code-remote-ssh-setup)
 6. [First Deploy (dev environment)](#6-first-deploy)
-7. [Daily Development Workflow](#7-daily-development-workflow)
-8. [Workflow Decision Matrix and Scenarios](#8-workflow-decision-matrix-and-scenarios)
-9. [Architecture Overview](#9-architecture-overview)
-10. [Working with Each Service](#10-working-with-each-service)
-11. [Testing](#11-testing)
-12. [Contributing](#12-contributing)
-13. [Security Hardening Updates (2026-04-16)](#13-security-hardening-updates-2026-04-16)
+7. [First Device Enrolment](#7-first-device-enrolment)
+8. [Daily Development Workflow](#8-daily-development-workflow)
+9. [Workflow Decision Matrix and Scenarios](#9-workflow-decision-matrix-and-scenarios)
+10. [Architecture Overview](#10-architecture-overview)
+11. [Working with Each Service](#11-working-with-each-service)
+12. [Testing](#12-testing)
+13. [Contributing](#13-contributing)
+14. [Security Hardening Updates (2026-04-16)](#14-security-hardening-updates-2026-04-16)
 
 ---
 
@@ -264,7 +265,238 @@ git push origin feat/phase-1-bootstrap
 
 ---
 
-## 7. Daily Development Workflow
+## 7. First Device Enrolment
+
+After the dev environment is fully deployed and all services are healthy, enrol a test device to verify the end-to-end monitoring stack: Tailscale → mitmproxy → Redis → API → Supabase → portal.
+
+### Prerequisites
+
+- `infra-dev.yml` and `deploy-dev.yml` have both run to completion with no failures
+- Portal is reachable at `https://familyshield-dev.everythingcloud.ca`
+- All 10 Docker services show `Up` when you run `sudo docker compose ps` on the VM
+- You have SSH access to the VM
+
+---
+
+### Step 1 — Verify all services are healthy
+
+SSH to the dev VM and confirm everything is running:
+
+```bash
+ssh -i ~/.ssh/familyshield ubuntu@ssh-dev.everythingcloud.ca
+sudo docker compose ps
+```
+
+Expected output — all services should show `Up` or `Up (healthy)`:
+
+```
+familyshield-adguard      Up (healthy)
+familyshield-headscale    Up (healthy)
+familyshield-mitmproxy    Up (healthy)
+familyshield-redis        Up (healthy)
+familyshield-api          Up (healthy)
+familyshield-portal       Up (healthy)
+familyshield-nodered      Up
+familyshield-influxdb     Up (healthy)
+familyshield-grafana      Up (healthy)
+familyshield-ntfy         Up
+```
+
+If any service shows `Exit` or `Restarting`, check its logs before proceeding:
+
+```bash
+sudo docker logs familyshield-<service-name> --tail 50
+```
+
+---
+
+### Step 2 — Check the Headscale user account
+
+Headscale manages the Tailscale VPN nodes. Confirm the default user exists:
+
+```bash
+docker exec familyshield-headscale headscale users list
+```
+
+Expected output:
+
+```
+ID | Name    | Created
+1  | default | 2026-04-XX XX:XX:XX
+```
+
+If no users exist, create the default user:
+
+```bash
+docker exec familyshield-headscale headscale users create default
+```
+
+---
+
+### Step 3 — Generate a pre-authentication key
+
+A pre-auth key lets a device join the Tailscale network without manual approval. Use `--reusable` so you can enrol multiple test devices with one key.
+
+```bash
+docker exec familyshield-headscale headscale preauthkeys create \
+  --user 1 \
+  --reusable \
+  --expiration 8760h
+```
+
+Output will look like:
+
+```
+Key: abc123def456abc123def456abc123def456abc123def456abc123def456abc123
+```
+
+**Copy the full key string.** You will use it in the next step. The key is valid for 1 year (8760 hours).
+
+To verify the key was created:
+
+```bash
+docker exec familyshield-headscale headscale preauthkeys list --user 1
+```
+
+---
+
+### Step 4 — Install Tailscale on the test device
+
+On the device you want to enrol (use a phone or laptop):
+
+**iPhone/iPad:** App Store → search `Tailscale` → install → open → Log in → Use auth key → paste the key from Step 3
+
+**Android:** Google Play → `Tailscale` → install → open → Sign in → Use auth key → paste the key
+
+**Windows/Mac:** Download from `https://tailscale.com/download` → install → click Tailscale icon → Log in → Use auth key → paste the key
+
+After connecting, the device receives a `100.64.x.x` IP address from Headscale. Confirm it registered:
+
+```bash
+docker exec familyshield-headscale headscale nodes list
+```
+
+You should see the new device listed with an IP address in `100.64.0.0/10`.
+
+---
+
+### Step 5 — Install the mitmproxy CA certificate
+
+The CA cert allows mitmproxy to inspect HTTPS traffic. Without it, you will see SSL errors when browsing and FamilyShield cannot extract content IDs.
+
+On the enrolled device, while Tailscale is connected:
+
+1. Open a browser and go to: `http://mitm.it`
+2. The mitmproxy web server (on the FamilyShield VM) serves a certificate download page
+3. Follow the per-OS instructions on that page to download and trust the certificate
+
+**iPhone — trust the certificate after installing:**
+
+Settings → General → About → Certificate Trust Settings → toggle ON next to `mitmproxy`
+
+**Mac — trust the certificate after installing:**
+
+Keychain Access → System keychain → find `mitmproxy` → double-click → Trust → Always Trust
+
+**Windows — install to Trusted Root Certification Authorities store** (see step 5 in the Windows section of the Certificate Import Wizard).
+
+To verify mitmproxy is intercepting traffic, tail its logs while browsing a site:
+
+```bash
+sudo docker logs familyshield-mitmproxy --follow
+```
+
+You should see HTTP request/response lines appear as you browse.
+
+---
+
+### Step 6 — Set the DNS server on the test device
+
+For AdGuard DNS filtering to work, the device must use the FamilyShield server as its DNS resolver. AdGuard Home listens on port 53 on all host interfaces, so you point DNS at the server's Tailscale IP.
+
+Find the server's Tailscale IP from the headscale node list:
+
+```bash
+docker exec familyshield-headscale headscale nodes list
+```
+
+Look for the row with the server hostname — note its `ADDRESSES` value (e.g., `100.64.0.1`).
+
+Then on the test device, configure DNS to use that IP:
+
+- **iPhone:** Settings → Wi-Fi → tap `ⓘ` next to network → Configure DNS → Manual → add `100.64.0.1` → remove others
+- **Android:** Settings → Wi-Fi → long-press network → Modify → IP settings: Static → DNS 1: `100.64.0.1`
+- **Android 9+:** Settings → Network → Private DNS → hostname: `100.64.0.1`
+- **Windows:** Settings → Network & Internet → Wi-Fi → network name → DNS server assignment: Manual → Preferred DNS: `100.64.0.1`
+- **Mac:** System Settings → Wi-Fi → Details → DNS → add `100.64.0.1` → remove others
+
+Verify DNS is routing through AdGuard:
+
+```bash
+# From the test device terminal (or browser dev tools Network tab)
+nslookup google.com 100.64.0.1
+# Should return results from AdGuard's upstream resolver
+```
+
+Check AdGuard query log at `https://adguard-dev.everythingcloud.ca` (Cloudflare Zero Trust auth required) — your test browsing queries should appear.
+
+---
+
+### Step 7 — Verify end-to-end: browse a YouTube video
+
+1. On the enrolled device, open a browser and watch a YouTube video (e.g., any video on youtube.com)
+2. mitmproxy extracts the `video_id` and pushes it to Redis
+3. The API worker pops the event from Redis, calls YouTube Data API, scores it with Groq, and writes to Supabase
+4. The portal dashboard receives the new entry via Supabase Realtime and displays it in the Activity Feed
+
+**Monitor each stage in real-time:**
+
+```bash
+# Terminal 1 — mitmproxy logs (shows intercepted requests)
+sudo docker logs familyshield-mitmproxy --follow
+
+# Terminal 2 — API worker logs (shows enrichment + AI scoring)
+sudo docker logs familyshield-api --follow
+
+# Terminal 3 — Redis queue depth (should spike then drain to 0)
+sudo docker exec familyshield-redis redis-cli llen content_events
+```
+
+**In the portal:** go to `https://familyshield-dev.everythingcloud.ca` → Dashboard. The Activity Feed should show a new YouTube entry with title, channel, and risk score within about 30 seconds of watching the video.
+
+---
+
+### Step 8 — Register the device in the portal
+
+The portal's Devices page lets you name devices and assign age profiles.
+
+1. Open the portal: `https://familyshield-dev.everythingcloud.ca`
+2. Click **Devices** in the nav bar
+3. Click **Enrol Device**
+4. Fill in:
+   - **Device name:** e.g., `Test iPhone 15`
+   - **IP address:** the `100.64.x.x` address assigned to the device (shown in `headscale nodes list`)
+   - **Age profile:** `Moderate` for testing
+5. Click **Enrol**
+
+The device appears in the Devices list with a green Online status.
+
+---
+
+### Troubleshooting enrolment
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `http://mitm.it` shows a normal site or 404 | Tailscale not connected, or mitmproxy not running | Confirm Tailscale shows Connected; check `docker compose ps` |
+| SSL errors on all HTTPS sites | Certificate not trusted | Revisit Step 5; on iOS check Certificate Trust Settings toggle |
+| No entries in Activity Feed after browsing | API worker not processing events | Check `docker logs familyshield-api`; confirm `YOUTUBE_API_KEY` is set in `.env` |
+| DNS not resolving or very slow | Device DNS not pointed to server | Revisit Step 6; ping `100.64.0.1` from device to confirm VPN routing |
+| Device not appearing in `headscale nodes list` | Wrong pre-auth key used or key expired | Re-run Step 3 to generate a fresh key; check Tailscale app shows Connected |
+| Tailscale connects but no internet | mitmproxy not forwarding traffic | Check `docker logs familyshield-mitmproxy` for errors |
+
+---
+
+## 8. Daily Development Workflow
 
 ### Branching and Deployment Strategy
 
@@ -303,7 +535,7 @@ development branch (integration)
 
 ---
 
-## 13. Security Hardening Updates (2026-04-16)
+## 14. Security Hardening Updates (2026-04-16)
 
 The following security scaffolding is now part of the application codebase:
 
@@ -382,7 +614,7 @@ chore: update dependencies
 
 ---
 
-## 8. Workflow Decision Matrix and Scenarios
+## 9. Workflow Decision Matrix and Scenarios
 
 This section clarifies **when to use which workflow** based on what you changed. This is the operational answer to: "I made a code change — what do I do now?"
 
@@ -657,7 +889,7 @@ Did I change...?
 
 ---
 
-## 9. Architecture Overview
+## 10. Architecture Overview
 
 See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wire diagrams, and flow diagrams.
 
@@ -690,7 +922,7 @@ See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wi
 
 ---
 
-## 10. Working with Each Service
+## 11. Working with Each Service
 
 ### AdGuard Home
 
@@ -718,7 +950,7 @@ See [docs/architecture/README.md](../architecture/README.md) for C4 diagrams, wi
 
 ---
 
-## 11. Testing
+## 12. Testing
 
 ```bash
 # Unit tests (API)
@@ -741,7 +973,7 @@ See [docs/qa-framework/README.md](../qa-framework/README.md) for full test strat
 
 ---
 
-## 12. Contributing
+## 13. Contributing
 
 ### Getting Started with a Feature
 
