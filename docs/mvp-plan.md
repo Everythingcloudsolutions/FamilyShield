@@ -3,6 +3,7 @@
 > Last updated: 2026-04-17
 > Audience: Developer (Mohit) + Claude Code — this is the anchor document for all active development
 > Status tracker: See Phase checklists below. Update this file as items are completed.
+> **Current phase:** Phase 1 complete → Phase 2 starting (device enrolment)
 
 ---
 
@@ -110,7 +111,7 @@ OCI ARM VM (ca-toronto-1)
 |---|---|---|---|---|
 | 1.1 | Apply Supabase migration | ✅ Tables exist in dev project | `devices`, `content_events`, `alerts` present with RLS | ✅ Done |
 | 1.2 | Fix Supabase function search_path | Apply patch migration via MCP | No security warnings in advisor | ✅ Done |
-| 1.3 | Set missing GitHub Secrets | GitHub → Settings → Secrets | `YOUTUBE_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` added | 🔲 Todo (needs Mohit) |
+| 1.3 | Set missing GitHub Secrets | GitHub → Settings → Secrets | `YOUTUBE_API_KEY`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` added | 🔲 Partial — `YOUTUBE_API_KEY` ✅, `TWITCH_CLIENT_ID` + `TWITCH_CLIENT_SECRET` 🔲 Todo (needs Mohit) |
 | 1.4 | Fix ntfy base-url placeholder | Edit `apps/platform-config/ntfy/server.yml` | URL matches `notify-dev.everythingcloud.ca` | ✅ Done |
 | 1.5 | Add Cloudflare Access email policies + tunnel routes | `iac/cloudflare/access.tf` — add email Allow policies for AdGuard, Grafana, SSH | `mohit.goyal@everything.net.in` can browse admin services; ntfy route added | ✅ Done |
 | 1.5a | Fix container healthchecks | `iac/templates/docker-compose.yaml.tpl` — portal (IPv4 fix), headscale (no wget), mitmproxy (python3) | Portal ✅ healthy; headscale ✅ healthy; mitmproxy ✅ healthy (after re-run) | ✅ Done |
@@ -119,7 +120,7 @@ OCI ARM VM (ca-toronto-1)
 | 1.7 | AdGuard initial setup | SSH port-forward to container IP: `ssh -L 3000:172.20.0.2:3000 -i ~/.ssh/familyshield ubuntu@<vm-ip> -N` → open `http://localhost:3000` → set Admin port=80 | Admin UI accessible via `adguard-dev.everythingcloud.ca`, default blocklists active | ✅ Done |
 | 1.8 | Headscale: create user + preauth key | `docker exec familyshield-headscale headscale users create parent` then get user ID via `users list` and run `preauthkeys create --user <id>` | User created, preauth key generated and saved | ✅ Done |
 | 1.9 | ntfy: create parent user + alert topic | `docker exec -it familyshield-ntfy ntfy user add parent` (must use `-it` for password prompt) then `ntfy access parent familyshield-alerts rw` | Parent user created, `familyshield-alerts` topic accessible | ✅ Done |
-| 1.10 | Verify all services healthy | SSH → `docker compose ps` | All 10 services: `Up (healthy)` | 🔲 Todo |
+| 1.10 | Verify all services healthy | SSH → `docker compose ps` | All 10 services: `Up (healthy)` | ✅ Done (VM 40.233.115.22) |
 
 > **Step 1.7 note — AdGuard first-time setup via SSH port-forward:**
 > The Cloudflare tunnel routes `adguard-dev.everythingcloud.ca` → VM host:3080 → container:80.
