@@ -12,7 +12,7 @@
 
 ## 🏥 Health Status
 
-**Last checked:** 2026-04-18 03:37:14 UTC
+**Last checked:** 2026-04-18 05:43:27 UTC
 
 🔍 Checking dev environment...
 🔍 Checking prod environment...
@@ -20,14 +20,48 @@
 ✅ Health check complete
 
 📄 Reports:
-  JSON: /tmp/familyshield-health-20260418_033711.json
-  MD:   /tmp/familyshield-health-20260418_033711.md
+  JSON: /tmp/familyshield-health-20260418_054324.json
+  MD:   /tmp/familyshield-health-20260418_054324.md
 
 # 🏥 FamilyShield Health Report
 
-**Generated:** `2026-04-18T03:37:11Z`
+**Generated:** `2026-04-18T05:43:24Z`
 
 
+## Environment: `dev`
+
+| Service | Status | Response Time |
+|---------|--------|----------------|
+| Portal | ✅ HTTP 200 | 206ms |
+| API | ✅ HTTP 200 | 155ms |
+| AdGuard Home | ✅ HTTP 302 | 57ms |
+| Headscale | ❌ HTTP 000000 | 57ms |
+| mitmproxy | ⚠️ HTTP 403 | 129ms |
+| Grafana | ✅ HTTP 302 | 166ms |
+| Node-RED | ✅ HTTP 200 | 131ms |
+| ntfy | ✅ HTTP 200 | 129ms |
+| Redis | ✅ healthy | 1224ms |
+| InfluxDB | ✅ healthy | 601ms |
+
+
+## Environment: `prod`
+
+| Service | Status | Response Time |
+|---------|--------|----------------|
+| Portal | ❌ HTTP 000000 | 46ms |
+| API | ❌ HTTP 000000 | 46ms |
+| AdGuard Home | ❌ HTTP 000000 | 46ms |
+| Headscale | ❌ HTTP 000000 | 20ms |
+| mitmproxy | ❌ HTTP 000000 | 45ms |
+| Grafana | ❌ HTTP 000000 | 49ms |
+| Node-RED | ❌ HTTP 000000 | 47ms |
+| ntfy | ❌ HTTP 000000 | 25ms |
+| Redis | ❌ unhealthy | 95ms |
+| InfluxDB | ❌ unhealthy | 57ms |
+
+
+
+---
 ## Environment: `dev`
 
 | Service | Status | Response Time |
