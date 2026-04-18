@@ -14,21 +14,9 @@
 
 **Last checked:** 2026-04-18 03:09:56 UTC
 
-🔍 Checking dev environment...
-🔍 Checking prod environment...
+### Dev Environment
 
-✅ Health check complete
-
-📄 Reports:
-  JSON: /tmp/familyshield-health-20260418_030953.json
-  MD:   /tmp/familyshield-health-20260418_030953.md
-
-# 🏥 FamilyShield Health Report
-
-**Generated:** `2026-04-18T03:09:53Z`
-
-
-## Environment: `dev`
+<!-- HEALTH_TABLE_DEV_START -->
 
 | Service | Status | Response Time |
 |---------|--------|----------------|
@@ -43,8 +31,11 @@
 | Redis | ✅ healthy | 820ms |
 | InfluxDB | ✅ healthy | 757ms |
 
+<!-- HEALTH_TABLE_DEV_END -->
 
-## Environment: `prod`
+### Prod Environment
+
+<!-- HEALTH_TABLE_PROD_START -->
 
 | Service | Status | Response Time |
 |---------|--------|----------------|
@@ -59,7 +50,7 @@
 | Redis | ❌ unhealthy | 71ms |
 | InfluxDB | ❌ unhealthy | 64ms |
 
-
+<!-- HEALTH_TABLE_PROD_END -->
 
 ---
 
@@ -171,6 +162,7 @@ Merge to main
 ```
 
 **Why three stages?**
+
 - **Stage 1 (IaC):** Creates cloud infrastructure independently — no state conflicts
 - **Stage 2 (Cloudflare API):** Manages DNS and public routing separately — decoupled from IaC
 - **Stage 3 (App):** Deploys application code after both infrastructure and networking are ready
