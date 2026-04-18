@@ -193,6 +193,9 @@ resource "oci_core_volume_attachment" "data" {
 }
 
 locals {
+  # Production uses clean URLs (no suffix); lower envs get -dev / -staging.
+  env_suffix = var.environment == "prod" ? "" : "-${var.environment}"
+
   common_tags = {
     project     = "familyshield"
     environment = var.environment

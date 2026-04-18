@@ -14,12 +14,12 @@ output "vm_ssh_command" {
 
 output "portal_url" {
   description = "FamilyShield portal URL"
-  value       = "https://familyshield-${var.environment}.everythingcloud.ca"
+  value       = "https://familyshield${local.env_suffix}.everythingcloud.ca"
 }
 
 output "adguard_url" {
   description = "AdGuard Home admin URL (behind Cloudflare Zero Trust)"
-  value       = "https://adguard-${var.environment}.everythingcloud.ca"
+  value       = "https://adguard${local.env_suffix}.everythingcloud.ca"
 }
 
 

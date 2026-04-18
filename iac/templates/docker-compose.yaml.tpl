@@ -140,10 +140,10 @@ services:
       - SUPABASE_SERVICE_ROLE_KEY=${supabase_service_role_key}
       - GROQ_API_KEY=${groq_api_key}
       - ANTHROPIC_API_KEY=${anthropic_api_key}
-      - YOUTUBE_API_KEY=$${YOUTUBE_API_KEY}
-      - DISCORD_BOT_TOKEN=$${DISCORD_BOT_TOKEN}
-      - TWITCH_CLIENT_ID=$${TWITCH_CLIENT_ID}
-      - TWITCH_CLIENT_SECRET=$${TWITCH_CLIENT_SECRET}
+      - YOUTUBE_API_KEY=${youtube_api_key}
+      - DISCORD_BOT_TOKEN=${discord_bot_token}
+      - TWITCH_CLIENT_ID=${twitch_client_id}
+      - TWITCH_CLIENT_SECRET=${twitch_client_secret}
     depends_on:
       redis:
         condition: service_healthy
