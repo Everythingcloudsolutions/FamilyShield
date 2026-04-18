@@ -10,6 +10,59 @@
 
 ---
 
+## 🏥 Health Status
+
+**Last checked:** 2026-04-18 03:09:56 UTC
+
+🔍 Checking dev environment...
+🔍 Checking prod environment...
+
+✅ Health check complete
+
+📄 Reports:
+  JSON: /tmp/familyshield-health-20260418_030953.json
+  MD:   /tmp/familyshield-health-20260418_030953.md
+
+# 🏥 FamilyShield Health Report
+
+**Generated:** `2026-04-18T03:09:53Z`
+
+
+## Environment: `dev`
+
+| Service | Status | Response Time |
+|---------|--------|----------------|
+| Portal | ✅ HTTP 200 | 236ms |
+| API | ✅ HTTP 200 | 171ms |
+| AdGuard Home | ✅ HTTP 302 | 92ms |
+| Headscale | ❌ HTTP 000000 | 55ms |
+| mitmproxy | ⚠️ HTTP 403 | 142ms |
+| Grafana | ✅ HTTP 302 | 91ms |
+| Node-RED | ✅ HTTP 200 | 139ms |
+| ntfy | ✅ HTTP 200 | 139ms |
+| Redis | ✅ healthy | 820ms |
+| InfluxDB | ✅ healthy | 757ms |
+
+
+## Environment: `prod`
+
+| Service | Status | Response Time |
+|---------|--------|----------------|
+| Portal | ❌ HTTP 000000 | 44ms |
+| API | ❌ HTTP 000000 | 33ms |
+| AdGuard Home | ❌ HTTP 000000 | 60ms |
+| Headscale | ❌ HTTP 000000 | 54ms |
+| mitmproxy | ❌ HTTP 000000 | 62ms |
+| Grafana | ❌ HTTP 000000 | 45ms |
+| Node-RED | ❌ HTTP 000000 | 51ms |
+| ntfy | ❌ HTTP 000000 | 83ms |
+| Redis | ❌ unhealthy | 71ms |
+| InfluxDB | ❌ unhealthy | 64ms |
+
+
+
+---
+
 ## What Is FamilyShield?
 
 FamilyShield is a comprehensive parental control platform that gives parents complete visibility and control over what their children access online — across every device, every network, and every platform — at near-zero cost.
