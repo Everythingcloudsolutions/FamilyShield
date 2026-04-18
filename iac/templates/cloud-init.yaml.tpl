@@ -219,11 +219,12 @@ runcmd:
   - |
     cd /tmp && \
     CADDY_VERSION="v2.8.4" && \
-    wget -q "https://github.com/caddyserver/caddy/releases/download/${CADDY_VERSION}/caddy_${CADDY_VERSION#v}_linux_arm64.tar.gz" && \
-    tar xzf "caddy_${CADDY_VERSION#v}_linux_arm64.tar.gz" caddy && \
+    CADDY_VERSION_NUM="$${CADDY_VERSION#v}" && \
+    wget -q "https://github.com/caddyserver/caddy/releases/download/$${CADDY_VERSION}/caddy_$${CADDY_VERSION_NUM}_linux_arm64.tar.gz" && \
+    tar xzf "caddy_$${CADDY_VERSION_NUM}_linux_arm64.tar.gz" caddy && \
     mv caddy /usr/local/bin/ && \
     chmod +x /usr/local/bin/caddy && \
-    rm -f "caddy_${CADDY_VERSION#v}_linux_arm64.tar.gz" && \
+    rm -f "caddy_$${CADDY_VERSION_NUM}_linux_arm64.tar.gz" && \
     /usr/local/bin/caddy version
 
   # Enable and start Caddy service
