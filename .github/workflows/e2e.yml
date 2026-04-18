@@ -18,16 +18,16 @@ on:
         default: "local"
         type: choice
         options:
-          - local   # Next.js dev server on runner — no live infra required
-          - dev     # familyshield-dev.everythingcloud.ca
-          - prod    # familyshield.everythingcloud.ca
+          - local # Next.js dev server on runner — no live infra required
+          - dev # familyshield-dev.everythingcloud.ca
+          - prod # familyshield.everythingcloud.ca
       browsers:
         description: "Browsers to test"
         required: true
         default: "all"
         type: choice
         options:
-          - all         # Chromium + Firefox + Mobile Chrome
+          - all # Chromium + Firefox + Mobile Chrome
           - chromium
           - firefox
           - mobile
@@ -85,8 +85,10 @@ jobs:
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: ${{ steps.url.outputs.base_url }}
-          NEXT_PUBLIC_SUPABASE_URL: ${{ inputs.target == 'prod' && secrets.SUPABASE_URL_PROD || secrets.SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ inputs.target == 'prod' && secrets.SUPABASE_ANON_KEY_PROD || secrets.SUPABASE_ANON_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ inputs.target == 'prod' &&
+            secrets.SUPABASE_URL_PROD || secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ inputs.target == 'prod' &&
+            secrets.SUPABASE_ANON_KEY_PROD || secrets.SUPABASE_ANON_KEY }}
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
