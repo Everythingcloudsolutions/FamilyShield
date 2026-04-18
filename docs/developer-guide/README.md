@@ -381,8 +381,8 @@ echo -n "$KEY" | qrencode -t UTF8
 The Tailscale app must be pointed at the FamilyShield Headscale server **before** connecting. The server URL is the critical step that replaces the old "paste a 64-char key on first screen" flow.
 
 **VPN server URL:**
-- Dev: `https://vpn.familyshield-dev.everythingcloud.ca`
-- Prod: `https://vpn.familyshield.everythingcloud.ca`
+- Dev: `https://vpn-dev.everythingcloud.ca`
+- Prod: `https://vpn.everythingcloud.ca`
 
 #### iPhone/iPad
 

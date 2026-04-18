@@ -159,7 +159,7 @@ There are four parts to enrolling a device:
 Before you start, make sure you have:
 
 - A parent phone and the child's phone — both connected to WiFi
-- The **VPN server address** from your IT admin: `https://vpn.familyshield.everythingcloud.ca`. This is a one-time setting entered into the Tailscale app — you will not need to type it on every device.
+- The **VPN server address** from your IT admin: `https://vpn.everythingcloud.ca`. This is a one-time setting entered into the Tailscale app — you will not need to type it on every device.
 - An **enrolment key** from your IT admin (a long code sent to you via iMessage or WhatsApp — you copy it on your phone and paste it on the child's device). See Part A below.
 - About 20 minutes of uninterrupted time
 
@@ -217,7 +217,7 @@ This is done inside the Tailscale app on the child's device. The app asks for th
 3. Tap that option and enter the server address:
 
    ```
-   https://vpn.familyshield.everythingcloud.ca
+   https://vpn.everythingcloud.ca
    ```
 
    Then tap **Save** or **Done**.
@@ -399,7 +399,7 @@ Now switch to the child's device. Follow the instructions for their device type 
 4. Enter the server address:
 
    ```
-   https://vpn.familyshield.everythingcloud.ca
+   https://vpn.everythingcloud.ca
    ```
 
    Tap **Save** or **Done**.
@@ -426,7 +426,7 @@ Now switch to the child's device. Follow the instructions for their device type 
 4. Enter the server address:
 
    ```
-   https://vpn.familyshield.everythingcloud.ca
+   https://vpn.everythingcloud.ca
    ```
 
    Tap **Save**.
@@ -447,7 +447,7 @@ Now switch to the child's device. Follow the instructions for their device type 
 1. Go to **<https://tailscale.com/download/windows>** and download the installer. Run it and click **Next** through the steps.
 2. Look for the Tailscale icon in the bottom-right system tray (near the clock). Click it, then click **Log in**.
 3. A browser window opens. Before signing in with an account, look for **"Use a custom control server"** or **"Self-hosted control server"** and click it.
-4. Enter: `https://vpn.familyshield.everythingcloud.ca` and click **Save**.
+4. Enter: `https://vpn.everythingcloud.ca` and click **Save**.
 5. The page now shows an **Auth key** field. Paste the enrolment key.
 6. Click **Sign in** or **Connect**.
 7. The Tailscale icon in the system tray will turn green or solid to show it is connected.
@@ -463,7 +463,7 @@ Now switch to the child's device. Follow the instructions for their device type 
 1. Open the **App Store** on the Mac, search for `Tailscale`, and install it (free).
 2. Click the Tailscale icon in the **menu bar** (top-right of the screen). Click **Log in**.
 3. A browser window opens. Before signing in with an account, look for **"Use a custom control server"** and click it.
-4. Enter: `https://vpn.familyshield.everythingcloud.ca` and click **Save**.
+4. Enter: `https://vpn.everythingcloud.ca` and click **Save**.
 5. The page shows an **Auth key** field. Paste the enrolment key.
 6. Click **Sign in**.
 7. If the Mac asks permission to add a VPN configuration, click **Allow** and enter the Mac password.
