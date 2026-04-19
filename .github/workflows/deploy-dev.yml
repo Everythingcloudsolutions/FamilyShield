@@ -21,7 +21,6 @@ on:
   workflow_run:
     workflows: ["FamilyShield — Infrastructure Dev"]
     types: [completed]
-    branches: [development]
 
 permissions:
   contents: read

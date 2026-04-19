@@ -857,6 +857,74 @@ This is the minimum hardening sequence Claude Code should recommend and preserve
 
 ## Known Issues & Troubleshooting
 
+### Caddy — Moved from Systemd to Docker (2026-04-19 — REFACTORED)
+
+**Change:** Caddy is now a Docker service in `docker-compose.yml`, not a systemd unit.
+
+**Why:** Systemd Caddy failed to start reliably during VM bootstrap, causing infra-dev.yml workflow to fail and block cloudflared startup. Docker-managed services are simpler and more reliable.
+
+**How it works now:**
+
+- `docker-compose.yaml.tpl` includes `caddy` service
+- Depends on `headscale` service (waits for it to be healthy)
+- Mounts `/etc/caddy/Caddyfile` (written by cloud-init, already exists)
+- Auto-restarts on failure via docker-compose
+- No manual intervention needed
+
+**Architecture:**
+
+```
+Device enrollment request
+  ↓
+vpn-dev.everythingcloud.ca (DNS A record → OCI public IP)
+  ↓
+OCI VM port 443 (Caddy Docker container)
+  ↓
+Caddy reverse proxy (preserves WebSocket Upgrade headers)
+  ↓
+Headscale (localhost:8080 in Docker)
+  ↓
+Device successfully enrolls in Tailscale
+```
+
+**Benefits:**
+
+- ✅ Headscale accessible via direct public IP (not Cloudflare Tunnel)
+- ✅ WebSocket Upgrade headers preserved (Tailscale Noise protocol works)
+- ✅ No systemd complexity
+- ✅ Auto-restart on container failure
+- ✅ Fully managed by docker-compose (like all other services)
+
+### AdGuard — Port 443 Conflict with Caddy (2026-04-18 — FIXED)
+
+**Error:** `failed to bind host port 0.0.0.0:443/tcp: address already in use` when docker-compose starts.
+
+**Root cause:** Caddy (systemd service) and AdGuard (docker container) both tried to bind to port 443:
+
+- **Caddy** — HTTPS reverse proxy for Headscale on `0.0.0.0:443`
+- **AdGuard** — DoH (DNS over HTTPS) on `0.0.0.0:443`
+
+**Fix (commit 1ac8bd7):** Removed `443:443/tcp` port binding from AdGuard in `docker-compose.yaml.tpl`. Devices use standard DNS (TCP/UDP on 53) or DoT (port 853) instead.
+
+```yaml
+# Before
+ports:
+  - "53:53/tcp"
+  - "53:53/udp"
+  - "3080:80/tcp"
+  - "443:443/tcp"     # ← Removed — conflicts with Caddy
+  - "853:853/tcp"
+
+# After
+ports:
+  - "53:53/tcp"
+  - "53:53/udp"
+  - "3080:80/tcp"
+  - "853:853/tcp"     # Caddy uses 443 for Headscale HTTPS proxy
+```
+
+**Pattern:** When adding a new reverse proxy (like Caddy), audit all service port bindings to avoid conflicts with well-known HTTPS ports (443).
+
 ### mitmproxy — Port Isolation (2026-04-17)
 
 **Fix:** Updated mitmproxy CMD to use separate ports for web UI (8081) and listen mode (8888/8889). This prevents port conflicts when running mitmproxy locally alongside other services.

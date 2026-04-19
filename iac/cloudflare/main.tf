@@ -53,10 +53,11 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
       service  = "http://localhost:8888" # docker-compose: 8888:8080 (web UI)
     }
 
-    ingress_rule {
-      hostname = "vpn${local.env_suffix}.${var.root_domain}"
-      service  = "http://localhost:8080" # headscale control plane
-    }
+    # NOTE: vpn${local.env_suffix} intentionally NOT routed through tunnel.
+    # Headscale uses Noise protocol with custom HTTP Upgrade headers.
+    # Cloudflare Tunnel filters these headers, breaking enrollment.
+    # Instead: vpn${local.env_suffix} DNS A record → OCI public IP → Caddy (localhost:8080).
+    # See: iac/cloudflare/dns.tf (vpn_direct resource), iac/templates/cloud-init.yaml.tpl (Caddy).
 
     ingress_rule {
       hostname = "grafana${local.env_suffix}.${var.root_domain}"

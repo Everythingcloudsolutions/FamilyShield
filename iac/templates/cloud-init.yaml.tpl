@@ -19,6 +19,7 @@ packages:
   - fail2ban
   - wireguard
   - resolvconf
+  - ca-certificates  # Required for Caddy HTTPS certificate validation
 
 # Create ubuntu user docker access
 groups:
@@ -35,13 +36,14 @@ write_files:
   # AFTER tofu apply completes. Using a placeholder here means changing docker-compose.yaml.tpl
   # does NOT change user_data, so the VM is NOT recreated on every app config change.
   # Volumes (adguard_conf, headscale_data, ntfy_data, etc.) persist across infra runs.
+  # NOTE: Must use root owner in write_files (ubuntu user not yet initialized)
   - path: /opt/familyshield/docker-compose.yml
     content: |
       # Placeholder — overwritten by infra workflow (infra-dev.yml / infra-prod.yml)
       # The infra workflow renders docker-compose.yaml.tpl and copies it here via SSH.
       # On reboots after first deploy, this file contains the real stack config.
       services: {}
-    owner: ubuntu:ubuntu
+    owner: root:root
     permissions: '0644'
 
   # Systemd service to start stack on boot
@@ -131,6 +133,9 @@ write_files:
       ufw default deny incoming
       ufw default allow outgoing
       ufw allow 22/tcp     # SSH
+      ufw allow 80/tcp     # HTTP — Caddy ACME challenge (auto-redirects to HTTPS after cert issued)
+      ufw allow 443/tcp    # HTTPS (Caddy reverse proxy for Headscale)
+      ufw allow 443/udp    # QUIC protocol
       ufw allow 51820/udp  # WireGuard VPN
       ufw --force enable
 
@@ -142,6 +147,27 @@ write_files:
       port = 22
       maxretry = 5
       bantime = 3600
+
+  # Caddy configuration — reverse proxy Headscale with auto-HTTPS
+  # Listens on 0.0.0.0:443, proxies to localhost:8080 (Headscale)
+  - path: /etc/caddy/Caddyfile
+    content: |
+      vpn-${environment}.everythingcloud.ca:443 {
+        log {
+          output stdout
+          format console
+        }
+        reverse_proxy localhost:8080 {
+          header_up Connection "upgrade"
+          header_up Upgrade "{http.request.header.Upgrade}"
+          header_up X-Forwarded-For "{http.request.header.CF-Connecting-IP}"
+          header_up X-Forwarded-Proto "https"
+          header_up X-Forwarded-Host "{http.request.host}"
+          header_down -Server
+        }
+      }
+    owner: root:root
+    permissions: '0644'
 
 runcmd:
   # Disable systemd-resolved stub listener — frees port 53 for AdGuard Home
@@ -163,6 +189,9 @@ runcmd:
 
   # Create app dirs (boot volume — service configs, not data)
   - chown -R ubuntu:ubuntu /opt/familyshield
+
+  # NOTE: Caddy now runs as a Docker service (caddy container in docker-compose)
+  # Caddyfile is already written above; docker-compose will mount it
 
   # Enable and start FamilyShield stack
   - systemctl daemon-reload

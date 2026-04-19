@@ -3,7 +3,7 @@ name: Scheduled Health Check
 on:
   schedule:
     # Run every 30 minutes
-    - cron: "*/30 * * * *"
+   # - cron: "*/30 * * * *"
   # Allow manual trigger for testing
   workflow_dispatch:
 

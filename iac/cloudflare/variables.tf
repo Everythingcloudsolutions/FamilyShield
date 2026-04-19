@@ -36,3 +36,10 @@ variable "admin_email" {
   description = "Admin email address allowed to access protected services (AdGuard, Grafana) via Cloudflare Access OTP"
   type        = string
 }
+
+variable "oci_public_ip" {
+  description = "OCI VM public IP for direct Headscale exposure (bypasses Cloudflare tunnel)"
+  type        = string
+  nullable    = true
+  default     = null
+}

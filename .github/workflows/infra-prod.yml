@@ -195,6 +195,7 @@ jobs:
           TF_VAR_cloudflare_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           TF_VAR_cloudflare_zone_id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
           TF_VAR_environment: prod
+          TF_VAR_oci_public_ip: ${{ needs.deploy-infra-prod.outputs.vm_ip }}
         run: |
           set -euo pipefail
 
@@ -398,6 +399,17 @@ jobs:
 
           sleep 10
           sudo docker compose ps
+
+          echo "🔍 Verifying critical services..."
+          for service in headscale redis caddy; do
+            if sudo docker ps --filter "name=familyshield-\$service" --format '{{.Names}}' | grep -q "familyshield-\$service"; then
+              echo "✅ familyshield-\$service is running"
+            else
+              echo "❌ CRITICAL: familyshield-\$service is NOT running"
+              sudo docker logs "familyshield-\$service" 2>&1 | tail -20 || true
+              exit 1
+            fi
+          done
           ENDSSH
 
       - name: Write tunnel token to VM and activate cloudflared
