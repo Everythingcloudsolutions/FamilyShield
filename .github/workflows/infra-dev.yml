@@ -355,10 +355,11 @@ jobs:
           # App services (api, portal, mitmproxy) are managed by deploy-dev.yml
           # Use --ignore-pull-failures to skip missing app service images (not pushed yet)
           echo "📦 Pulling infrastructure service images..."
-          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy
+          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy caddy
 
           echo "🚀 Starting infrastructure services..."
-          sudo docker compose up -d --no-deps adguard headscale redis influxdb grafana nodered ntfy
+          # caddy depends_on headscale (service_healthy) — omitting --no-deps so compose respects that order
+          sudo docker compose up -d adguard headscale redis influxdb grafana nodered ntfy caddy
 
           echo "Waiting for containers to initialize..."
           sleep 10
@@ -368,12 +369,11 @@ jobs:
 
           # Verify critical services are running
           echo "🔍 Verifying critical services..."
-          for service in headscale redis; do
+          for service in headscale redis caddy; do
             if sudo docker ps --filter "name=familyshield-$service" --format '{{.Names}}' | grep -q "familyshield-$service"; then
               echo "✅ familyshield-$service is running"
             else
               echo "❌ CRITICAL: familyshield-$service is NOT running"
-              echo "Container logs:"
               sudo docker logs "familyshield-$service" 2>&1 | tail -20 || true
               exit 1
             fi

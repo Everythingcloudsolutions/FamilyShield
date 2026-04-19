@@ -393,12 +393,24 @@ jobs:
           # Pull and start infrastructure services (public images — always available)
           # App services (api, portal, mitmproxy) are managed by deploy-prod.yml
           # Use --ignore-pull-failures to skip missing app service images (not pushed yet)
-          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy
-          sudo docker compose up -d --no-deps adguard headscale redis influxdb grafana nodered ntfy
+          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy caddy
+          # caddy depends_on headscale (service_healthy) — omitting --no-deps so compose respects that order
+          sudo docker compose up -d adguard headscale redis influxdb grafana nodered ntfy caddy
           echo "✅ Infrastructure services started (api/portal/mitmproxy started by deploy-prod.yml)"
 
           sleep 10
           sudo docker compose ps
+
+          echo "🔍 Verifying critical services..."
+          for service in headscale redis caddy; do
+            if sudo docker ps --filter "name=familyshield-$service" --format '{{.Names}}' | grep -q "familyshield-$service"; then
+              echo "✅ familyshield-$service is running"
+            else
+              echo "❌ CRITICAL: familyshield-$service is NOT running"
+              sudo docker logs "familyshield-$service" 2>&1 | tail -20 || true
+              exit 1
+            fi
+          done
           ENDSSH
 
       - name: Write tunnel token to VM and activate cloudflared
