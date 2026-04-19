@@ -76,6 +76,33 @@ services:
       timeout: 10s
       retries: 3
 
+  # ── 2b. Caddy — HTTPS reverse proxy for Headscale (Noise protocol + WebSocket) ──
+  # Listens on 0.0.0.0:443, proxies to Headscale localhost:8080 with WebSocket support.
+  # DNS A record (vpn${env_suffix}.everythingcloud.ca) points directly to OCI public IP,
+  # bypassing Cloudflare Tunnel to preserve HTTP Upgrade headers required by Tailscale.
+  caddy:
+    image: caddy:latest
+    container_name: familyshield-caddy
+    restart: unless-stopped
+    networks:
+      familyshield:
+        ipv4_address: 172.20.0.11
+    ports:
+      - "443:443/tcp"
+      - "443:443/udp"       # QUIC
+    volumes:
+      - /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /var/lib/caddy:/data/caddy
+    depends_on:
+      headscale:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-k", "https://localhost:443/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   # ── 3. mitmproxy — SSL inspection + content ID extraction ─────────────────
   # Custom image (built from apps/mitm/Dockerfile) includes redis Python package.
   # Addon code is volume-mounted for live updates without image rebuild.

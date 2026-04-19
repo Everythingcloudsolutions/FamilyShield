@@ -380,36 +380,7 @@ jobs:
           done
 
           echo "✅ Infrastructure services started (api/portal/mitmproxy started by deploy-dev.yml)"
-
-          # Verify Caddy and cloudflared systemd services are configured
-          echo "🔐 Checking systemd services..."
-          if sudo systemctl list-unit-files | grep -q "caddy-headscale.service"; then
-            echo "✅ caddy-headscale.service is installed"
-            if sudo systemctl is-enabled caddy-headscale.service &>/dev/null; then
-              echo "✅ caddy-headscale.service is enabled"
-            else
-              echo "⚠️  caddy-headscale.service exists but is not enabled"
-            fi
-            if sudo systemctl is-active caddy-headscale.service &>/dev/null; then
-              echo "✅ caddy-headscale.service is active (RUNNING)"
-            else
-              echo "❌ caddy-headscale.service is not active"
-              echo "   Checking service status..."
-              sudo systemctl status caddy-headscale.service || true
-            fi
-          else
-            echo "❌ caddy-headscale.service not found in systemd"
-            exit 1
-          fi
-
-          # Verify Caddy binary exists
-          if [ -x /usr/local/bin/caddy ]; then
-            echo "✅ Caddy binary exists and is executable"
-            /usr/local/bin/caddy version
-          else
-            echo "❌ Caddy binary not found or not executable at /usr/local/bin/caddy"
-            exit 1
-          fi
+          echo "✅ Caddy will start automatically with docker-compose (no systemd needed)"
           ENDSSH
 
       - name: Write tunnel token to VM and activate cloudflared

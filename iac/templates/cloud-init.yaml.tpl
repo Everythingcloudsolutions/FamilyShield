@@ -168,32 +168,6 @@ write_files:
     owner: root:root
     permissions: '0644'
 
-  # Systemd service for Caddy (Headscale reverse proxy)
-  - path: /etc/systemd/system/caddy-headscale.service
-    content: |
-      [Unit]
-      Description=Caddy - Headscale Reverse Proxy
-      After=network-online.target docker.service
-      Wants=network-online.target
-
-      [Service]
-      Type=notify
-      User=root
-      Group=root
-      ProtectSystem=full
-      ProtectHome=yes
-      NoNewPrivileges=yes
-      ExecStart=/usr/local/bin/caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
-      ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-      TimeoutStopSec=5s
-      LimitNOFILE=1048576
-      LimitNPROC=512
-      Restart=always
-      RestartSec=10s
-
-      [Install]
-      WantedBy=multi-user.target
-
 runcmd:
   # Disable systemd-resolved stub listener — frees port 53 for AdGuard Home
   # Ubuntu 22.04 binds 0.0.0.0:53 by default; AdGuard needs that port
@@ -215,23 +189,8 @@ runcmd:
   # Create app dirs (boot volume — service configs, not data)
   - chown -R ubuntu:ubuntu /opt/familyshield
 
-  # Install Caddy (ARM64 binary for Headscale reverse proxy)
-  - mkdir -p /etc/caddy /var/lib/caddy
-  - |
-    cd /tmp && \
-    CADDY_VERSION="v2.8.4" && \
-    CADDY_VERSION_NUM="$${CADDY_VERSION#v}" && \
-    wget -q "https://github.com/caddyserver/caddy/releases/download/$${CADDY_VERSION}/caddy_$${CADDY_VERSION_NUM}_linux_arm64.tar.gz" && \
-    tar xzf "caddy_$${CADDY_VERSION_NUM}_linux_arm64.tar.gz" caddy && \
-    mv caddy /usr/local/bin/ && \
-    chmod +x /usr/local/bin/caddy && \
-    rm -f "caddy_$${CADDY_VERSION_NUM}_linux_arm64.tar.gz" && \
-    /usr/local/bin/caddy version
-
-  # Enable and start Caddy service
-  - systemctl daemon-reload
-  - systemctl enable caddy-headscale
-  - systemctl start caddy-headscale
+  # NOTE: Caddy now runs as a Docker service (caddy container in docker-compose)
+  # Caddyfile is already written above; docker-compose will mount it
 
   # Enable and start FamilyShield stack
   - systemctl daemon-reload
