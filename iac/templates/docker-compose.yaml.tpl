@@ -30,8 +30,7 @@ services:
       - "53:53/tcp"
       - "53:53/udp"
       - "3080:80/tcp"     # Admin UI (exposed via Cloudflare Tunnel)
-      - "443:443/tcp"     # DoH
-      - "853:853/tcp"     # DoT
+      - "853:853/tcp"     # DoT (Caddy uses port 443 for HTTPS reverse proxy)
     volumes:
       - /opt/familyshield-data/adguard/work:/opt/adguardhome/work
       - /opt/familyshield-data/adguard/conf:/opt/adguardhome/conf
