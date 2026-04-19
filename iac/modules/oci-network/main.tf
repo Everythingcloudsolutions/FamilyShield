@@ -84,8 +84,37 @@ resource "oci_core_security_list" "main" {
     }
   }
 
-  # AdGuard DNS over HTTPS (TCP/UDP 443) — Cloudflare Tunnel handles this
-  # Cloudflare Tunnel is outbound-only — NO inbound HTTP/HTTPS needed
+  # HTTPS (TCP 443) — Caddy reverse proxy for Headscale VPN enrollment
+  # vpn-dev.everythingcloud.ca DNS A record → OCI public IP → Caddy → Headscale
+  ingress_security_rules {
+    protocol = "6" # TCP
+    source   = "0.0.0.0/0"
+    tcp_options {
+      min = 443
+      max = 443
+    }
+  }
+
+  # HTTPS QUIC (UDP 443) — used by Caddy for HTTP/3
+  ingress_security_rules {
+    protocol = "17" # UDP
+    source   = "0.0.0.0/0"
+    udp_options {
+      min = 443
+      max = 443
+    }
+  }
+
+  # HTTP (TCP 80) — Caddy ACME HTTP-01 challenge for TLS certificate issuance
+  # Caddy auto-redirects HTTP → HTTPS after cert is obtained
+  ingress_security_rules {
+    protocol = "6" # TCP
+    source   = "0.0.0.0/0"
+    tcp_options {
+      min = 80
+      max = 80
+    }
+  }
 
   # ICMP ping (optional, useful for troubleshooting)
   ingress_security_rules {
