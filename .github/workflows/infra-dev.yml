@@ -354,12 +354,9 @@ jobs:
           # Pull and start infrastructure services (public images — always available)
           # App services (api, portal, mitmproxy) are managed by deploy-dev.yml
           # Use --ignore-pull-failures to skip missing app service images (not pushed yet)
-          echo "📦 Pulling infrastructure service images..."
-          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy caddy
-
-          echo "🚀 Starting infrastructure services..."
-          # caddy depends_on headscale (service_healthy) — omitting --no-deps so compose respects that order
-          sudo docker compose up -d adguard headscale redis influxdb grafana nodered ntfy caddy
+          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy
+          sudo docker compose up -d --no-deps adguard headscale redis influxdb grafana nodered ntfy
+          echo "✅ Infrastructure services started (api/portal/mitmproxy started by deploy-dev.yml)"
 
           echo "Waiting for containers to initialize..."
           sleep 10
