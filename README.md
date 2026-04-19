@@ -12,23 +12,23 @@
 
 ## 🏥 Health Status
 
-**Last checked:** 2026-04-18 23:40:19 UTC
+**Last checked:** 2026-04-19 03:24:27 UTC
 
 ### Dev Environment
 
 <!-- HEALTH_TABLE_DEV_START -->
 | Service | Status | Response Time |
 |---------|--------|----------------|
-| Portal | ❌ HTTP 530 | 149ms |
-| API | ❌ HTTP 530 | 146ms |
-| AdGuard Home | ✅ HTTP 302 | 124ms |
-| Headscale | ❌ HTTP 000000 | 26ms |
-| mitmproxy | ❌ HTTP 530 | 117ms |
-| Grafana | ✅ HTTP 302 | 146ms |
-| Node-RED | ❌ HTTP 530 | 85ms |
-| ntfy | ❌ HTTP 530 | 87ms |
-| Redis | ❌ unhealthy | 142ms |
-| InfluxDB | ❌ unhealthy | 108ms |
+| Portal | ❌ HTTP 502 | 284ms |
+| API | ✅ HTTP 200 | 326ms |
+| AdGuard Home | ✅ HTTP 302 | 114ms |
+| Headscale | ❌ HTTP 000000 | 38ms |
+| mitmproxy | ❌ HTTP 502 | 278ms |
+| Grafana | ✅ HTTP 302 | 78ms |
+| Node-RED | ✅ HTTP 200 | 270ms |
+| ntfy | ✅ HTTP 200 | 267ms |
+| Redis | ✅ healthy | 1424ms |
+| InfluxDB | ✅ healthy | 1080ms |
 <!-- HEALTH_TABLE_DEV_END -->
 
 ### Prod Environment
@@ -36,16 +36,16 @@
 <!-- HEALTH_TABLE_PROD_START -->
 | Service | Status | Response Time |
 |---------|--------|----------------|
-| Portal | ❌ HTTP 530 | 152ms |
-| API | ❌ HTTP 530 | 74ms |
+| Portal | ❌ HTTP 530 | 90ms |
+| API | ❌ HTTP 530 | 86ms |
 | AdGuard Home | ❌ HTTP 530 | 82ms |
-| Headscale | ❌ HTTP 000000 | 53ms |
-| mitmproxy | ❌ HTTP 530 | 87ms |
-| Grafana | ❌ HTTP 530 | 81ms |
+| Headscale | ❌ HTTP 000000 | 269ms |
+| mitmproxy | ❌ HTTP 530 | 83ms |
+| Grafana | ❌ HTTP 530 | 85ms |
 | Node-RED | ❌ HTTP 530 | 89ms |
-| ntfy | ❌ HTTP 000000 | 26ms |
-| Redis | ❌ unhealthy | 138ms |
-| InfluxDB | ❌ unhealthy | 132ms |
+| ntfy | ❌ HTTP 000000 | 34ms |
+| Redis | ❌ unhealthy | 250ms |
+| InfluxDB | ❌ unhealthy | 117ms |
 <!-- HEALTH_TABLE_PROD_END -->
 
 ---
