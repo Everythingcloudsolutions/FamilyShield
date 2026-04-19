@@ -40,12 +40,13 @@ resource "cloudflare_record" "tunnel" {
 # vpn${env_suffix} uses direct public IP + Caddy reverse proxy instead of Cloudflare Tunnel.
 # This avoids Cloudflare's limitation with WebSocket POST and custom upgrade headers.
 resource "cloudflare_record" "vpn_direct" {
-  count   = var.oci_public_ip != null ? 1 : 0
-  zone_id = var.cloudflare_zone_id
-  name    = "vpn${local.env_suffix}"
-  type    = "A"
-  content = var.oci_public_ip
-  proxied = false # DNS only, no Cloudflare proxy
-  ttl     = 300   # 5 min — allows quick IP changes during testing
-  comment = "FamilyShield ${var.environment} — Headscale public IP (Caddy reverse proxy, no tunnel)"
+  count           = var.oci_public_ip != null ? 1 : 0
+  zone_id         = var.cloudflare_zone_id
+  name            = "vpn${local.env_suffix}"
+  type            = "A"
+  content         = var.oci_public_ip
+  proxied         = false # DNS only, no Cloudflare proxy
+  ttl             = 300   # 5 min — allows quick IP changes during testing
+  allow_overwrite = true  # always update to match current VM IP on infra refresh
+  comment         = "FamilyShield ${var.environment} — Headscale public IP (Caddy reverse proxy, no tunnel)"
 }
