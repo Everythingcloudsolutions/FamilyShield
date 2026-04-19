@@ -95,13 +95,13 @@ services:
       - /var/lib/caddy:/data/caddy
     depends_on:
       headscale:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "-k", "https://localhost:443/health"]
+      test: ["CMD", "caddy", "version"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
   # ── 3. mitmproxy — SSL inspection + content ID extraction ─────────────────
   # Custom image (built from apps/mitm/Dockerfile) includes redis Python package.

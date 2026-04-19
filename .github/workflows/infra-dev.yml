@@ -370,11 +370,11 @@ jobs:
           # Verify critical services are running
           echo "🔍 Verifying critical services..."
           for service in headscale redis caddy; do
-            if sudo docker ps --filter "name=familyshield-$service" --format '{{.Names}}' | grep -q "familyshield-$service"; then
-              echo "✅ familyshield-$service is running"
+            if sudo docker ps --filter "name=familyshield-\$service" --format '{{.Names}}' | grep -q "familyshield-\$service"; then
+              echo "✅ familyshield-\$service is running"
             else
-              echo "❌ CRITICAL: familyshield-$service is NOT running"
-              sudo docker logs "familyshield-$service" 2>&1 | tail -20 || true
+              echo "❌ CRITICAL: familyshield-\$service is NOT running"
+              sudo docker logs "familyshield-\$service" 2>&1 | tail -20 || true
               exit 1
             fi
           done
