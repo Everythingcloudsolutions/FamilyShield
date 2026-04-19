@@ -857,6 +857,36 @@ This is the minimum hardening sequence Claude Code should recommend and preserve
 
 ## Known Issues & Troubleshooting
 
+### AdGuard — Port 443 Conflict with Caddy (2026-04-18 — FIXED)
+
+**Error:** `failed to bind host port 0.0.0.0:443/tcp: address already in use` when docker-compose starts.
+
+**Root cause:** Caddy (systemd service) and AdGuard (docker container) both tried to bind to port 443:
+
+- **Caddy** — HTTPS reverse proxy for Headscale on `0.0.0.0:443`
+- **AdGuard** — DoH (DNS over HTTPS) on `0.0.0.0:443`
+
+**Fix (commit 1ac8bd7):** Removed `443:443/tcp` port binding from AdGuard in `docker-compose.yaml.tpl`. Devices use standard DNS (TCP/UDP on 53) or DoT (port 853) instead.
+
+```yaml
+# Before
+ports:
+  - "53:53/tcp"
+  - "53:53/udp"
+  - "3080:80/tcp"
+  - "443:443/tcp"     # ← Removed — conflicts with Caddy
+  - "853:853/tcp"
+
+# After
+ports:
+  - "53:53/tcp"
+  - "53:53/udp"
+  - "3080:80/tcp"
+  - "853:853/tcp"     # Caddy uses 443 for Headscale HTTPS proxy
+```
+
+**Pattern:** When adding a new reverse proxy (like Caddy), audit all service port bindings to avoid conflicts with well-known HTTPS ports (443).
+
 ### mitmproxy — Port Isolation (2026-04-17)
 
 **Fix:** Updated mitmproxy CMD to use separate ports for web UI (8081) and listen mode (8888/8889). This prevents port conflicts when running mitmproxy locally alongside other services.
