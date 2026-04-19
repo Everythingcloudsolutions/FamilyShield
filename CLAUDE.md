@@ -857,6 +857,44 @@ This is the minimum hardening sequence Claude Code should recommend and preserve
 
 ## Known Issues & Troubleshooting
 
+### Caddy — Moved from Systemd to Docker (2026-04-19 — REFACTORED)
+
+**Change:** Caddy is now a Docker service in `docker-compose.yml`, not a systemd unit.
+
+**Why:** Systemd Caddy failed to start reliably during VM bootstrap, causing infra-dev.yml workflow to fail and block cloudflared startup. Docker-managed services are simpler and more reliable.
+
+**How it works now:**
+
+- `docker-compose.yaml.tpl` includes `caddy` service
+- Depends on `headscale` service (waits for it to be healthy)
+- Mounts `/etc/caddy/Caddyfile` (written by cloud-init, already exists)
+- Auto-restarts on failure via docker-compose
+- No manual intervention needed
+
+**Architecture:**
+
+```
+Device enrollment request
+  ↓
+vpn-dev.everythingcloud.ca (DNS A record → OCI public IP)
+  ↓
+OCI VM port 443 (Caddy Docker container)
+  ↓
+Caddy reverse proxy (preserves WebSocket Upgrade headers)
+  ↓
+Headscale (localhost:8080 in Docker)
+  ↓
+Device successfully enrolls in Tailscale
+```
+
+**Benefits:**
+
+- ✅ Headscale accessible via direct public IP (not Cloudflare Tunnel)
+- ✅ WebSocket Upgrade headers preserved (Tailscale Noise protocol works)
+- ✅ No systemd complexity
+- ✅ Auto-restart on container failure
+- ✅ Fully managed by docker-compose (like all other services)
+
 ### AdGuard — Port 443 Conflict with Caddy (2026-04-18 — FIXED)
 
 **Error:** `failed to bind host port 0.0.0.0:443/tcp: address already in use` when docker-compose starts.
