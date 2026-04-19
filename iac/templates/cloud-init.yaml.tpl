@@ -133,6 +133,7 @@ write_files:
       ufw default deny incoming
       ufw default allow outgoing
       ufw allow 22/tcp     # SSH
+      ufw allow 80/tcp     # HTTP — Caddy ACME challenge (auto-redirects to HTTPS after cert issued)
       ufw allow 443/tcp    # HTTPS (Caddy reverse proxy for Headscale)
       ufw allow 443/udp    # QUIC protocol
       ufw allow 51820/udp  # WireGuard VPN
