@@ -84,6 +84,11 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
       service  = "http://localhost:9000"
     }
 
+    ingress_rule {
+      hostname = "vpn-admin${local.env_suffix}.${var.root_domain}"
+      service  = "http://localhost:3100"
+    }
+
     # Catch-all — must be last (no hostname)
     ingress_rule {
       service = "http_status:404"

@@ -19,8 +19,9 @@ packages:
   - fail2ban
   - wireguard
   - resolvconf
-  - ca-certificates      # Required for Caddy HTTPS certificate validation
-  - iptables-persistent  # Persists iptables rules across reboots (saves /etc/iptables/rules.v4)
+  - ca-certificates         # Required for Caddy HTTPS certificate validation
+  - iptables                # NAT REDIRECT rules for mitmproxy transparent proxy (F-28)
+  - netfilter-persistent    # Persists iptables rules across reboots (/etc/iptables/rules.v4)
 
 # Create ubuntu user docker access
 groups:
@@ -128,18 +129,27 @@ write_files:
       chown -R 1000:1000 "$DATA_MOUNT/mitmproxy"      # mitmproxy user in container is uid/gid 1000
       echo "Persistent data volume ready at $DATA_MOUNT ($(df -h $DATA_MOUNT | tail -1 | awk '{print $4}') free)"
 
-  # UFW rules
+  # UFW rules (with mitmproxy support)
   - path: /tmp/setup-ufw.sh
     content: |
       #!/bin/bash
-      ufw default deny incoming
-      ufw default allow outgoing
-      ufw allow 22/tcp     # SSH
-      ufw allow 80/tcp     # HTTP — Caddy ACME challenge (auto-redirects to HTTPS after cert issued)
-      ufw allow 443/tcp    # HTTPS (Caddy reverse proxy for Headscale)
-      ufw allow 443/udp    # QUIC protocol
-      ufw allow 51820/udp  # WireGuard VPN
-      ufw --force enable
+      set -euo pipefail
+      sudo ufw default deny incoming
+      sudo ufw default allow outgoing
+      sudo ufw allow 22/tcp     # SSH
+      sudo ufw allow 80/tcp     # HTTP — Caddy ACME challenge (auto-redirects to HTTPS after cert issued)
+      sudo ufw allow 443/tcp    # HTTPS (Caddy reverse proxy for Headscale)
+      sudo ufw allow 443/udp    # QUIC protocol
+      sudo ufw allow 51820/udp  # WireGuard VPN
+      # Allow mitmproxy ports (local and VPN)
+      sudo ufw allow 8888/tcp   # mitmproxy HTTP (mitm.it cert page)
+      sudo ufw allow 8889/tcp   # mitmproxy HTTPS (transparent proxy)
+      # UFW route rules for transparent proxying (F-28)
+      # Redirect TCP 443 from Tailscale VPN clients to mitmproxy 8889
+      sudo ufw route allow proto tcp from 100.64.0.0/10 to any port 443
+      sudo ufw route allow proto tcp from 100.64.0.0/10 to any port 80
+      # Note: UFW does not natively support REDIRECT, but can allow forwarding. Actual DNAT/REDIRECT may require a custom systemd service if strict transparent proxying is needed.
+      sudo ufw --force enable
 
   # fail2ban config
   - path: /etc/fail2ban/jail.local
@@ -196,17 +206,12 @@ runcmd:
   - chown -R ubuntu:ubuntu /opt/familyshield
 
   # ── mitmproxy transparent proxy intercept (F-28) ─────────────────────────
-  # Intercept TCP 443 from Tailscale VPN clients (100.64.0.0/10 subnet) and
-  # redirect to mitmproxy's transparent listener on port 8889.
-  # This is the single rule that makes SSL inspection work — without it,
-  # enrolled devices bypass mitmproxy entirely and mitm.it shows no interception.
-  # Also forward port 80 so mitmproxy can respond to plain-HTTP mitm.it cert page.
-  # iptables-persistent saves these rules to /etc/iptables/rules.v4 so they
-  # survive reboots without any additional systemd unit.
-  - iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889
-  - iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 80 -j REDIRECT --to-port 8888
-  - mkdir -p /etc/iptables
-  - iptables-save > /etc/iptables/rules.v4
+  # REDIRECT TCP 443/80 from Tailscale VPN clients (100.64.0.0/10) to mitmproxy.
+  # Idempotent: iptables -C checks before -A to avoid duplicate rules on re-run.
+  - sudo iptables -t nat -C PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889 2>/dev/null || sudo iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889
+  - sudo iptables -t nat -C PREROUTING -s 100.64.0.0/10 -p tcp --dport 80 -j REDIRECT --to-port 8888 2>/dev/null || sudo iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 80 -j REDIRECT --to-port 8888
+  - sudo mkdir -p /etc/iptables
+  - sudo sh -c 'iptables-save > /etc/iptables/rules.v4'
 
   # NOTE: Caddy now runs as a Docker service (caddy container in docker-compose)
   # Caddyfile is already written above; docker-compose will mount it

@@ -76,7 +76,39 @@ services:
       timeout: 10s
       retries: 3
 
-  # ── 2b. Caddy — HTTPS reverse proxy for Headscale (Noise protocol + WebSocket) ──
+  # ── 2b. Headplane — Web UI for Headscale (device enrolment, preauth keys, routes) ──
+  # Headplane connects to Headscale's HTTP API and gRPC socket locally.
+  # Protected by Cloudflare Zero Trust (admin email OTP).
+  # Port 3100 → exposed via Cloudflare Tunnel at vpn-admin${env_suffix}.everythingcloud.ca
+  headplane:
+    image: ghcr.io/tale/headplane:latest
+    container_name: familyshield-headplane
+    restart: unless-stopped
+    networks:
+      familyshield:
+        ipv4_address: 172.20.0.14
+    ports:
+      - "3100:3100"
+    volumes:
+      - /opt/familyshield-data/headscale:/var/lib/headscale:ro
+      - /var/run/headscale:/var/run/headscale:ro
+    environment:
+      - HEADSCALE_URL=http://172.20.0.3:8080
+      - HEADSCALE_CONFIG_PATH=/var/lib/headscale/config.yaml
+      - COOKIE_SECRET=${headplane_cookie_secret}
+      - ROOT_API_KEY=${headplane_api_key}
+      - DISABLE_API_KEY_LOGIN=false
+    depends_on:
+      headscale:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3100"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── 2c. Caddy — HTTPS reverse proxy for Headscale (Noise protocol + WebSocket) ──
   # Listens on 0.0.0.0:443, proxies to Headscale localhost:8080 with WebSocket support.
   # DNS A record (vpn${env_suffix}.everythingcloud.ca) points directly to OCI public IP,
   # bypassing Cloudflare Tunnel to preserve HTTP Upgrade headers required by Tailscale.
@@ -199,6 +231,9 @@ services:
       - TZ=America/Toronto
       - NEXT_PUBLIC_SUPABASE_URL=${supabase_url}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${supabase_anon_key}
+      # API base URL used by the /cert download link in the portal.
+      # Must be the public Cloudflare Tunnel hostname, not localhost.
+      - NEXT_PUBLIC_API_URL=${next_public_api_url}
       # Next.js standalone binds to Docker's HOSTNAME env var (container IP) by default.
       # Setting 0.0.0.0 ensures healthcheck (localhost:3000) and port mapping work correctly.
       - HOSTNAME=0.0.0.0

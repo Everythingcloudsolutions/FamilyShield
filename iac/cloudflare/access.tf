@@ -128,6 +128,41 @@ resource "cloudflare_zero_trust_access_policy" "portainer_admin_email" {
   }
 }
 
+# ── Access Application: Headplane (VPN admin UI) ─────────────────────────────
+resource "cloudflare_zero_trust_access_application" "headplane" {
+  account_id       = var.cloudflare_account_id
+  name             = "FamilyShield VPN Admin ${var.environment}"
+  domain           = "vpn-admin${local.env_suffix}.${var.root_domain}"
+  type             = "self_hosted"
+  session_duration = "8h"
+
+  app_launcher_visible = false
+}
+
+resource "cloudflare_zero_trust_access_policy" "headplane_service_auth" {
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.headplane.id
+  name           = "Allow GitHub Actions service token"
+  decision       = "non_identity"
+  precedence     = 1
+
+  include {
+    service_token = [cloudflare_zero_trust_access_service_token.github_actions.id]
+  }
+}
+
+resource "cloudflare_zero_trust_access_policy" "headplane_admin_email" {
+  account_id     = var.cloudflare_account_id
+  application_id = cloudflare_zero_trust_access_application.headplane.id
+  name           = "Allow admin email"
+  decision       = "allow"
+  precedence     = 2
+
+  include {
+    email = [var.admin_email]
+  }
+}
+
 # ── Access Application: SSH ───────────────────────────────────────────────────
 # type = "self_hosted" (NOT "browser_ssh") — native SSH via cloudflared proxy
 # browser_rendering must remain OFF for cloudflared access ssh to work

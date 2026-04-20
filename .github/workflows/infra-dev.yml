@@ -225,6 +225,8 @@ jobs:
           INFLUXDB_ADMIN_TOKEN: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN ||
             'FamilyShield-InfluxDB-Token-Dev' }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD || 'FamilyShield-Grafana-Dev' }}
+          HEADPLANE_COOKIE_SECRET: ${{ secrets.HEADPLANE_COOKIE_SECRET || 'headplane-dev-cookie-secret-change-in-prod' }}
+          HEADPLANE_API_KEY: ${{ secrets.HEADPLANE_API_KEY || '' }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: |
@@ -251,6 +253,9 @@ jobs:
             -e "s|\${influxdb_password}|$INFLUXDB_PASSWORD|g" \
             -e "s|\${influxdb_admin_token}|$INFLUXDB_ADMIN_TOKEN|g" \
             -e "s|\${grafana_password}|$GRAFANA_PASSWORD|g" \
+            -e "s|\${headplane_cookie_secret}|$HEADPLANE_COOKIE_SECRET|g" \
+            -e "s|\${headplane_api_key}|$HEADPLANE_API_KEY|g" \
+            -e "s|\${next_public_api_url}|https://api-dev.everythingcloud.ca|g" \
             -e 's|\$\${|\${|g' \
             iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
 
@@ -340,9 +345,9 @@ jobs:
           sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
 
           # ── mitmproxy transparent proxy intercept (F-28) ─────────────────────────
-          # Redirect TCP 443 and 80 from Tailscale VPN clients to mitmproxy's
-          # transparent listener. Idempotent: check before adding to avoid duplicates.
-          # Rules are persisted to /etc/iptables/rules.v4 (iptables-persistent package).
+          # REDIRECT TCP 443/80 from Tailscale VPN clients (100.64.0.0/10) to mitmproxy.
+          # Idempotent: -C checks before -A to avoid duplicate rules on repeated runs.
+          # Persisted to /etc/iptables/rules.v4 via netfilter-persistent (installed by cloud-init).
           if ! sudo iptables -t nat -C PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889 2>/dev/null; then
             sudo iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889
             echo "✅ iptables REDIRECT rule added: TCP 443 → 8889 (mitmproxy HTTPS)"
@@ -356,7 +361,7 @@ jobs:
             echo "✅ iptables REDIRECT rule already present (TCP 80 → 8888)"
           fi
           sudo mkdir -p /etc/iptables
-          sudo iptables-save | sudo tee /etc/iptables/rules.v4 > /dev/null
+          sudo sh -c 'iptables-save > /etc/iptables/rules.v4'
           echo "✅ iptables rules persisted to /etc/iptables/rules.v4"
 
           cd /opt/familyshield
