@@ -339,6 +339,26 @@ jobs:
           sudo systemctl restart systemd-resolved
           sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
 
+          # ── mitmproxy transparent proxy intercept (F-28) ─────────────────────────
+          # Redirect TCP 443 and 80 from Tailscale VPN clients to mitmproxy's
+          # transparent listener. Idempotent: check before adding to avoid duplicates.
+          # Rules are persisted to /etc/iptables/rules.v4 (iptables-persistent package).
+          if ! sudo iptables -t nat -C PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889 2>/dev/null; then
+            sudo iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889
+            echo "✅ iptables REDIRECT rule added: TCP 443 → 8889 (mitmproxy HTTPS)"
+          else
+            echo "✅ iptables REDIRECT rule already present (TCP 443 → 8889)"
+          fi
+          if ! sudo iptables -t nat -C PREROUTING -s 100.64.0.0/10 -p tcp --dport 80 -j REDIRECT --to-port 8888 2>/dev/null; then
+            sudo iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 80 -j REDIRECT --to-port 8888
+            echo "✅ iptables REDIRECT rule added: TCP 80 → 8888 (mitmproxy HTTP / mitm.it)"
+          else
+            echo "✅ iptables REDIRECT rule already present (TCP 80 → 8888)"
+          fi
+          sudo mkdir -p /etc/iptables
+          sudo iptables-save | sudo tee /etc/iptables/rules.v4 > /dev/null
+          echo "✅ iptables rules persisted to /etc/iptables/rules.v4"
+
           cd /opt/familyshield
           echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
