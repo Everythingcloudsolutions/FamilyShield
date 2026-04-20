@@ -77,9 +77,9 @@ services:
       retries: 3
 
   # ── 2b. Headplane — Web UI for Headscale (device enrolment, preauth keys, routes) ──
-  # Headplane connects to Headscale's HTTP API and gRPC socket locally.
+  # Headplane v0.6+ connects to Headscale's HTTP API.
   # Protected by Cloudflare Zero Trust (admin email OTP).
-  # Port 3100 → exposed via Cloudflare Tunnel at vpn-admin${env_suffix}.everythingcloud.ca
+  # Port 3000 → exposed via Cloudflare Tunnel at vpn-admin${env_suffix}.everythingcloud.ca
   headplane:
     image: ghcr.io/tale/headplane:latest
     container_name: familyshield-headplane
@@ -88,25 +88,25 @@ services:
       familyshield:
         ipv4_address: 172.20.0.14
     ports:
-      - "3100:3100"
+      - "3100:3000"     # headplane listens on 3000 internally; host 3100 avoids conflicts
     volumes:
-      - /opt/familyshield-data/headscale:/var/lib/headscale:ro
-      - /var/run/headscale:/var/run/headscale:ro
+      - /opt/familyshield-data/headplane:/var/lib/headplane
     environment:
-      - HEADSCALE_URL=http://172.20.0.3:8080
-      - HEADSCALE_CONFIG_PATH=/var/lib/headscale/config.yaml
-      - COOKIE_SECRET=${headplane_cookie_secret}
-      - ROOT_API_KEY=${headplane_api_key}
-      - DISABLE_API_KEY_LOGIN=false
+      # v0.6+ uses double-underscore env var overrides with this flag set
+      - HEADPLANE_LOAD_ENV_OVERRIDES=true
+      - HEADPLANE_HEADSCALE__URL=http://172.20.0.3:8080
+      - HEADPLANE_HEADSCALE__API_KEY=${headplane_api_key}
+      - HEADPLANE_SERVER__PORT=3000
+      - HEADPLANE_SERVER__COOKIE_SECRET=${headplane_cookie_secret}
     depends_on:
       headscale:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3100"]
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/admin || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
 
   # ── 2c. Caddy — HTTPS reverse proxy for Headscale (Noise protocol + WebSocket) ──
   # Listens on 0.0.0.0:443, proxies to Headscale localhost:8080 with WebSocket support.
