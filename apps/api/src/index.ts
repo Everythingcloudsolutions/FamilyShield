@@ -13,6 +13,8 @@ import "dotenv/config";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import pino from "pino";
+import fs from "fs";
+import path from "path";
 import { startEventWorker } from "./worker/event-consumer";
 import { createRedisClient } from "./lib/redis";
 import { createSupabaseClient } from "./lib/supabase";
@@ -53,6 +55,28 @@ async function main() {
   app.get("/metrics", metricsLimiter, async (_req, res) => {
     const queueLength = await redis.lLen("familyshield:content_events");
     res.json({ queue_depth: queueLength });
+  });
+
+  // Serve the mitmproxy CA certificate so the portal /cert page can offer a download.
+  // The cert lives at /opt/familyshield-data/mitmproxy/mitmproxy-ca-cert.pem on the server.
+  // Locally (dev), it falls back to MITMPROXY_CERT_PATH env var or a relative path.
+  const CERT_PATH =
+    process.env.MITMPROXY_CERT_PATH ??
+    "/opt/familyshield-data/mitmproxy/mitmproxy-ca-cert.pem";
+
+  app.get("/cert", (_req, res) => {
+    if (!fs.existsSync(CERT_PATH)) {
+      res.status(404).json({
+        error: "Certificate not found",
+        hint: "Run the FamilyShield stack and let mitmproxy generate its CA on first start. The cert will appear at " + CERT_PATH,
+      });
+      return;
+    }
+    const cert = fs.readFileSync(CERT_PATH);
+    res.setHeader("Content-Type", "application/x-pem-file");
+    res.setHeader("Content-Disposition", 'attachment; filename="familyshield-ca.pem"');
+    res.setHeader("Cache-Control", "no-store");
+    res.send(cert);
   });
 
   app.listen(PORT, () => {

@@ -23,8 +23,16 @@ derp:
   update_frequency: 24h
 
 dns:
+  # Push AdGuard Home as the DNS resolver to all enrolled devices automatically.
+  # Devices receive 172.20.0.2 (AdGuard's Docker bridge IP on the OCI VM) via
+  # Tailscale DNS push — no manual DNS config on the child's device is required.
+  # override_local_dns: true replaces the device's existing resolver entirely,
+  # so ISP DNS cannot bypass AdGuard's blocklists.
   magic_dns: false
-  override_local_dns: false
+  nameservers:
+    global:
+      - 172.20.0.2
+  override_local_dns: true
 
 database:
   type: sqlite

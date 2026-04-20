@@ -1,9 +1,23 @@
 # FamilyShield — MVP Plan, Feature List & Development Roadmap
 
-> Last updated: 2026-04-20
+> Last updated: 2026-04-21
 > Audience: Developer (Mohit) + Claude Code — this is the anchor document for all active development
 > Status tracker: See Phase checklists below. Update this file as items are completed.
 > **Current phase:** Phase 2 — Device-Testable Application (steps 2a + 2b)
+
+---
+
+## Design Principles (Non-Negotiable)
+
+Every feature and architectural decision must be evaluated against these five principles:
+
+| Principle | What It Means in Practice |
+|---|---|
+| **Security is paramount** | Default-deny network access. Zero Trust for all admin surfaces. RLS on every DB table. No secrets in code or logs. Auth before data. |
+| **Keep it simple (KISS)** | Prefer one working tool over two half-working ones. No premature abstractions. A single OCI VM beats a Kubernetes cluster at this scale. |
+| **Don't reinvent the wheel** | Use Tailscale/Headscale (VPN), AdGuard Home (DNS), mitmproxy (HTTPS inspection), Supabase (DB+realtime), ntfy (push). These are proven open-source tools. |
+| **Low cost & open source** | Every component must be free or near-free at family scale. OCI Always Free tier. Cloudflare free tier. Groq free tier. No SaaS lock-in. |
+| **Scalable by design** | Architecture supports multiple children and devices without re-engineering. One VM today → easily expandable. Stateless app containers. Persistent data volume. |
 
 ---
 
@@ -106,9 +120,9 @@ No routine operation should require SSH or CLI access. Key generation, device ma
 | F-12 | Parent Portal — Devices Page | Portal + Supabase | Enrolled devices, profiles, last-seen. Add Device button. | ✅ Code complete |
 | F-13 | Device Enrolment Record | Supabase + Portal | Device record auto-created in `devices` when Tailscale node joins. | 🔲 Needs Headscale webhook/poll |
 | F-26 | Portal: Headscale Key Generation | Portal + Headscale API | "Add Device" calls Headscale API to generate preauth key, returns enrolment URL to parent. | 🔲 Phase 2c |
-| F-27 | Headscale DNS Push | headscale.yaml | `dns_config` pushes `172.20.0.2` to enrolled devices automatically. Parent never sets DNS manually. | 🔲 Phase 2a |
-| F-28 | mitmproxy iptables Redirect | VM + cloud-init | `iptables REDIRECT` intercepts TCP 443 from `100.64.0.0/10` → mitmproxy port 8889. Persisted on boot. | 🔲 Phase 2a — critical blocker |
-| F-29 | mitmproxy CA Cert Portal Download | Portal | `/cert` page serves the mitmproxy CA cert with per-OS install instructions. | 🔲 Phase 2a |
+| F-27 | Headscale DNS Push | headscale.yaml | `dns_config` pushes `172.20.0.2` to enrolled devices automatically. Parent never sets DNS manually. | ✅ Done — headscale.yaml updated |
+| F-28 | mitmproxy iptables Redirect | VM + cloud-init | `iptables REDIRECT` intercepts TCP 443 from `100.64.0.0/10` → mitmproxy port 8889. Persisted on boot. | ✅ Done — cloud-init + infra-dev.yml bootstrap updated |
+| F-29 | mitmproxy CA Cert Portal Download | Portal | `/cert` page serves the mitmproxy CA cert with per-OS install instructions. | ✅ Done — portal /cert page + API /cert endpoint built |
 
 ---
 
@@ -153,10 +167,10 @@ These are blockers. Nothing in 2b works until all four are complete.
 
 | # | Task | Feature | How | Acceptance | Status |
 | --- | --- | --- | --- | --- | --- |
-| 2a.1 | Fix AdGuard upstream DNS | F-01 | SSH port-forward → AdGuard admin UI → Settings → DNS Settings → add upstream: `8.8.8.8`, `1.1.1.1` | `nslookup google.com 172.20.0.2` resolves correctly | 🔲 Todo |
-| 2a.2 | Configure Headscale DNS push | F-27 | Edit `apps/platform-config/headscale/headscale.yaml` → set `dns_config.nameservers: ["172.20.0.2"]` + `override_local_dns: true` → redeploy headscale container | Enrolled device automatically receives AdGuard as DNS — no manual device config | 🔲 Todo |
-| 2a.3 | Add iptables redirect for mitmproxy | F-28 | Add to `cloud-init.yaml.tpl` AND infra-dev.yml bootstrap SSH block: `iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889`, persist with `iptables-save > /etc/iptables/rules.v4`, install `iptables-persistent` package | `mitm.it` shows cert download page from enrolled device | 🔲 Todo — **critical blocker for the entire pipeline** |
-| 2a.4 | Add CA cert download page to portal | F-29 | Add `/cert` page to `apps/portal` that reads the mitmproxy CA cert from API and serves it with per-OS install instructions | Parent can navigate to portal URL, download cert, install as trusted root | 🔲 Todo |
+| 2a.1 | Fix AdGuard upstream DNS | F-01 | SSH port-forward → AdGuard admin UI → Settings → DNS Settings → add upstream: `8.8.8.8`, `1.1.1.1` | `nslookup google.com 172.20.0.2` resolves correctly | 🔲 **Next — manual step on VM** |
+| 2a.2 | Configure Headscale DNS push | F-27 | Edit `apps/platform-config/headscale/headscale.yaml` → set `dns_config.nameservers: ["172.20.0.2"]` + `override_local_dns: true` → redeploy headscale container | Enrolled device automatically receives AdGuard as DNS — no manual device config | ✅ Done — IaC change applied in this session, will deploy via infra-dev.yml |
+| 2a.3 | Add iptables redirect for mitmproxy | F-28 | Added to `cloud-init.yaml.tpl` AND `infra-dev.yml` bootstrap SSH block (idempotent, persisted via iptables-persistent) | `mitm.it` shows cert download page from enrolled device | ✅ Done — will apply on next infra-dev.yml run |
+| 2a.4 | Add CA cert download page to portal | F-29 | Portal `/cert` page + API `/cert` endpoint + NavBar "Setup" link | Parent navigates to portal → Setup → downloads cert, installs as trusted root | ✅ Done — needs deploy to go live |
 
 ### 2b — Device Testing (Requires 2a Complete)
 

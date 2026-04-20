@@ -19,7 +19,8 @@ packages:
   - fail2ban
   - wireguard
   - resolvconf
-  - ca-certificates  # Required for Caddy HTTPS certificate validation
+  - ca-certificates      # Required for Caddy HTTPS certificate validation
+  - iptables-persistent  # Persists iptables rules across reboots (saves /etc/iptables/rules.v4)
 
 # Create ubuntu user docker access
 groups:
@@ -193,6 +194,19 @@ runcmd:
 
   # Create app dirs (boot volume — service configs, not data)
   - chown -R ubuntu:ubuntu /opt/familyshield
+
+  # ── mitmproxy transparent proxy intercept (F-28) ─────────────────────────
+  # Intercept TCP 443 from Tailscale VPN clients (100.64.0.0/10 subnet) and
+  # redirect to mitmproxy's transparent listener on port 8889.
+  # This is the single rule that makes SSL inspection work — without it,
+  # enrolled devices bypass mitmproxy entirely and mitm.it shows no interception.
+  # Also forward port 80 so mitmproxy can respond to plain-HTTP mitm.it cert page.
+  # iptables-persistent saves these rules to /etc/iptables/rules.v4 so they
+  # survive reboots without any additional systemd unit.
+  - iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889
+  - iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 80 -j REDIRECT --to-port 8888
+  - mkdir -p /etc/iptables
+  - iptables-save > /etc/iptables/rules.v4
 
   # NOTE: Caddy now runs as a Docker service (caddy container in docker-compose)
   # Caddyfile is already written above; docker-compose will mount it

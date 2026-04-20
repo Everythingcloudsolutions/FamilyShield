@@ -159,7 +159,7 @@ There are four parts to enrolling a device:
 Before you start, make sure you have:
 
 - A parent phone and the child's phone — both connected to WiFi
-- The **VPN server address** from your IT admin: `https://vpn.everythingcloud.ca`. This is a one-time setting entered into the Tailscale app — you will not need to type it on every device.
+- The **VPN server address** from your IT admin: `https://vpn-dev.everythingcloud.ca`. This is a one-time setting entered into the Tailscale app — you will not need to type it on every device.
 - An **enrolment key** from your IT admin (a long code sent to you via iMessage or WhatsApp — you copy it on your phone and paste it on the child's device). See Part A below.
 - About 20 minutes of uninterrupted time
 
@@ -217,7 +217,7 @@ This is done inside the Tailscale app on the child's device. The app asks for th
 3. Tap that option and enter the server address:
 
    ```
-   https://vpn.everythingcloud.ca
+   https://vpn-dev.everythingcloud.ca
    ```
 
    Then tap **Save** or **Done**.
@@ -236,6 +236,8 @@ This is done inside the Tailscale app on the child's device. The app asks for th
 **Why is this needed?** So FamilyShield can see what your child is watching — YouTube video titles, Roblox game names, and so on. Without this certificate, we can only see that they visited YouTube, not which video they watched. The certificate cannot read passwords, payment details, or private messages.
 
 **Make sure Tailscale shows Connected before doing these steps.**
+
+> **Download the certificate from the portal:** Open the FamilyShield portal in a browser and go to **Setup** (in the top navigation bar), or go directly to `https://familyshield-dev.everythingcloud.ca/cert`. Tap **Download Certificate** to get the file `familyshield-ca.pem`. Then follow the device-specific steps below to install it.
 
 #### iPhone
 
@@ -399,7 +401,7 @@ Now switch to the child's device. Follow the instructions for their device type 
 4. Enter the server address:
 
    ```
-   https://vpn.everythingcloud.ca
+   https://vpn-dev.everythingcloud.ca
    ```
 
    Tap **Save** or **Done**.
@@ -426,7 +428,7 @@ Now switch to the child's device. Follow the instructions for their device type 
 4. Enter the server address:
 
    ```
-   https://vpn.everythingcloud.ca
+   https://vpn-dev.everythingcloud.ca
    ```
 
    Tap **Save**.
@@ -447,7 +449,7 @@ Now switch to the child's device. Follow the instructions for their device type 
 1. Go to **<https://tailscale.com/download/windows>** and download the installer. Run it and click **Next** through the steps.
 2. Look for the Tailscale icon in the bottom-right system tray (near the clock). Click it, then click **Log in**.
 3. A browser window opens. Before signing in with an account, look for **"Use a custom control server"** or **"Self-hosted control server"** and click it.
-4. Enter: `https://vpn.everythingcloud.ca` and click **Save**.
+4. Enter: `https://vpn-dev.everythingcloud.ca` and click **Save**.
 5. The page now shows an **Auth key** field. Paste the enrolment key.
 6. Click **Sign in** or **Connect**.
 7. The Tailscale icon in the system tray will turn green or solid to show it is connected.
@@ -463,7 +465,7 @@ Now switch to the child's device. Follow the instructions for their device type 
 1. Open the **App Store** on the Mac, search for `Tailscale`, and install it (free).
 2. Click the Tailscale icon in the **menu bar** (top-right of the screen). Click **Log in**.
 3. A browser window opens. Before signing in with an account, look for **"Use a custom control server"** and click it.
-4. Enter: `https://vpn.everythingcloud.ca` and click **Save**.
+4. Enter: `https://vpn-dev.everythingcloud.ca` and click **Save**.
 5. The page shows an **Auth key** field. Paste the enrolment key.
 6. Click **Sign in**.
 7. If the Mac asks permission to add a VPN configuration, click **Allow** and enter the Mac password.
@@ -483,20 +485,32 @@ This part must be done on the child's device while Tailscale is running (connect
 
 #### Step C-1 — Download and install the certificate
 
-1. On the child's device, open a web browser (Safari on iPhone/iPad, Chrome on Android/Windows/Mac).
-2. Type exactly this address into the browser and press Enter or Go:
+**Option 1 — Download from the portal (recommended)**
+
+1. On any device (your phone, the child's device, or your computer), open a browser and go to the FamilyShield portal.
+2. Click **Setup** in the top navigation bar, or go directly to:
+
+   ```
+   https://familyshield-dev.everythingcloud.ca/cert
+   ```
+
+3. Click **Download Certificate** — a file named `familyshield-ca.pem` will download.
+4. Transfer the file to the child's device if you downloaded it on a different device (AirDrop on Apple, Google Drive, or a USB cable).
+
+**Option 2 — Download directly from the device (requires VPN connected)**
+
+1. Make sure Tailscale shows **Connected** on the child's device.
+2. Open a browser on the child's device and go to:
 
    ```
    http://mitm.it
    ```
 
-   > **Note:** This is `http://` not `https://` — that is intentional. Type it exactly as written.
+   > This is `http://` not `https://` — that is intentional.
 
-3. A page will load showing the FamilyShield certificate download. It will have options for different device types. Tap or click the button for the correct device.
+3. The mitmproxy certificate page will load. Tap the button for the correct device type.
 
-   > **What is this page?** This page is served by the FamilyShield monitoring software (mitmproxy) on the server. It only appears when your device is connected through FamilyShield's tunnel — it proves the connection is working.
-
-Now follow the device-specific steps to actually install the certificate:
+Now follow the device-specific steps to install the certificate:
 
 ---
 
