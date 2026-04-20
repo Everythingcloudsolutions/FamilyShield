@@ -79,6 +79,11 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "main" {
       service  = "ssh://localhost:22"
     }
 
+    ingress_rule {
+      hostname = "portainer${local.env_suffix}.${var.root_domain}"
+      service  = "http://localhost:9000"
+    }
+
     # Catch-all — must be last (no hostname)
     ingress_rule {
       service = "http_status:404"

@@ -119,7 +119,8 @@ write_files:
         "$DATA_MOUNT/mitmproxy" \
         "$DATA_MOUNT/redis" \
         "$DATA_MOUNT/ntfy/cache" \
-        "$DATA_MOUNT/ntfy/data"
+        "$DATA_MOUNT/ntfy/data" \
+        "$DATA_MOUNT/portainer"
       chown -R ubuntu:ubuntu "$DATA_MOUNT"
       # Per-service ownership overrides — must match container user UIDs
       chown -R 472:472 "$DATA_MOUNT/grafana"          # Grafana runs as uid 472
@@ -149,7 +150,10 @@ write_files:
       bantime = 3600
 
   # Caddy configuration — reverse proxy Headscale with auto-HTTPS
-  # Listens on 0.0.0.0:443, proxies to localhost:8080 (Headscale)
+  # Uses Headscale's Docker bridge IP (172.20.0.3:8080) — NOT localhost or 127.0.0.1.
+  # Inside a Docker container, localhost/127.0.0.1 refers to the container's own loopback,
+  # not the host or other containers. Headscale is on the familyshield Docker bridge at
+  # a fixed IP (172.20.0.3) defined in docker-compose.yaml.tpl.
   - path: /etc/caddy/Caddyfile
     content: |
       vpn-${environment}.everythingcloud.ca:443 {
@@ -157,7 +161,7 @@ write_files:
           output stdout
           format console
         }
-        reverse_proxy localhost:8080 {
+        reverse_proxy 172.20.0.3:8080 {
           header_up Connection "upgrade"
           header_up Upgrade "{http.request.header.Upgrade}"
           header_up X-Forwarded-For "{http.request.header.CF-Connecting-IP}"

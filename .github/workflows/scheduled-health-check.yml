@@ -1,10 +1,6 @@
-name: Scheduled Health Check
+name: Health Check
 
 on:
-  schedule:
-    # Run every 30 minutes
-   # - cron: "*/30 * * * *"
-  # Allow manual trigger for testing
   workflow_dispatch:
 
 permissions:
@@ -17,6 +13,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: development
 
       - name: Install cloudflared
         run: |
@@ -33,16 +31,16 @@ jobs:
           chmod +x scripts/check-health.sh
           bash scripts/check-health.sh all | tee /tmp/health-report.txt
 
-      - name: Update README.md
+      - name: Update docs/status/health.md
         run: |
           python3 <<'EOF'
           import re
           from datetime import datetime
 
-          README_PATH = 'README.md'
+          HEALTH_PATH = 'docs/status/health.md'
           REPORT_PATH = '/tmp/health-report.txt'
 
-          with open(README_PATH, 'r', encoding='utf-8') as f:
+          with open(HEALTH_PATH, 'r', encoding='utf-8') as f:
             content = f.read()
 
           with open(REPORT_PATH, 'r', encoding='utf-8') as f:
@@ -55,95 +53,46 @@ jobs:
               return m.group(1).strip()
             return "| Service | Status | Response Time |\n|---------|--------|----------------|\n| (no data) | ⚠️ unknown | n/a |"
 
-          dev_table = extract_env_table(report, 'dev')
-          prod_table = extract_env_table(report, 'prod')
-
           timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
 
-          health_section = "\n".join([
-            "## 🏥 Health Status",
-            "",
-            f"**Last checked:** {timestamp}",
-            "",
-            "### Dev Environment",
-            "",
-            "<!-- HEALTH_TABLE_DEV_START -->",
-            dev_table,
-            "<!-- HEALTH_TABLE_DEV_END -->",
-            "",
-            "### Prod Environment",
-            "",
-            "<!-- HEALTH_TABLE_PROD_START -->",
-            prod_table,
-            "<!-- HEALTH_TABLE_PROD_END -->",
-            "",
-            "---",
-          ])
+          # Update Dev table and timestamp
+          dev_table = extract_env_table(report, 'dev')
+          content = re.sub(
+            r'(## Dev Environment\n\n\*\*Last checked:\*\* ).*',
+            rf'\g<1>{timestamp}',
+            content
+          )
+          content = re.sub(
+            r'<!-- HEALTH_TABLE_DEV_START -->.*?<!-- HEALTH_TABLE_DEV_END -->',
+            f'<!-- HEALTH_TABLE_DEV_START -->\n{dev_table}\n<!-- HEALTH_TABLE_DEV_END -->',
+            content, flags=re.DOTALL
+          )
 
-          if '## 🏥 Health Status' in content:
-            pattern = r'## 🏥 Health Status[\s\S]*?(?=\n## What Is FamilyShield\?)'
-            content = re.sub(pattern, health_section + "\n", content)
-          else:
-            insert_before = '\n## What Is FamilyShield?'
-            idx = content.find(insert_before)
-            if idx == -1:
-              content = content.rstrip() + "\n\n" + health_section + "\n"
-            else:
-              content = content[:idx] + "\n" + health_section + "\n" + content[idx + 1:]
+          # Update Prod table and timestamp
+          prod_table = extract_env_table(report, 'prod')
+          content = re.sub(
+            r'(## Prod Environment\n\n\*\*Last checked:\*\* ).*',
+            rf'\g<1>{timestamp}',
+            content
+          )
+          content = re.sub(
+            r'<!-- HEALTH_TABLE_PROD_START -->.*?<!-- HEALTH_TABLE_PROD_END -->',
+            f'<!-- HEALTH_TABLE_PROD_START -->\n{prod_table}\n<!-- HEALTH_TABLE_PROD_END -->',
+            content, flags=re.DOTALL
+          )
 
-          with open(README_PATH, 'w', encoding='utf-8') as f:
+          with open(HEALTH_PATH, 'w', encoding='utf-8') as f:
             f.write(content)
-          EOF
 
-      - name: Validate README health section structure
-        run: |
-          python3 <<'EOF'
-          import re
-          import sys
-
-          with open('README.md', 'r', encoding='utf-8') as f:
-            content = f.read()
-
-          section_count = len(re.findall(r'^## 🏥 Health Status\b', content, flags=re.MULTILINE))
-          if section_count != 1:
-            print(f"ERROR: Expected exactly 1 health section, found {section_count}")
-            sys.exit(1)
-
-          checks = {
-            '### Dev Environment': content.count('### Dev Environment'),
-            '### Prod Environment': content.count('### Prod Environment'),
-            '<!-- HEALTH_TABLE_DEV_START -->': content.count('<!-- HEALTH_TABLE_DEV_START -->'),
-            '<!-- HEALTH_TABLE_DEV_END -->': content.count('<!-- HEALTH_TABLE_DEV_END -->'),
-            '<!-- HEALTH_TABLE_PROD_START -->': content.count('<!-- HEALTH_TABLE_PROD_START -->'),
-            '<!-- HEALTH_TABLE_PROD_END -->': content.count('<!-- HEALTH_TABLE_PROD_END -->'),
-          }
-
-          bad = {k: v for k, v in checks.items() if v != 1}
-          if bad:
-            print('ERROR: README health markers/headings are malformed:')
-            for k, v in bad.items():
-              print(f"  - {k}: found {v}, expected 1")
-            sys.exit(1)
-
-          dev_start = content.index('<!-- HEALTH_TABLE_DEV_START -->')
-          dev_end = content.index('<!-- HEALTH_TABLE_DEV_END -->')
-          prod_start = content.index('<!-- HEALTH_TABLE_PROD_START -->')
-          prod_end = content.index('<!-- HEALTH_TABLE_PROD_END -->')
-
-          if not (dev_start < dev_end < prod_start < prod_end):
-            print('ERROR: README health table marker order is invalid')
-            sys.exit(1)
-
-          print('README health section structure is valid')
+          print(f'Updated {HEALTH_PATH} at {timestamp}')
           EOF
 
       - name: Commit and push
         run: |
           git config user.name "FamilyShield Health Check Bot"
           git config user.email "bot@everythingcloud.ca"
-          git add README.md
+          git add docs/status/health.md
 
-          # Only commit if there are changes
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else

@@ -326,7 +326,8 @@ jobs:
             /opt/familyshield-data/mitmproxy \
             /opt/familyshield-data/redis \
             /opt/familyshield-data/ntfy/cache \
-            /opt/familyshield-data/ntfy/data
+            /opt/familyshield-data/ntfy/data \
+            /opt/familyshield-data/portainer
           sudo chown -R ubuntu:ubuntu /opt/familyshield-data
           # Per-service ownership — must match container user UIDs
           sudo chown -R 472:472 /opt/familyshield-data/grafana          # Grafana runs as uid 472
@@ -354,8 +355,8 @@ jobs:
           # Pull and start infrastructure services (public images — always available)
           # App services (api, portal, mitmproxy) are managed by deploy-dev.yml
           # Use --ignore-pull-failures to skip missing app service images (not pushed yet)
-          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy
-          sudo docker compose up -d --no-deps adguard headscale redis influxdb grafana nodered ntfy
+          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy caddy portainer
+          sudo docker compose up -d --no-deps adguard headscale redis influxdb grafana nodered ntfy caddy portainer
           echo "✅ Infrastructure services started (api/portal/mitmproxy started by deploy-dev.yml)"
 
           echo "Waiting for containers to initialize..."

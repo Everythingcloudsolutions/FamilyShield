@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-18 (Portal E2E testing; VPN hostname refactor; WAF singleton fix; Headscale URL enrollment; Phase 2 device testing in progress)
+> Last updated: 2026-04-20 (Portainer added; dynamic VPN IP injection fix; staging Cloudflare tfvars; Phase 2 device testing in progress)
 
 ## Active Development Anchor
 
@@ -871,6 +871,8 @@ This is the minimum hardening sequence Claude Code should recommend and preserve
 - Auto-restarts on failure via docker-compose
 - No manual intervention needed
 
+**Critical:** The Caddyfile must use Headscale's Docker bridge IP (`172.20.0.3:8080`), NOT `localhost` or `127.0.0.1`. Inside a Docker container, those refer to the container's own loopback — not the host or other services. Using `localhost:8080` or `127.0.0.1:8080` causes `dial tcp [::1]:8080: connection refused` or `dial tcp 127.0.0.1:8080: connection refused` even when Headscale is healthy.
+
 **Architecture:**
 
 ```
@@ -878,11 +880,11 @@ Device enrollment request
   ↓
 vpn-dev.everythingcloud.ca (DNS A record → OCI public IP)
   ↓
-OCI VM port 443 (Caddy Docker container)
+OCI VM port 443 (Caddy Docker container at 172.20.0.11)
   ↓
-Caddy reverse proxy (preserves WebSocket Upgrade headers)
+Caddy reverse proxy → 172.20.0.3:8080 (Headscale's Docker bridge IP)
   ↓
-Headscale (localhost:8080 in Docker)
+Headscale container (172.20.0.3, port 8080)
   ↓
 Device successfully enrolls in Tailscale
 ```
@@ -1079,6 +1081,18 @@ local payload=$(jq -n \
 
 Use `--argjson` for boolean/numeric values, `--arg` for strings.
 
+### VPN A Record Hardcoded IP — tfvars Overrides TF_VAR (2026-04-20 — FIXED)
+
+**Problem:** `vpn-dev.everythingcloud.ca` DNS A record was not updated with the new VM IP after VM recreation. Tailscale enrollment failed with connection refused.
+
+**Root cause:** `iac/cloudflare/environments/dev/terraform.tfvars` had `oci_public_ip = "40.233.115.22"` hardcoded. In OpenTofu, **tfvars values take precedence over `TF_VAR_*` environment variables**. The workflow correctly injected the live IP via `TF_VAR_oci_public_ip`, but the hardcoded tfvars value silently won.
+
+**Fix:** Removed `oci_public_ip` from `iac/cloudflare/environments/dev/terraform.tfvars` entirely. The live IP is now injected only via `TF_VAR_oci_public_ip` in `infra-dev.yml` (captured from `tofu output vm_public_ip`). Same pattern for prod (already had no hardcoded value) and new staging tfvars.
+
+**Rule:** Never set a variable in both tfvars AND as `TF_VAR_*` when the env var is the dynamic authoritative source. Leave it out of tfvars entirely.
+
+---
+
 ### OCI NSG — tighten-ssh via tofu apply (2026-04-16)
 
 **Problem:** Three iterations of OCI CLI commands all failed (`security-group-rule`, `nsg rule`, `nsg-security-rules`) — the correct command either doesn't exist in the runner's OCI CLI version or produces unexpected errors.
@@ -1225,10 +1239,15 @@ The "Edit zone DNS" template only grants the first scope — insufficient. The o
 
 ---
 
-## Recent Improvements & Key Commits (2026-04-18)
+## Recent Improvements & Key Commits (2026-04-20)
 
 **Infrastructure:**
 
+- PR #31 (open): Portainer Docker management UI + dynamic VPN IP fix + Caddy Docker network IP fix
+  - Added Portainer service (port 9000, Zero Trust email OTP access)
+  - Removed hardcoded `oci_public_ip` from dev tfvars — now injected dynamically via `TF_VAR_oci_public_ip`
+  - Fixed Caddyfile upstream from `localhost:8080` → `172.20.0.3:8080` (Headscale's Docker bridge IP)
+  - Critical lesson: Docker containers must use bridge network IPs, never localhost, to reach sibling containers
 - PR #25: `--no-deps` flag added to bootstrap Docker Compose (prevents service dependency issues)
 - PR #24, #23, #21, #22: VPN hostname renamed for Universal SSL coverage (`headscale-dev` → `headscale`)
 - PR #20: Refactored Cloudflare URLs to remove `-prod` suffix (clean domain names across all environments)
@@ -1351,6 +1370,15 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - Renamed VPN hostname `headscale-dev` → `headscale` for Universal SSL certificate coverage
   - Implemented URL-based Headscale enrollment (parent can generate keys from portal, device enrolls via URL)
   - Removed `-prod` suffix from Cloudflare URLs (now clean: `adguard-dev.everythingcloud.ca`)
+- ✅ **Portainer added (2026-04-20):**
+  - `portainer/portainer-ce:latest` as service 11 in docker-compose (port 9000, persistent data volume)
+  - Cloudflare tunnel ingress: `portainer${env_suffix}.everythingcloud.ca → localhost:9000`
+  - DNS CNAME record + Zero Trust Access Application (admin email OTP + service token)
+  - `/opt/familyshield-data/portainer` data dir created in cloud-init and bootstrap steps
+- ✅ **VPN IP dynamic injection fix (2026-04-20):**
+  - Removed hardcoded `oci_public_ip` from `iac/cloudflare/environments/dev/terraform.tfvars`
+  - IP now injected exclusively via `TF_VAR_oci_public_ip` from workflow (tfvars override env vars — critical precedence lesson)
+  - Created `iac/cloudflare/environments/staging/terraform.tfvars` (no hardcoded IP)
 - ✅ **Automation improvements:**
   - `scheduled-health-check.yml` — daily service health monitoring with README status table updates
   - `auto-fix-vulnerabilities.yml` — Dependabot auto-merge for security patches
