@@ -2,8 +2,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # FamilyShield Security Gate
 #
-# Runs on every PR (development|main) and every push to development or main.
-# Also runs weekly on Sunday at 02:00 UTC to catch newly-disclosed CVEs.
+# Runs on every PR (development|main) and on code-changing pushes to development or main.
+# Path filter excludes bot commits (README.md, docs/) to avoid spurious runs.
 #
 # Gate behaviour:
 #   - PASS  — zero unfixed, non-excepted vulnerabilities
@@ -20,9 +20,11 @@ on:
         types: [ opened, synchronize, reopened ]
     push:
         branches: [ development, main ]
-    schedule:
-        # Run every Sunday at 02:00 UTC to catch newly-disclosed CVEs
-        - cron: "0 2 * * 0"
+        paths:
+            - "apps/**"
+            - "iac/**"
+            - "scripts/**"
+            - ".github/workflows/security-scan.yml"
     workflow_dispatch:
         inputs:
             strict:

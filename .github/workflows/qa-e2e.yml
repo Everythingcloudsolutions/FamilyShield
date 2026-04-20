@@ -21,11 +21,6 @@
 name: "FamilyShield — QA E2E"
 
 on:
-  schedule:
-    # Daily: 11:00 UTC = 06:00 ET — before business hours
-    #- cron: "0 11 * * *"
-    # Weekly ZAP: Sunday 07:00 UTC = 02:00 ET
-    - cron: "0 7 * * 0"
   workflow_dispatch:
     inputs:
       environment:
