@@ -1,6 +1,6 @@
 # FamilyShield — Architecture
 
-> Last updated: 2026-04-16 — Split pipeline architecture (infra vs app workflows), tighten-ssh via tofu apply, Cloudflare tunnel SSH for app deployment, portal auth scaffold, and Supabase RLS migration baseline
+> Last updated: 2026-04-20 — Portainer added (Docker management UI via CF tunnel + Zero Trust); dynamic VPN IP injection fix; staging Cloudflare tfvars added
 > All diagrams render natively in GitHub. For editable source files see `docs/diagrams/`.
 > Editable draw.io files: `docs/diagrams/*.drawio` — open at diagrams.net or VS Code draw.io extension.
 > Editable Excalidraw files: `docs/diagrams/*.excalidraw` — open at excalidraw.com or VS Code Excalidraw extension.
@@ -72,14 +72,20 @@ These are the conditions this architecture depends on being true. If any assumpt
 │  ├─ Portal (Next.js) ─ port 3000                       │
 │  │  └─ Parent dashboard (served via Cloudflare)        │
 │  │                                                     │
-│  └─ (Post-MVP: Grafana, Node-RED, InfluxDB)           │
+│  ├─ Portainer ─ port 9000                              │
+│  │  ├─ Docker management UI (containers, logs, exec)  │
+│  │  ├─ Protected by Cloudflare Zero Trust             │
+│  │  └─ Web: portainer-dev.everythingcloud.ca          │
+│  │                                                     │
+│  └─ (Grafana, Node-RED, InfluxDB — operational tools) │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
          │
          ├─ Cloudflare Tunnel (outbound only)
          │  ├─ portal-dev.everythingcloud.ca → localhost:3000
-         │  ├─ adguard-dev.everythingcloud.ca → localhost:80
+         │  ├─ adguard-dev.everythingcloud.ca → localhost:3080
          │  ├─ notify-dev.everythingcloud.ca → localhost:2586
+         │  ├─ portainer-dev.everythingcloud.ca → localhost:9000
          │  └─ ssh-dev.everythingcloud.ca → localhost:22
          │
          └─ Supabase (Hosted PostgreSQL)
@@ -91,22 +97,32 @@ These are the conditions this architecture depends on being true. If any assumpt
 
 | Subdomain | Points To | Auth |
 |---|---|---|
-| portal-dev.everythingcloud.ca | VM localhost:3000 | None (public portal) |
-| adguard-dev.everythingcloud.ca | VM localhost:80 | Cloudflare Zero Trust (admin email) |
+| familyshield-dev.everythingcloud.ca | VM localhost:3000 | None (public portal) |
+| adguard-dev.everythingcloud.ca | VM localhost:3080 | Cloudflare Zero Trust (admin email) |
 | notify-dev.everythingcloud.ca | VM localhost:2586 | None (topic-based) |
+| grafana-dev.everythingcloud.ca | VM localhost:3002 | Cloudflare Zero Trust (admin email) |
+| mitmproxy-dev.everythingcloud.ca | VM localhost:8888 | None (internal tool) |
+| nodered-dev.everythingcloud.ca | VM localhost:1880 | None (internal tool) |
+| portainer-dev.everythingcloud.ca | VM localhost:9000 | Cloudflare Zero Trust (admin email) |
 | ssh-dev.everythingcloud.ca | VM localhost:22 | Cloudflare Zero Trust (service token) |
+| vpn-dev.everythingcloud.ca | OCI public IP:443 → Caddy → Headscale | No proxy (DNS A record, not tunnel) |
 
 ### Service Port Map
 
 | Service | Container Name | Internal Port | External Access |
 |---|---|---|---|
-| Headscale (VPN) | familyshield-headscale | 8080 | Direct VM IP:8080 (Tailscale clients only) |
-| AdGuard Home (DNS) | familyshield-adguard | 53 (DNS) + 80 (admin) | DNS via Tailscale VPN; admin via Cloudflare tunnel |
-| mitmproxy (HTTPS proxy) | familyshield-mitmproxy | 8888 + 8889 + 8081 (web UI) | Transparent — no direct access needed |
+| Headscale (VPN) | familyshield-headscale | 8080 | Via Caddy (port 443 → vpn-dev.everythingcloud.ca) |
+| Caddy (HTTPS proxy) | familyshield-caddy | 443 | Direct public IP — Headscale enrollment only |
+| AdGuard Home (DNS) | familyshield-adguard | 53 (DNS) + 3080 (admin) | DNS via Tailscale VPN; admin via CF tunnel |
+| mitmproxy (HTTPS proxy) | familyshield-mitmproxy | 8888 + 8889 (web UI) | Transparent — no direct access needed |
 | Redis (event queue) | familyshield-redis | 6379 | Internal only |
-| API Worker (Node.js) | familyshield-api | 3001 | Internal only |
+| API Worker (Node.js) | familyshield-api | 3001 | Internal only (also via CF tunnel) |
 | ntfy (push notifications) | familyshield-ntfy | 2586 | Via Cloudflare tunnel |
 | Portal (Next.js) | familyshield-portal | 3000 | Via Cloudflare tunnel |
+| InfluxDB | familyshield-influxdb | 8086 | Internal only |
+| Grafana | familyshield-grafana | 3002 | Via Cloudflare tunnel (Zero Trust) |
+| Node-RED | familyshield-nodered | 1880 | Via Cloudflare tunnel |
+| Portainer | familyshield-portainer | 9000 | Via Cloudflare tunnel (Zero Trust) |
 
 ---
 

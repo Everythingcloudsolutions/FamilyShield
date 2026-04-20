@@ -119,7 +119,8 @@ write_files:
         "$DATA_MOUNT/mitmproxy" \
         "$DATA_MOUNT/redis" \
         "$DATA_MOUNT/ntfy/cache" \
-        "$DATA_MOUNT/ntfy/data"
+        "$DATA_MOUNT/ntfy/data" \
+        "$DATA_MOUNT/portainer"
       chown -R ubuntu:ubuntu "$DATA_MOUNT"
       # Per-service ownership overrides — must match container user UIDs
       chown -R 472:472 "$DATA_MOUNT/grafana"          # Grafana runs as uid 472

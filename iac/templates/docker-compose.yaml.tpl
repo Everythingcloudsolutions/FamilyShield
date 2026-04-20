@@ -311,7 +311,33 @@ services:
       - /opt/familyshield-data/ntfy/cache:/var/cache/ntfy
       - /opt/familyshield-data/ntfy/data:/var/lib/ntfy
 
-  # ── 11. Cloudflare Tunnel daemon ──────────────────────────────────────────
+  # ── 11. Portainer — Docker management UI ──────────────────────────────────
+  # Exposed via Cloudflare Tunnel (portainer${env_suffix}.everythingcloud.ca → localhost:9000)
+  # Protected by Cloudflare Zero Trust (admin email OTP + service token for CI).
+  # Provides full container management: start/stop/restart, logs, exec, image pulls.
+  # Persistent data on block volume so admin users and settings survive VM recreation.
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: familyshield-portainer
+    restart: unless-stopped
+    networks:
+      familyshield:
+        ipv4_address: 172.20.0.13
+    ports:
+      - "9000:9000"   # HTTP UI — exposed via Cloudflare Tunnel only (no direct internet)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/familyshield-data/portainer:/data
+    environment:
+      - TZ=America/Toronto
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9000/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── 12. Cloudflare Tunnel daemon ──────────────────────────────────────────
   # NOTE: cloudflared is intentionally NOT managed by docker-compose.
   # It is started via `docker run --restart unless-stopped --token $TUNNEL_TOKEN`
   # in the infra workflow's setup-cloudflare job. The real tunnel token is only

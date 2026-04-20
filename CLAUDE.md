@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-18 (Portal E2E testing; VPN hostname refactor; WAF singleton fix; Headscale URL enrollment; Phase 2 device testing in progress)
+> Last updated: 2026-04-20 (Portainer added; dynamic VPN IP injection fix; staging Cloudflare tfvars; Phase 2 device testing in progress)
 
 ## Active Development Anchor
 
@@ -1079,6 +1079,18 @@ local payload=$(jq -n \
 
 Use `--argjson` for boolean/numeric values, `--arg` for strings.
 
+### VPN A Record Hardcoded IP — tfvars Overrides TF_VAR (2026-04-20 — FIXED)
+
+**Problem:** `vpn-dev.everythingcloud.ca` DNS A record was not updated with the new VM IP after VM recreation. Tailscale enrollment failed with connection refused.
+
+**Root cause:** `iac/cloudflare/environments/dev/terraform.tfvars` had `oci_public_ip = "40.233.115.22"` hardcoded. In OpenTofu, **tfvars values take precedence over `TF_VAR_*` environment variables**. The workflow correctly injected the live IP via `TF_VAR_oci_public_ip`, but the hardcoded tfvars value silently won.
+
+**Fix:** Removed `oci_public_ip` from `iac/cloudflare/environments/dev/terraform.tfvars` entirely. The live IP is now injected only via `TF_VAR_oci_public_ip` in `infra-dev.yml` (captured from `tofu output vm_public_ip`). Same pattern for prod (already had no hardcoded value) and new staging tfvars.
+
+**Rule:** Never set a variable in both tfvars AND as `TF_VAR_*` when the env var is the dynamic authoritative source. Leave it out of tfvars entirely.
+
+---
+
 ### OCI NSG — tighten-ssh via tofu apply (2026-04-16)
 
 **Problem:** Three iterations of OCI CLI commands all failed (`security-group-rule`, `nsg rule`, `nsg-security-rules`) — the correct command either doesn't exist in the runner's OCI CLI version or produces unexpected errors.
@@ -1351,6 +1363,15 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
   - Renamed VPN hostname `headscale-dev` → `headscale` for Universal SSL certificate coverage
   - Implemented URL-based Headscale enrollment (parent can generate keys from portal, device enrolls via URL)
   - Removed `-prod` suffix from Cloudflare URLs (now clean: `adguard-dev.everythingcloud.ca`)
+- ✅ **Portainer added (2026-04-20):**
+  - `portainer/portainer-ce:latest` as service 11 in docker-compose (port 9000, persistent data volume)
+  - Cloudflare tunnel ingress: `portainer${env_suffix}.everythingcloud.ca → localhost:9000`
+  - DNS CNAME record + Zero Trust Access Application (admin email OTP + service token)
+  - `/opt/familyshield-data/portainer` data dir created in cloud-init and bootstrap steps
+- ✅ **VPN IP dynamic injection fix (2026-04-20):**
+  - Removed hardcoded `oci_public_ip` from `iac/cloudflare/environments/dev/terraform.tfvars`
+  - IP now injected exclusively via `TF_VAR_oci_public_ip` from workflow (tfvars override env vars — critical precedence lesson)
+  - Created `iac/cloudflare/environments/staging/terraform.tfvars` (no hardcoded IP)
 - ✅ **Automation improvements:**
   - `scheduled-health-check.yml` — daily service health monitoring with README status table updates
   - `auto-fix-vulnerabilities.yml` — Dependabot auto-merge for security patches

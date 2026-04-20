@@ -1,6 +1,6 @@
 # FamilyShield — Troubleshooting Guide
 
-> Last updated: 2026-04-16
+> Last updated: 2026-04-20
 > Platform: FamilyShield v1 — OCI ca-toronto-1 (Toronto, Canada)
 
 > **New joiners and infrastructure debuggers:** Start with the companion document:
@@ -2576,22 +2576,131 @@ iptables -L -n -v > /tmp/iptables.txt
 
 ---
 
+### Portainer Issues
+
+#### Portainer UI returns 502 or is unreachable via tunnel
+
+**Symptom:** `https://portainer-dev.everythingcloud.ca` shows 502 Bad Gateway or times out.
+
+**Root cause:** The `familyshield-portainer` container stopped. Portainer is not critical to stack operation — other services continue running.
+
+**Fix:**
+
+```bash
+ssh -i ~/.ssh/familyshield ubuntu@ssh-dev.everythingcloud.ca
+cd /opt/familyshield
+sudo docker compose up -d portainer
+sudo docker ps | grep portainer
+```
+
+#### Portainer shows empty container list
+
+**Symptom:** Login works but no containers appear under the Environments view.
+
+**Root cause:** Docker socket is not accessible. In rare cases the container starts before the socket is ready, or the mount path changed.
+
+**Fix:**
+
+```bash
+# Verify socket mount
+sudo docker inspect familyshield-portainer | grep -A3 Mounts
+# Expected: /var/run/docker.sock → /var/run/docker.sock
+
+# If missing, restart compose (will re-apply volume mounts from docker-compose.yml)
+sudo docker compose down portainer && sudo docker compose up -d portainer
+```
+
+#### Portainer password forgotten
+
+Portainer credentials are stored in `/opt/familyshield-data/portainer` on the persistent block volume.
+
+**Option A — Reset via Portainer CLI:**
+
+```bash
+sudo docker exec -it familyshield-portainer /portainer reset-password
+# Follow the prompt — generates a temporary password
+```
+
+**Option B — Full reset (removes all Portainer settings but not Docker state):**
+
+```bash
+sudo docker compose stop portainer
+sudo rm -rf /opt/familyshield-data/portainer/*
+sudo docker compose up -d portainer
+# Visit portainer-dev.everythingcloud.ca → create new admin password
+```
+
+---
+
+### VPN A Record Stale After Infrastructure Refresh
+
+**Symptom:** `vpn-dev.everythingcloud.ca` resolves to an old IP after a VM was recreated. Tailscale clients fail to enrol with connection refused or timeout.
+
+**Root cause:** The `oci_public_ip` value in `iac/cloudflare/environments/dev/terraform.tfvars` was historically hardcoded. In OpenTofu, **tfvars values take precedence over `TF_VAR_*` environment variables**, so the hardcoded value overrode the dynamically-injected IP even when the workflow injected the correct IP via `TF_VAR_oci_public_ip`.
+
+**Fix (applied 2026-04-20):** Removed `oci_public_ip` from all environment tfvars files. The workflow (`infra-dev.yml` / `infra-prod.yml`) captures the live VM IP from `tofu output vm_public_ip` after the OCI compute module runs and passes it exclusively via `TF_VAR_oci_public_ip`. This ensures the DNS A record always reflects the current VM IP.
+
+**Lesson learned:** Never set a variable in both tfvars and as a `TF_VAR_*` env var if the env var is intended to be the dynamic authoritative source. OpenTofu precedence: tfvars > env vars. The only safe pattern is to leave it out of tfvars entirely.
+
+**Verify DNS is correct after next infra run:**
+
+```bash
+# Should match the current VM IP from OCI console
+nslookup vpn-dev.everythingcloud.ca
+dig vpn-dev.everythingcloud.ca +short
+```
+
+---
+
+### OCI Security List — Port 80/443 Blocked (Caddy ACME Certificate Failure)
+
+**Symptom:** Caddy is running but cannot obtain a TLS certificate for `vpn-dev.everythingcloud.ca`. Logs show ACME HTTP-01 challenge timeout. VPN enrollment fails because Caddy serves HTTP instead of HTTPS.
+
+**Root cause:** Two separate firewall layers protect the VM:
+
+1. **OCI Security List** — evaluated at the cloud subnet level, before packets reach the VM
+2. **UFW** — evaluated at the VM OS level, after packets arrive
+
+Both must allow a port. Adding to UFW is insufficient if OCI Security List drops the packet first.
+
+The OCI Security List was missing rules for TCP 80 (ACME challenge), TCP 443 (HTTPS), and UDP 443 (QUIC). Let's Encrypt's HTTP-01 challenge makes an outbound HTTP request from the internet to `http://vpn-dev.everythingcloud.ca/.well-known/acme-challenge/...`. If OCI drops TCP 80, the challenge never completes and Caddy falls back to a self-signed certificate.
+
+**Fix (applied 2026-04-20, PR #28):** Added TCP 80, TCP 443, and UDP 443 ingress rules to the OCI Security List in `iac/modules/oci-network/main.tf`. These are now managed by IaC and applied on every `tofu apply`.
+
+**Lesson learned:** Always audit both OCI Security List and UFW when adding a new listener port. OCI Security List is the outer firewall — packets never reach UFW if they're dropped there. When Caddy fails ACME challenges, check OCI first (`nmap -p 80 <vm-ip>` from outside the VPN).
+
+**Quick diagnosis from outside the VM:**
+
+```bash
+# Test if port 80 is open from the internet (run from your laptop, not the VM)
+nc -zv <vm-public-ip> 80
+# Expected: Connection to <ip> 80 port [tcp/http] succeeded!
+# If timeout: OCI Security List is blocking it (UFW is not the problem)
+
+nc -zv <vm-public-ip> 443
+# Expected: succeeded
+```
+
+---
+
 ## Quick Reference: Key Ports & Endpoints
 
 | Service | Port | Internal URL | Purpose |
-|---------|------|-------------|---------|
+| --- | --- | --- | --- |
 | AdGuard Home | 53 (UDP) | `familyshield-adguard:53` | DNS filtering |
 | AdGuard API | 3080 | `http://localhost:3080` | Management API |
 | Headscale | 8080 | `familyshield-headscale:8080` | VPN coordination |
+| Caddy (HTTPS proxy) | 443 | OCI public IP:443 → Headscale | VPN enrollment TLS termination |
 | mitmproxy | 8888 | `familyshield-mitmproxy:8888` | HTTP/S proxy |
 | mitmproxy Web UI | 8889 | `http://localhost:8889` | Traffic inspection UI |
 | Redis | 6379 | `familyshield-redis:6379` | Event queue |
 | API Worker | 3001 | `http://localhost:3001` | Enrichment + health |
 | Node-RED | 1880 | `http://localhost:1880` | Rule engine UI |
 | InfluxDB | 8086 | `http://localhost:8086` | Metrics API |
-| Grafana | 3000 | `http://localhost:3000` | Dashboards |
+| Grafana | 3002 | `http://localhost:3002` | Dashboards |
 | ntfy | 2586 | `http://familyshield-ntfy:2586` | Push notifications |
-| Cloudflare Tunnel | — | outbound only | Portal access |
+| Portainer | 9000 | `http://localhost:9000` | Docker management UI |
+| Cloudflare Tunnel | — | outbound only | Portal + admin access |
 
 ## Quick Reference: Useful One-Liners
 
