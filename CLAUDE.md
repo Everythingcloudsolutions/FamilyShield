@@ -871,6 +871,8 @@ This is the minimum hardening sequence Claude Code should recommend and preserve
 - Auto-restarts on failure via docker-compose
 - No manual intervention needed
 
+**Critical:** The Caddyfile must use Headscale's Docker bridge IP (`172.20.0.3:8080`), NOT `localhost` or `127.0.0.1`. Inside a Docker container, those refer to the container's own loopback — not the host or other services. Using `localhost:8080` or `127.0.0.1:8080` causes `dial tcp [::1]:8080: connection refused` or `dial tcp 127.0.0.1:8080: connection refused` even when Headscale is healthy.
+
 **Architecture:**
 
 ```
@@ -878,11 +880,11 @@ Device enrollment request
   ↓
 vpn-dev.everythingcloud.ca (DNS A record → OCI public IP)
   ↓
-OCI VM port 443 (Caddy Docker container)
+OCI VM port 443 (Caddy Docker container at 172.20.0.11)
   ↓
-Caddy reverse proxy (preserves WebSocket Upgrade headers)
+Caddy reverse proxy → 172.20.0.3:8080 (Headscale's Docker bridge IP)
   ↓
-Headscale (localhost:8080 in Docker)
+Headscale container (172.20.0.3, port 8080)
   ↓
 Device successfully enrolls in Tailscale
 ```
@@ -1237,10 +1239,15 @@ The "Edit zone DNS" template only grants the first scope — insufficient. The o
 
 ---
 
-## Recent Improvements & Key Commits (2026-04-18)
+## Recent Improvements & Key Commits (2026-04-20)
 
 **Infrastructure:**
 
+- PR #31 (open): Portainer Docker management UI + dynamic VPN IP fix + Caddy Docker network IP fix
+  - Added Portainer service (port 9000, Zero Trust email OTP access)
+  - Removed hardcoded `oci_public_ip` from dev tfvars — now injected dynamically via `TF_VAR_oci_public_ip`
+  - Fixed Caddyfile upstream from `localhost:8080` → `172.20.0.3:8080` (Headscale's Docker bridge IP)
+  - Critical lesson: Docker containers must use bridge network IPs, never localhost, to reach sibling containers
 - PR #25: `--no-deps` flag added to bootstrap Docker Compose (prevents service dependency issues)
 - PR #24, #23, #21, #22: VPN hostname renamed for Universal SSL coverage (`headscale-dev` → `headscale`)
 - PR #20: Refactored Cloudflare URLs to remove `-prod` suffix (clean domain names across all environments)
