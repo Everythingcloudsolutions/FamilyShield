@@ -12,16 +12,16 @@ name: "FamilyShield — Deploy Dev"
 
 on:
   push:
-    branches: [development]
+    branches: [ development ]
     paths:
       - "apps/**"
       - "scripts/**"
       - ".github/workflows/deploy-dev.yml"
   workflow_dispatch:
   workflow_run:
-    workflows: ["FamilyShield — Infrastructure Dev"]
-    types: [completed]
-    branches: [development]
+    workflows: [ "FamilyShield — Infrastructure Dev" ]
+    types: [ completed ]
+    branches: [ development ]
 
 permissions:
   contents: read
@@ -134,14 +134,13 @@ jobs:
           echo "❌ SSH tunnel not reachable after 5 attempts"
           exit 1
 
-
   build-and-push:
     name: "Build & Push Docker images"
     runs-on: ubuntu-latest
     needs: verify-tunnel
     strategy:
       matrix:
-        app: [api, portal, mitm]
+        app: [ api, portal, mitm ]
     steps:
       - uses: actions/checkout@v4
 
@@ -256,8 +255,17 @@ jobs:
 
           echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
+          # Mirror root docker login to ubuntu user so non-sudo docker commands
+          # (and systemd services running as ubuntu) can access GHCR credentials.
+          sudo mkdir -p /home/ubuntu/.docker
+          sudo cp /root/.docker/config.json /home/ubuntu/.docker/config.json 2>/dev/null || true
+          sudo chown -R ubuntu:ubuntu /home/ubuntu/.docker
+          sudo chmod 600 /home/ubuntu/.docker/config.json 2>/dev/null || true
+
           # Pull only the images that changed (GHCR — requires auth)
-          sudo docker compose pull api portal
+          # Include mitm so the mitmproxy image is available locally and docker
+          # won't attempt an authenticated pull later from an un-logged-in user.
+          sudo docker compose pull api portal mitm
 
           # Bring up all services — starts any stopped containers, recreates only changed ones
           sudo docker compose up -d --remove-orphans

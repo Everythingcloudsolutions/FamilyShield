@@ -225,7 +225,8 @@ jobs:
           INFLUXDB_ADMIN_TOKEN: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN ||
             'FamilyShield-InfluxDB-Token-Dev' }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD || 'FamilyShield-Grafana-Dev' }}
-          HEADPLANE_COOKIE_SECRET: ${{ secrets.HEADPLANE_COOKIE_SECRET || 'headplane-dev-cookie-secret-change-in-prod' }}
+          HEADPLANE_COOKIE_SECRET: ${{ secrets.HEADPLANE_COOKIE_SECRET ||
+            'headplane-dev-cookie-secret-change-in-prod' }}
           HEADPLANE_API_KEY: ${{ secrets.HEADPLANE_API_KEY || '' }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
@@ -367,6 +368,13 @@ jobs:
 
           cd /opt/familyshield
           echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+          # Mirror root docker login to ubuntu user so systemd services running as
+          # ubuntu and interactive ubuntu sessions can access GHCR credentials.
+          sudo mkdir -p /home/ubuntu/.docker
+          sudo cp /root/.docker/config.json /home/ubuntu/.docker/config.json 2>/dev/null || true
+          sudo chown -R ubuntu:ubuntu /home/ubuntu/.docker
+          sudo chmod 600 /home/ubuntu/.docker/config.json 2>/dev/null || true
 
           # Pre-create bind-mount directories with correct ownership before containers start.
           # deploy-dev.yml syncs real content later; these ensure containers don't crash on first boot.
