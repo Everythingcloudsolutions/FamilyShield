@@ -263,9 +263,9 @@ jobs:
           sudo chmod 600 /home/ubuntu/.docker/config.json 2>/dev/null || true
 
           # Pull only the images that changed (GHCR — requires auth)
-          # Include mitm so the mitmproxy image is available locally and docker
+          # Include mitmproxy so the mitmproxy image is available locally and docker
           # won't attempt an authenticated pull later from an un-logged-in user.
-          sudo docker compose pull api portal mitm
+          sudo docker compose pull api portal mitmproxy
 
           # Bring up all services — starts any stopped containers, recreates only changed ones
           sudo docker compose up -d --remove-orphans
