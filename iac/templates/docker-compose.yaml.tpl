@@ -85,7 +85,7 @@ services:
       familyshield:
         ipv4_address: 172.20.0.14
     ports:
-      - "3000:3000"
+      - "3100:3000"     # Avoid host port conflict with the portal service on 3000
     volumes:
       - /opt/familyshield-data/headplane/headplane.yaml:/etc/headplane/config.yaml:ro
     environment:
