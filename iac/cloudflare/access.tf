@@ -128,7 +128,7 @@ resource "cloudflare_zero_trust_access_policy" "portainer_admin_email" {
   }
 }
 
-# ── Access Application: Headplane (VPN admin UI) ─────────────────────────────
+# ── Access Application: Headscale Admin (VPN admin UI) ────────────────────
 resource "cloudflare_zero_trust_access_application" "headplane" {
   account_id       = var.cloudflare_account_id
   name             = "FamilyShield VPN Admin ${var.environment}"
