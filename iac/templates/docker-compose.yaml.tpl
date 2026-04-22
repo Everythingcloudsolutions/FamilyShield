@@ -78,7 +78,7 @@ services:
 
   # ── 2c. Headplane — Headscale web frontend (VPN admin UI) ───────────────
   headplane:
-    image: headplane/headplane:latest
+    image: ghcr.io/tale/headplane:latest
     container_name: familyshield-headplane
     restart: unless-stopped
     networks:
