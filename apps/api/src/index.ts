@@ -43,6 +43,13 @@ async function main() {
     legacyHeaders: false,
   });
 
+  const certLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 10, // certificate download endpoint should be low-frequency
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
   app.get("/health", (_req, res) => {
     res.json({
       status: "ok",
@@ -64,7 +71,7 @@ async function main() {
     process.env.MITMPROXY_CERT_PATH ??
     "/opt/familyshield-data/mitmproxy/mitmproxy-ca-cert.pem";
 
-  app.get("/cert", (_req, res) => {
+  app.get("/cert", certLimiter, (_req, res) => {
     if (!fs.existsSync(CERT_PATH)) {
       res.status(404).json({
         error: "Certificate not found",
