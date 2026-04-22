@@ -76,6 +76,30 @@ services:
       timeout: 10s
       retries: 3
 
+  # ── 2c. Headplane — Headscale web frontend (VPN admin UI) ───────────────
+  headplane:
+    image: headplane/headplane:latest
+    container_name: familyshield-headplane
+    restart: unless-stopped
+    networks:
+      familyshield:
+        ipv4_address: 172.20.0.14
+    ports:
+      - "3000:3000"
+    volumes:
+      - /opt/familyshield-data/headplane/headplane.yaml:/etc/headplane/config.yaml:ro
+    environment:
+      - TZ=America/Toronto
+      - HEADPLANE_SERVER__COOKIE_SECRET=${headplane_cookie_secret}
+      - HEADPLANE_HEADSCALE__API_KEY=${headplane_api_key}
+    depends_on:
+      - headscale
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   # ── 2b. Caddy — HTTPS reverse proxy for Headscale (Noise protocol + WebSocket) ──
   # Listens on 0.0.0.0:443, proxies to Headscale localhost:8080 with WebSocket support.
   # DNS A record (vpn${env_suffix}.everythingcloud.ca) points directly to OCI public IP,
