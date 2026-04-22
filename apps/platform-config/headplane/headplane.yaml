@@ -3,8 +3,8 @@
 
 server:
   port: 3000
-  # Use a strong random value in production
-  cookie_secret: "headplane-dev-cookie-secret-change-in-prod"
+  # cookie_secret should be supplied via environment variable `HEADPLANE_SERVER__COOKIE_SECRET`
+  # Do NOT store secrets in repo. Set GitHub secret `HEADPLANE_COOKIE_SECRET` instead.
 
 headscale:
   # Headscale URL inside the Docker network (matches compose bridge IP)

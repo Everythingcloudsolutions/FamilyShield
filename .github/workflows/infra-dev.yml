@@ -225,8 +225,7 @@ jobs:
           INFLUXDB_ADMIN_TOKEN: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN ||
             'FamilyShield-InfluxDB-Token-Dev' }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD || 'FamilyShield-Grafana-Dev' }}
-          HEADPLANE_COOKIE_SECRET: ${{ secrets.HEADPLANE_COOKIE_SECRET ||
-            'headplane-dev-cookie-secret-change-in-prod' }}
+          HEADPLANE_COOKIE_SECRET: ${{ secrets.HEADPLANE_COOKIE_SECRET }}
           HEADPLANE_API_KEY: ${{ secrets.HEADPLANE_API_KEY || '' }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
@@ -238,6 +237,10 @@ jobs:
           # Always render and write the latest docker-compose.yml to ensure template changes take effect.
           # This is intentional — every infra run guarantees the VM has the current template.
           echo "📝 Rendering docker-compose.yml from template..."
+          if [ -z "${HEADPLANE_COOKIE_SECRET:-}" ]; then
+            echo "::error::HEADPLANE_COOKIE_SECRET repository secret not set. Please add it in Settings → Secrets."
+            exit 1
+          fi
           sed \
             -e "s|\${environment}|dev|g" \
             -e "s|\${env_suffix}|-dev|g" \
