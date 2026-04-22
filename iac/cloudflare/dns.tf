@@ -21,6 +21,7 @@ locals {
     "notify${local.env_suffix}",
     "ssh${local.env_suffix}",
     "portainer${local.env_suffix}",
+    "vpn-admin${local.env_suffix}",
   ]
 }
 
