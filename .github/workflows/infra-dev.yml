@@ -283,13 +283,38 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             apps/platform-config/headscale/headscale.yaml \
-            ubuntu@"$VM_IP":/tmp/headscale.yaml
+            ubuntu@"$VM_IP":/tmp/headscale.yaml || true
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             ubuntu@"$VM_IP" \
-            "sudo mkdir -p /opt/familyshield/apps/platform-config/headscale && sudo mv /tmp/headscale.yaml /opt/familyshield/apps/platform-config/headscale/headscale.yaml && sudo chown ubuntu:ubuntu /opt/familyshield/apps/platform-config/headscale/headscale.yaml"
+            "sudo mkdir -p /opt/familyshield/apps/platform-config/headscale && sudo mv /tmp/headscale.yaml /opt/familyshield/apps/platform-config/headscale/headscale.yaml && sudo chown ubuntu:ubuntu /opt/familyshield/apps/platform-config/headscale/headscale.yaml" || true
+
+          # copy headplane config so the container can mount /etc/headplane/config.yaml
+          scp -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            apps/platform-config/headplane/headplane.yaml \
+            ubuntu@"$VM_IP":/tmp/headplane.yaml || true
+
+          # Idempotently move the uploaded config into the persistent block volume
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            ubuntu@"$VM_IP" bash -s <<'ENDSSH' || true
+          set -euo pipefail
+          sudo mkdir -p /opt/familyshield-data/headplane
+          if [ ! -f /opt/familyshield-data/headplane/headplane.yaml ] || ! sudo cmp -s /tmp/headplane.yaml /opt/familyshield-data/headplane/headplane.yaml; then
+            sudo mv /tmp/headplane.yaml /opt/familyshield-data/headplane/headplane.yaml
+            sudo chown ubuntu:ubuntu /opt/familyshield-data/headplane/headplane.yaml
+            sudo chmod 644 /opt/familyshield-data/headplane/headplane.yaml
+            echo "✅ headplane config installed/updated to persistent volume"
+          else
+            sudo rm -f /tmp/headplane.yaml || true
+            echo "✅ headplane config present and unchanged — skipping"
+          fi
+          ENDSSH
 
           echo "✅ headscale config written to VM"
 

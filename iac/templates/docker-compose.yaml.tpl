@@ -91,9 +91,11 @@ services:
       - "3100:3000"     # headplane listens on 3000 internally; host 3100 avoids conflicts
     volumes:
       - /opt/familyshield-data/headplane:/var/lib/headplane
+      # Headplane expects a config file at /etc/headplane/config.yaml inside the container.
+      # Mount the repo-provided config from the VM so Headplane can load it on startup.
+      - /opt/familyshield-data/headplane/headplane.yaml:/etc/headplane/config.yaml:ro
     environment:
-      # v0.6+ uses double-underscore env var overrides with this flag set
-      - HEADPLANE_LOAD_ENV_OVERRIDES=true
+      # HEADPLANE: prefer environment overrides (deprecated flag removed)
       - HEADPLANE_HEADSCALE__URL=http://172.20.0.3:8080
       - HEADPLANE_HEADSCALE__API_KEY=${headplane_api_key}
       - HEADPLANE_SERVER__PORT=3000
