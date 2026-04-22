@@ -1,0 +1,20 @@
+# Minimal Headplane config for FamilyShield (development)
+# Replace secrets before use in production.
+
+server:
+  port: 3000
+  # cookie_secret should be supplied via environment variable `HEADPLANE_SERVER__COOKIE_SECRET`
+  # Do NOT store secrets in repo. Set GitHub secret `HEADPLANE_COOKIE_SECRET` instead.
+
+headscale:
+  # Headscale URL inside the Docker network (matches compose bridge IP)
+  url: "http://172.20.0.3:8080"
+  # You can set this here or via env var HEADPLANE_HEADSCALE__API_KEY
+  api_key: ""
+
+logging:
+  level: info
+
+# Notes:
+# - The container expects this file at /etc/headplane/config.yaml (bind-mounted).
+# - Sensitive values may alternatively be provided via environment variables.

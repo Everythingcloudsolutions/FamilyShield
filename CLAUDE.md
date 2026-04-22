@@ -2,16 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-18 (Portal E2E testing; VPN hostname refactor; WAF singleton fix; Headscale URL enrollment; Phase 2 device testing in progress)
+> Last updated: 2026-04-21 (F-27/28/29 done: Headscale DNS push, iptables REDIRECT, portal /cert page; design principles added to mvp-plan; all workflow schedules removed)
 
 ## Active Development Anchor
 
 **Primary planning document:** [`docs/mvp-plan.md`](docs/mvp-plan.md)
 
-This file defines the MVP feature list (F-01 to F-13), post-MVP backlog (F-14 to F-24), and phase-by-phase todo checklists. **Always check `docs/mvp-plan.md` first when picking up a new task.** Update it when items are completed.
+This file defines the MVP feature list (F-01 to F-29), post-MVP backlog (F-30+), and phase-by-phase todo checklists. **Always check `docs/mvp-plan.md` first when picking up a new task.** Update it when items are completed.
 
-**Current phase:** Phase 2 — Device-Testable Application (steps 2.1–2.8)
-**Current milestone:** Enrol one device, generate real traffic, see alerts end-to-end. Parent receives ntfy alert after child opens YouTube.
+**Current phase:** Phase 2a — Critical infrastructure gaps (1 of 4 items remaining)
+**Current milestone:** Fix AdGuard upstream DNS (2a.1, manual step) → enrol iPhone/iPad/MacBook → real traffic through pipeline.
 
 ---
 
@@ -96,26 +96,20 @@ bash scripts/cloudflare-api.sh     # Cloudflare resource management (API-driven)
 
 **CRITICAL: Always run `bootstrap-oci.sh` first!** It creates the three environment compartments (dev, staging, prod) that IaC queries and uses.
 
-### Cloudflare API Management
+### Cloudflare IaC
 
-Cloudflare resources (tunnel, DNS records, access apps) are created and managed via the Cloudflare API, not Terraform. This is done in the `deploy-cloudflare.yml` workflow using `scripts/cloudflare-api.sh`:
+Cloudflare resources (tunnel, DNS records, Access apps, WAF) are managed via a **separate OpenTofu root** at `iac/cloudflare/`, not the main OCI IaC. Deployed by `setup-cloudflare-dev` job inside `infra-dev.yml`.
+
+Manual cleanup only (rare — use when tearing down an environment):
 
 ```bash
-# Manual setup (rarely needed)
 export CLOUDFLARE_API_TOKEN="..."
 export CLOUDFLARE_ACCOUNT_ID="..."
 export CLOUDFLARE_ZONE_ID="..."
-
-bash scripts/cloudflare-api.sh setup dev "<tunnel-secret>" "admin@example.com"
 bash scripts/cloudflare-api.sh cleanup dev
 ```
 
-**Why separate from IaC?**
-
-- Terraform/OpenTofu struggles with state management when resources exist in cloud but not in state
-- Cloudflare API is simpler for tunnel + DNS + access apps
-- Decoupled architecture allows independent updates without triggering full IaC rebuild
-- Easy cleanup via API if needed (e.g., environment torn down)
+**Why a separate root?** Cloudflare state is independent of OCI state. Keeps IaC fast and avoids provider conflicts. The `infra-dev.yml` workflow sequences OCI apply → Cloudflare apply → tunnel start automatically.
 
 ### Local Development (Without OCI)
 
@@ -165,11 +159,10 @@ npm run test:e2e -- tests/e2e/dashboard.spec.ts  # Run single test file
 - Supabase configured: `.env.local` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - Port 3000 available (dev server)
 
-**Test environment (scheduled):**
+**Test environment:**
 
-- Daily: `qa-e2e.yml` runs at 11:00 UTC against live dev URL (`https://familyshield-dev.everythingcloud.ca`)
-- Weekly: Adds OWASP ZAP DAST security scan
-- Can also trigger manually via `workflow_dispatch` for dev or staging
+- `qa-e2e.yml` — manual trigger (`workflow_dispatch`) only. Runs against live dev URL or staging.
+- All workflow schedules (`cron:`) have been removed — every workflow is now manual or path-triggered only.
 
 ---
 
@@ -1079,6 +1072,18 @@ local payload=$(jq -n \
 
 Use `--argjson` for boolean/numeric values, `--arg` for strings.
 
+### VPN A Record Hardcoded IP — tfvars Overrides TF_VAR (2026-04-20 — FIXED)
+
+**Problem:** `vpn-dev.everythingcloud.ca` DNS A record was not updated with the new VM IP after VM recreation. Tailscale enrollment failed with connection refused.
+
+**Root cause:** `iac/cloudflare/environments/dev/terraform.tfvars` had `oci_public_ip = "40.233.115.22"` hardcoded. In OpenTofu, **tfvars values take precedence over `TF_VAR_*` environment variables**. The workflow correctly injected the live IP via `TF_VAR_oci_public_ip`, but the hardcoded tfvars value silently won.
+
+**Fix:** Removed `oci_public_ip` from `iac/cloudflare/environments/dev/terraform.tfvars` entirely. The live IP is now injected only via `TF_VAR_oci_public_ip` in `infra-dev.yml` (captured from `tofu output vm_public_ip`). Same pattern for prod (already had no hardcoded value) and new staging tfvars.
+
+**Rule:** Never set a variable in both tfvars AND as `TF_VAR_*` when the env var is the dynamic authoritative source. Leave it out of tfvars entirely.
+
+---
+
 ### OCI NSG — tighten-ssh via tofu apply (2026-04-16)
 
 **Problem:** Three iterations of OCI CLI commands all failed (`security-group-rule`, `nsg rule`, `nsg-security-rules`) — the correct command either doesn't exist in the runner's OCI CLI version or produces unexpected errors.
@@ -1225,28 +1230,28 @@ The "Edit zone DNS" template only grants the first scope — insufficient. The o
 
 ---
 
-## Recent Improvements & Key Commits (2026-04-18)
+## Recent Improvements & Key Commits (2026-04-21)
 
-**Infrastructure:**
+**Device enrolment (PR #32 — open):**
 
-- PR #25: `--no-deps` flag added to bootstrap Docker Compose (prevents service dependency issues)
-- PR #24, #23, #21, #22: VPN hostname renamed for Universal SSL coverage (`headscale-dev` → `headscale`)
-- PR #20: Refactored Cloudflare URLs to remove `-prod` suffix (clean domain names across all environments)
-- PR #19: Headscale URL-based enrollment + Cloudflare WAF bypass for VPN traffic
-- PR #18: Standardized production URLs and improved CI workflows
-- Commit 3bb77ef: Fixed Cloudflare WAF ruleset zone singleton (prod-only, covers all environments)
+- F-27: `headscale.yaml` DNS push — `nameservers: [172.20.0.2]` + `override_local_dns: true`
+- F-28: iptables REDIRECT rules added to `cloud-init.yaml.tpl` (first-boot) and `infra-dev.yml` bootstrap (existing VM, idempotent). `iptables-persistent` package persists rules across reboots.
+- F-29: Portal `/cert` page + API `GET /cert` endpoint. NavBar "Setup" link. Per-OS install instructions (iOS, macOS, Android, Windows).
+- Design principles table added to `docs/mvp-plan.md` (security, KISS, no reinvention, low cost, scalable)
 
-**Application:**
+**Infrastructure (PR #31 — merged):**
 
-- Portal E2E tests: Fixed 7 alerts test failures by converting `AlertTable` to client-side `useEffect` fetching
-- Next.js 16 patterns: Documented async `searchParams` requirements and server vs client-side fetching decisions
-- Playwright testing: Clarified route interception scope (browser requests only, not SSR fetches)
+- Portainer service (port 9000, Zero Trust email OTP access)
+- VPN IP dynamic injection fixed — removed hardcoded `oci_public_ip` from tfvars; `TF_VAR_oci_public_ip` from workflow wins
+- Caddy Caddyfile: `localhost:8080` → `172.20.0.3:8080` (Docker bridge IP — containers cannot use localhost for sibling services)
 
-**Automation:**
+**Workflow cleanup (merged):**
 
-- `scheduled-health-check.yml`: Daily service health monitoring with README auto-updates
-- `security-scan.yml`: Scheduled OWASP ZAP and npm audit runs
-- `qa-e2e.yml`: Scheduled Playwright E2E runs (daily dev, weekly dev + ZAP) with manual override
+- All `cron:` schedules removed from all workflows — everything is now `workflow_dispatch` or path-triggered
+- `security-scan.yml`: added path filter to prevent firing on bot commits (health check updates to docs/)
+- `deploy-dev.yml`: `workflow_run` trigger fixed with `branches: [development]`
+- `post-deploy-tunnel-ssh-dev.yml`: deleted (referenced a workflow that no longer exists)
+- Health status moved from README.md (auto-updated, cluttering) to `docs/status/health.md`
 
 ---
 
@@ -1340,43 +1345,29 @@ Full architecture documentation, C4 model, user guide, troubleshooting, Claude A
 
 **Infrastructure & Deployment:**
 
-- ✅ All core architecture decisions locked in place
-- ✅ IaC and app workflows split by path (`iac/**` vs `apps/**`)
-- ✅ Cloudflare migrated to OpenTofu IaC with singleton WAF ruleset fix
-- ✅ **Bootstrap improvements (2026-04-18):**
-  - Added `--no-deps` flag to `docker compose up` in bootstrap step (prevents conflicting service startups)
-  - Fixed GHCR image pull with `set +e` guards and exit code handling
-  - SSH key heredoc variable escaping for remote script execution
-- ✅ **VPN enrollment refactor (2026-04-18):**
-  - Renamed VPN hostname `headscale-dev` → `headscale` for Universal SSL certificate coverage
-  - Implemented URL-based Headscale enrollment (parent can generate keys from portal, device enrolls via URL)
-  - Removed `-prod` suffix from Cloudflare URLs (now clean: `adguard-dev.everythingcloud.ca`)
-- ✅ **Automation improvements:**
-  - `scheduled-health-check.yml` — daily service health monitoring with README status table updates
-  - `auto-fix-vulnerabilities.yml` — Dependabot auto-merge for security patches
-  - `security-scan.yml` — npm audit + OWASP ZAP scheduled scans
-- 🔲 First full end-to-end successful dev pipeline run (infra-dev.yml: all jobs green + deploy-dev.yml: all jobs green)
-- 🔲 Deploy-staging and deploy-prod workflows follow after dev passes
+- ✅ IaC + app workflows split by path (`iac/**` vs `apps/**`)
+- ✅ Cloudflare migrated to separate OpenTofu root (`iac/cloudflare/`) with WAF singleton fix
+- ✅ Portainer service (port 9000, Zero Trust email OTP)
+- ✅ VPN IP injection: removed hardcoded tfvars, `TF_VAR_oci_public_ip` from workflow is authoritative
+- ✅ Caddy in Docker (172.20.0.11) proxying Headscale at Docker bridge IP (172.20.0.3:8080)
+- ✅ All workflow schedules removed — manual or path-triggered only
+- ✅ **F-27: Headscale DNS push** — `headscale.yaml` pushes AdGuard `172.20.0.2` to enrolled devices
+- ✅ **F-28: iptables REDIRECT** — cloud-init + infra-dev.yml bootstrap; persisted via iptables-persistent
+- 🔲 **2a.1: AdGuard upstream DNS** — manual step (SSH port-forward → admin UI → add `8.8.8.8`/`1.1.1.1`)
+- 🔲 First full end-to-end pipeline run (infra-dev + deploy-dev all green)
 
 **Application Development:**
 
-- ✅ API fully implemented: enrichers (YouTube, Roblox, Discord, Twitch), alert dispatcher, LLM router with fallback
-- ✅ mitmproxy addon complete with 15 tests
-- ✅ **Portal: Next.js 16 fully built (`apps/portal/`):**
-  - All 3 pages working: dashboard, /devices, /alerts
-  - All components: NavBar (active link styling), RiskBadge, DeviceCard, AlertFeed, AlertTable (filtering + sorting)
-  - Client-side data fetching via `useEffect` for Playwright test mockability
-  - Supabase Realtime integration (WebSocket live updates)
-  - RLS policies: anon SELECT on all tables, anon INSERT on devices (for MVP, replaced before prod)
-- ✅ **Portal E2E testing (Playwright):**
-  - 24 tests across 3 test files: dashboard (7), devices (9), alerts (8)
-  - Test environment: Chromium, Firefox, Mobile Chrome with CI retry logic
-  - Daily scheduled runs via `qa-e2e.yml` against live dev URL
-  - Weekly runs with OWASP ZAP DAST security scanning
-  - Local runs with mocked Supabase via `page.route()` interception
-- ✅ Supabase tables created: `devices`, `content_events`, `alerts` with RLS enabled
-- ✅ **Critical Next.js 16 patterns documented** (async `searchParams`, server vs client-side fetching, Playwright mocking)
-- 🔲 Phase 2 acceptance: Enrol one device, generate real traffic, see alerts end-to-end, parent receives ntfy notification
+- ✅ API: enrichers (YouTube, Roblox, Discord, Twitch), alert dispatcher, LLM router, `GET /cert` endpoint
+- ✅ mitmproxy addon (15 tests)
+- ✅ **Portal: 4 pages** — dashboard, /devices, /alerts, /cert (Setup)
+  - `/cert` page: per-OS install instructions (iOS, macOS, Android, Windows) + download button
+  - Client-side `useEffect` fetching for Playwright test mockability
+  - Supabase Realtime WebSocket live updates
+- ✅ **F-29: Portal cert page** — `apps/portal/app/cert/page.tsx` + NavBar "Setup" link
+- ✅ Portal E2E testing: 24 tests (Playwright — Chromium, Firefox, Mobile Chrome)
+- ✅ Supabase tables: `devices`, `content_events`, `alerts` with RLS enabled
+- 🔲 Phase 2 acceptance: Enrol one device → real traffic → ntfy alert to parent phone
 
 ### 📋 Phase 3: E2E Testing & Production Release
 

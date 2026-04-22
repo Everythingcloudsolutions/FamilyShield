@@ -225,6 +225,8 @@ jobs:
           INFLUXDB_ADMIN_TOKEN: ${{ secrets.TF_VAR_INFLUXDB_ADMIN_TOKEN ||
             'FamilyShield-InfluxDB-Token-Dev' }}
           GRAFANA_PASSWORD: ${{ secrets.GRAFANA_PASSWORD || 'FamilyShield-Grafana-Dev' }}
+          HEADPLANE_COOKIE_SECRET: ${{ secrets.HEADPLANE_COOKIE_SECRET }}
+          HEADPLANE_API_KEY: ${{ secrets.HEADPLANE_API_KEY || '' }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: |
@@ -235,6 +237,10 @@ jobs:
           # Always render and write the latest docker-compose.yml to ensure template changes take effect.
           # This is intentional — every infra run guarantees the VM has the current template.
           echo "📝 Rendering docker-compose.yml from template..."
+          if [ -z "${HEADPLANE_COOKIE_SECRET:-}" ]; then
+            echo "::error::HEADPLANE_COOKIE_SECRET repository secret not set. Please add it in Settings → Secrets."
+            exit 1
+          fi
           sed \
             -e "s|\${environment}|dev|g" \
             -e "s|\${env_suffix}|-dev|g" \
@@ -251,6 +257,9 @@ jobs:
             -e "s|\${influxdb_password}|$INFLUXDB_PASSWORD|g" \
             -e "s|\${influxdb_admin_token}|$INFLUXDB_ADMIN_TOKEN|g" \
             -e "s|\${grafana_password}|$GRAFANA_PASSWORD|g" \
+            -e "s|\${headplane_cookie_secret}|$HEADPLANE_COOKIE_SECRET|g" \
+            -e "s|\${headplane_api_key}|$HEADPLANE_API_KEY|g" \
+            -e "s|\${next_public_api_url}|https://api-dev.everythingcloud.ca|g" \
             -e 's|\$\${|\${|g' \
             iac/templates/docker-compose.yaml.tpl > /tmp/docker-compose.yml
 
@@ -277,13 +286,38 @@ jobs:
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             apps/platform-config/headscale/headscale.yaml \
-            ubuntu@"$VM_IP":/tmp/headscale.yaml
+            ubuntu@"$VM_IP":/tmp/headscale.yaml || true
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             ubuntu@"$VM_IP" \
-            "sudo mkdir -p /opt/familyshield/apps/platform-config/headscale && sudo mv /tmp/headscale.yaml /opt/familyshield/apps/platform-config/headscale/headscale.yaml && sudo chown ubuntu:ubuntu /opt/familyshield/apps/platform-config/headscale/headscale.yaml"
+            "sudo mkdir -p /opt/familyshield/apps/platform-config/headscale && sudo mv /tmp/headscale.yaml /opt/familyshield/apps/platform-config/headscale/headscale.yaml && sudo chown ubuntu:ubuntu /opt/familyshield/apps/platform-config/headscale/headscale.yaml" || true
+
+          # copy headplane config so the container can mount /etc/headplane/config.yaml
+          scp -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            apps/platform-config/headplane/headplane.yaml \
+            ubuntu@"$VM_IP":/tmp/headplane.yaml || true
+
+          # Idempotently move the uploaded config into the persistent block volume
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            ubuntu@"$VM_IP" bash -s <<'ENDSSH' || true
+          set -euo pipefail
+          sudo mkdir -p /opt/familyshield-data/headplane
+          if [ ! -f /opt/familyshield-data/headplane/headplane.yaml ] || ! sudo cmp -s /tmp/headplane.yaml /opt/familyshield-data/headplane/headplane.yaml; then
+            sudo mv /tmp/headplane.yaml /opt/familyshield-data/headplane/headplane.yaml
+            sudo chown ubuntu:ubuntu /opt/familyshield-data/headplane/headplane.yaml
+            sudo chmod 644 /opt/familyshield-data/headplane/headplane.yaml
+            echo "✅ headplane config installed/updated to persistent volume"
+          else
+            sudo rm -f /tmp/headplane.yaml || true
+            echo "✅ headplane config present and unchanged — skipping"
+          fi
+          ENDSSH
 
           echo "✅ headscale config written to VM"
 
@@ -326,7 +360,9 @@ jobs:
             /opt/familyshield-data/mitmproxy \
             /opt/familyshield-data/redis \
             /opt/familyshield-data/ntfy/cache \
-            /opt/familyshield-data/ntfy/data
+            /opt/familyshield-data/ntfy/data \
+            /opt/familyshield-data/portainer \
+            /opt/familyshield-data/headplane
           sudo chown -R ubuntu:ubuntu /opt/familyshield-data
           # Per-service ownership — must match container user UIDs
           sudo chown -R 472:472 /opt/familyshield-data/grafana          # Grafana runs as uid 472
@@ -338,8 +374,35 @@ jobs:
           sudo systemctl restart systemd-resolved
           sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
 
+          # ── mitmproxy transparent proxy intercept (F-28) ─────────────────────────
+          # REDIRECT TCP 443/80 from Tailscale VPN clients (100.64.0.0/10) to mitmproxy.
+          # Idempotent: -C checks before -A to avoid duplicate rules on repeated runs.
+          # Persisted to /etc/iptables/rules.v4 via netfilter-persistent (installed by cloud-init).
+          if ! sudo iptables -t nat -C PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889 2>/dev/null; then
+            sudo iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889
+            echo "✅ iptables REDIRECT rule added: TCP 443 → 8889 (mitmproxy HTTPS)"
+          else
+            echo "✅ iptables REDIRECT rule already present (TCP 443 → 8889)"
+          fi
+          if ! sudo iptables -t nat -C PREROUTING -s 100.64.0.0/10 -p tcp --dport 80 -j REDIRECT --to-port 8888 2>/dev/null; then
+            sudo iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 80 -j REDIRECT --to-port 8888
+            echo "✅ iptables REDIRECT rule added: TCP 80 → 8888 (mitmproxy HTTP / mitm.it)"
+          else
+            echo "✅ iptables REDIRECT rule already present (TCP 80 → 8888)"
+          fi
+          sudo mkdir -p /etc/iptables
+          sudo sh -c 'iptables-save > /etc/iptables/rules.v4'
+          echo "✅ iptables rules persisted to /etc/iptables/rules.v4"
+
           cd /opt/familyshield
           echo "${GHCR_TOKEN}" | sudo docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+          # Mirror root docker login to ubuntu user so systemd services running as
+          # ubuntu and interactive ubuntu sessions can access GHCR credentials.
+          sudo mkdir -p /home/ubuntu/.docker
+          sudo cp /root/.docker/config.json /home/ubuntu/.docker/config.json 2>/dev/null || true
+          sudo chown -R ubuntu:ubuntu /home/ubuntu/.docker
+          sudo chmod 600 /home/ubuntu/.docker/config.json 2>/dev/null || true
 
           # Pre-create bind-mount directories with correct ownership before containers start.
           # deploy-dev.yml syncs real content later; these ensure containers don't crash on first boot.
@@ -354,8 +417,8 @@ jobs:
           # Pull and start infrastructure services (public images — always available)
           # App services (api, portal, mitmproxy) are managed by deploy-dev.yml
           # Use --ignore-pull-failures to skip missing app service images (not pushed yet)
-          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy
-          sudo docker compose up -d --no-deps adguard headscale redis influxdb grafana nodered ntfy
+          sudo docker compose pull --ignore-pull-failures adguard headscale headplane redis influxdb grafana nodered ntfy caddy portainer
+          sudo docker compose up -d --no-deps adguard headscale headplane redis influxdb grafana nodered ntfy caddy portainer
           echo "✅ Infrastructure services started (api/portal/mitmproxy started by deploy-dev.yml)"
 
           echo "Waiting for containers to initialize..."

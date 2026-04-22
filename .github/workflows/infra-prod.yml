@@ -287,6 +287,7 @@ jobs:
             -e "s|\${discord_bot_token}|$DISCORD_BOT_TOKEN|g" \
             -e "s|\${twitch_client_id}|$TWITCH_CLIENT_ID|g" \
             -e "s|\${twitch_client_secret}|$TWITCH_CLIENT_SECRET|g" \
+            -e "s|\${headplane_cookie_secret}|$HEADPLANE_COOKIE_SECRET|g" \
             -e "s|\${influxdb_password}|$INFLUXDB_PASSWORD|g" \
             -e "s|\${influxdb_admin_token}|$INFLUXDB_ADMIN_TOKEN|g" \
             -e "s|\${grafana_password}|$GRAFANA_PASSWORD|g" \
@@ -325,6 +326,31 @@ jobs:
             "sudo mkdir -p /opt/familyshield/apps/platform-config/headscale && sudo mv /tmp/headscale.yaml /opt/familyshield/apps/platform-config/headscale/headscale.yaml && sudo chown ubuntu:ubuntu /opt/familyshield/apps/platform-config/headscale/headscale.yaml"
 
           echo "✅ headscale config written to VM"
+
+          # copy headplane config so the container can mount /etc/headplane/config.yaml
+          scp -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            apps/platform-config/headplane/headplane.yaml \
+            ubuntu@"$VM_IP":/tmp/headplane.yaml || true
+
+          # Idempotently move the uploaded config into the persistent block volume
+          ssh -i ~/.ssh/familyshield \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            ubuntu@"$VM_IP" bash -s <<'ENDSSH' || true
+          set -euo pipefail
+          sudo mkdir -p /opt/familyshield-data/headplane
+          if [ ! -f /opt/familyshield-data/headplane/headplane.yaml ] || ! sudo cmp -s /tmp/headplane.yaml /opt/familyshield-data/headplane/headplane.yaml; then
+            sudo mv /tmp/headplane.yaml /opt/familyshield-data/headplane/headplane.yaml
+            sudo chown ubuntu:ubuntu /opt/familyshield-data/headplane/headplane.yaml
+            sudo chmod 644 /opt/familyshield-data/headplane/headplane.yaml
+            echo "✅ headplane config installed/updated to persistent volume"
+          else
+            sudo rm -f /tmp/headplane.yaml || true
+            echo "✅ headplane config present and unchanged — skipping"
+          fi
+          ENDSSH
 
           ssh -i ~/.ssh/familyshield \
             -o StrictHostKeyChecking=no \
@@ -365,7 +391,8 @@ jobs:
             /opt/familyshield-data/mitmproxy \
             /opt/familyshield-data/redis \
             /opt/familyshield-data/ntfy/cache \
-            /opt/familyshield-data/ntfy/data
+            /opt/familyshield-data/ntfy/data \
+            /opt/familyshield-data/portainer
           sudo chown -R ubuntu:ubuntu /opt/familyshield-data
           # Per-service ownership — must match container user UIDs
           sudo chown -R 472:472 /opt/familyshield-data/grafana          # Grafana runs as uid 472
@@ -393,8 +420,8 @@ jobs:
           # Pull and start infrastructure services (public images — always available)
           # App services (api, portal, mitmproxy) are managed by deploy-prod.yml
           # Use --ignore-pull-failures to skip missing app service images (not pushed yet)
-          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy
-          sudo docker compose up -d --no-deps adguard headscale redis influxdb grafana nodered ntfy
+          sudo docker compose pull --ignore-pull-failures adguard headscale redis influxdb grafana nodered ntfy caddy portainer
+          sudo docker compose up -d --no-deps adguard headscale redis influxdb grafana nodered ntfy caddy portainer
           echo "✅ Infrastructure services started (api/portal/mitmproxy started by deploy-prod.yml)"
 
           sleep 10

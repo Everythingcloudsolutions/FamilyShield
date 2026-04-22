@@ -1307,6 +1307,69 @@ See [`../troubleshooting/README.md#redis-queue-issues`](../troubleshooting/READM
 
 ---
 
+### 11.9 Portainer (Docker Management UI)
+
+Portainer provides a browser-based UI to manage all Docker containers on the VM without needing SSH. From the Portainer dashboard you can: start/stop/restart containers, view real-time logs, execute shell commands inside containers, inspect images and volumes, and pull updated images. It is the primary tool for day-to-day operational troubleshooting.
+
+#### How it's deployed
+
+Container name: `familyshield-portainer`  
+Port: `9000` (HTTP — exposed only via Cloudflare Tunnel, not on the internet directly)  
+Data volume: `/opt/familyshield-data/portainer` (persistent — survives VM recreation)  
+Docker socket: `/var/run/docker.sock` mounted read-only — allows Portainer to manage other containers
+
+#### Access
+
+- Via Cloudflare tunnel: `https://portainer-dev.everythingcloud.ca` (requires Cloudflare Zero Trust email login)
+- Protected by the same email OTP as AdGuard and Grafana — your Cloudflare account email
+
+#### Security model
+
+Portainer has read-write access to the Docker socket, making it a high-privilege admin surface. It is protected by:
+
+1. **Cloudflare Zero Trust** — email OTP required before the browser can reach localhost:9000 at all
+2. **No public port** — port 9000 is not in the OCI security list; only reachable through the encrypted tunnel
+3. **Persistent Portainer credentials** — set a strong admin password on first login; it is stored in `/opt/familyshield-data/portainer`
+
+#### First-time setup
+
+On first visit to `https://portainer-dev.everythingcloud.ca`:
+
+1. Cloudflare Zero Trust will ask for your email OTP (enter your Cloudflare account email)
+2. Portainer shows a "Create first admin user" screen — set a strong password and save it
+3. Select **"Get Started"** → **Local** to manage the containers on the current VM
+4. You will see all FamilyShield containers listed under **Containers**
+
+#### Verify it's working
+
+```bash
+# On the VM — confirm container is running
+docker ps | grep portainer
+# Expected: familyshield-portainer   Up X minutes
+
+# Health API
+curl -s http://localhost:9000/api/status
+# Expected JSON: {"Version":"...", "InstanceID":"..."}
+```
+
+#### Common uses
+
+| Task | How |
+| --- | --- |
+| View container logs | Portainer → Containers → click container → Logs |
+| Restart a crashed service | Portainer → Containers → select → Restart |
+| Pull latest image | Portainer → Images → Pull image |
+| Run a command inside container | Portainer → Containers → click container → Console → Connect |
+| Check resource usage | Portainer → Containers → Stats column |
+
+#### Troubleshooting
+
+- If Portainer shows blank container list: check Docker socket mount (`/var/run/docker.sock:ro`)
+- If `portainer-dev.everythingcloud.ca` returns 502: container stopped — SSH to VM and run `docker start familyshield-portainer`
+- Password reset: `docker stop familyshield-portainer && docker rm familyshield-portainer` then `docker compose up -d portainer` — data is on the persistent volume so settings survive
+
+---
+
 ### Common Admin Tasks
 
 #### Add a New Child Device

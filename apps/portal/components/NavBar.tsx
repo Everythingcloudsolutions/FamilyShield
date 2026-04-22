@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { href: '/', label: 'Dashboard' },
   { href: '/devices', label: 'Devices' },
   { href: '/alerts', label: 'Alerts' },
+  { href: '/cert', label: 'Setup' },
 ]
 
 function ShieldIcon() {
