@@ -19,9 +19,8 @@ on:
       - ".github/workflows/deploy-dev.yml"
   workflow_dispatch:
   workflow_run:
-    workflows: [ "FamilyShield — Infrastructure Dev" ]
-    types: [ completed ]
-    branches: [ development ]
+    workflows: ["FamilyShield — Infrastructure Dev"]
+    types: [completed]
 
 permissions:
   contents: read

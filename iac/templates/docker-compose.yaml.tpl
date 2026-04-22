@@ -76,41 +76,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # ── 2b. Headplane — Web UI for Headscale (device enrolment, preauth keys, routes) ──
-  # Headplane v0.6+ connects to Headscale's HTTP API.
-  # Protected by Cloudflare Zero Trust (admin email OTP).
-  # Port 3000 → exposed via Cloudflare Tunnel at vpn-admin${env_suffix}.everythingcloud.ca
-  headplane:
-    image: ghcr.io/tale/headplane:latest
-    container_name: familyshield-headplane
-    restart: unless-stopped
-    networks:
-      familyshield:
-        ipv4_address: 172.20.0.14
-    ports:
-      - "3100:3000"     # headplane listens on 3000 internally; host 3100 avoids conflicts
-    volumes:
-      - /opt/familyshield-data/headplane:/var/lib/headplane
-      # Headplane expects a config file at /etc/headplane/config.yaml inside the container.
-      # Mount the repo-provided config from the VM so Headplane can load it on startup.
-      - /opt/familyshield-data/headplane/headplane.yaml:/etc/headplane/config.yaml:ro
-    environment:
-      # HEADPLANE: prefer environment overrides (deprecated flag removed)
-      - HEADPLANE_HEADSCALE__URL=http://172.20.0.3:8080
-      - HEADPLANE_HEADSCALE__API_KEY=${headplane_api_key}
-      - HEADPLANE_SERVER__PORT=3000
-      - HEADPLANE_SERVER__COOKIE_SECRET=${headplane_cookie_secret}
-    depends_on:
-      headscale:
-        condition: service_started
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/admin || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-
-  # ── 2c. Caddy — HTTPS reverse proxy for Headscale (Noise protocol + WebSocket) ──
+  # ── 2b. Caddy — HTTPS reverse proxy for Headscale (Noise protocol + WebSocket) ──
   # Listens on 0.0.0.0:443, proxies to Headscale localhost:8080 with WebSocket support.
   # DNS A record (vpn${env_suffix}.everythingcloud.ca) points directly to OCI public IP,
   # bypassing Cloudflare Tunnel to preserve HTTP Upgrade headers required by Tailscale.

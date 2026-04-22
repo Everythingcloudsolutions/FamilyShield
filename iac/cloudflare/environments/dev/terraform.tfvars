@@ -9,9 +9,10 @@ root_domain = "everythingcloud.ca"
 # Set to your Cloudflare account email (or any email you want to use for OTP login)
 admin_email = "mohit.goyal@everything.net.in"
 
-# oci_public_ip is NOT set here — injected dynamically by infra-dev.yml via TF_VAR_oci_public_ip
-# (captured from tofu output vm_public_ip after OCI compute module runs)
-# Setting it here would override the live IP (tfvars beat env vars in OpenTofu precedence)
+# OCI public IP — for direct Headscale exposure (bypasses Cloudflare tunnel)
+# This creates vpn-direct-dev.everythingcloud.ca DNS A record pointing to this IP
+# Headscale can be tested with direct public IP + Caddy reverse proxy
+oci_public_ip = "40.233.115.22"
 
 # cloudflare_api_token    — set via TF_VAR_cloudflare_api_token GitHub Secret
 # cloudflare_account_id   — set via TF_VAR_cloudflare_account_id GitHub Secret

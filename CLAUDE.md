@@ -850,40 +850,6 @@ This is the minimum hardening sequence Claude Code should recommend and preserve
 
 ## Known Issues & Troubleshooting
 
-### mitmproxy — iptables REDIRECT Required for Traffic Intercept (2026-04-21)
-
-**How it works:** mitmproxy transparent proxy intercepts HTTPS from VPN clients via an iptables REDIRECT rule, not by being in the network path by default. Without this rule, connecting a device to Headscale does nothing — traffic bypasses mitmproxy entirely and `http://mitm.it` shows "traffic is not going through mitmproxy."
-
-**Rule (applied by cloud-init + infra-dev.yml bootstrap, persisted via iptables-persistent):**
-
-```bash
-iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889
-iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 80  -j REDIRECT --to-port 8888
-```
-
-- `100.64.0.0/10` = Tailscale VPN subnet (all enrolled devices)
-- Port 8889 = mitmproxy transparent listener (HTTPS)
-- Port 8888 = mitmproxy transparent listener (HTTP / `mitm.it` cert page)
-
-**Verify on VM:**
-
-```bash
-sudo iptables -t nat -L PREROUTING -n --line-numbers
-# Should show two REDIRECT rules for 100.64.0.0/10
-```
-
-**If missing** (e.g., after VM reboot where rules weren't persisted): re-run `infra-dev.yml` or apply manually and save with `sudo iptables-save | sudo tee /etc/iptables/rules.v4`.
-
----
-
-### Headscale DNS Push — nameservers Must Be Host-Reachable IP (2026-04-21)
-
-`headscale.yaml` `dns.nameservers.global` must be the **Docker bridge IP** of AdGuard (`172.20.0.2`), not `127.0.0.1`. Headscale pushes this IP to Tailscale clients who then query it directly. Since clients route to `172.20.0.2` via the Tailscale tunnel (the VPN routes the entire `172.20.0.0/24` Docker subnet), this works.
-
-If AdGuard upstream DNS is not configured (`8.8.8.8`/`1.1.1.1`), enrolled devices will have DNS pointed to AdGuard but AdGuard can't resolve anything — resulting in NXDOMAIN for all queries. Fix: SSH port-forward `ssh -L 3080:localhost:3080 ubuntu@<vm-ip>` → open `http://localhost:3080` → Settings → DNS Settings → add upstream resolvers.
-
----
-
 ### Caddy — Moved from Systemd to Docker (2026-04-19 — REFACTORED)
 
 **Change:** Caddy is now a Docker service in `docker-compose.yml`, not a systemd unit.
@@ -898,8 +864,6 @@ If AdGuard upstream DNS is not configured (`8.8.8.8`/`1.1.1.1`), enrolled device
 - Auto-restarts on failure via docker-compose
 - No manual intervention needed
 
-**Critical:** The Caddyfile must use Headscale's Docker bridge IP (`172.20.0.3:8080`), NOT `localhost` or `127.0.0.1`. Inside a Docker container, those refer to the container's own loopback — not the host or other services. Using `localhost:8080` or `127.0.0.1:8080` causes `dial tcp [::1]:8080: connection refused` or `dial tcp 127.0.0.1:8080: connection refused` even when Headscale is healthy.
-
 **Architecture:**
 
 ```
@@ -907,11 +871,11 @@ Device enrollment request
   ↓
 vpn-dev.everythingcloud.ca (DNS A record → OCI public IP)
   ↓
-OCI VM port 443 (Caddy Docker container at 172.20.0.11)
+OCI VM port 443 (Caddy Docker container)
   ↓
-Caddy reverse proxy → 172.20.0.3:8080 (Headscale's Docker bridge IP)
+Caddy reverse proxy (preserves WebSocket Upgrade headers)
   ↓
-Headscale container (172.20.0.3, port 8080)
+Headscale (localhost:8080 in Docker)
   ↓
 Device successfully enrolls in Tailscale
 ```

@@ -19,9 +19,7 @@ packages:
   - fail2ban
   - wireguard
   - resolvconf
-  - ca-certificates         # Required for Caddy HTTPS certificate validation
-  - iptables                # NAT REDIRECT rules for mitmproxy transparent proxy (F-28)
-  - netfilter-persistent    # Persists iptables rules across reboots (/etc/iptables/rules.v4)
+  - ca-certificates  # Required for Caddy HTTPS certificate validation
 
 # Create ubuntu user docker access
 groups:
@@ -134,23 +132,14 @@ write_files:
   - path: /tmp/setup-ufw.sh
     content: |
       #!/bin/bash
-      set -euo pipefail
-      sudo ufw default deny incoming
-      sudo ufw default allow outgoing
-      sudo ufw allow 22/tcp     # SSH
-      sudo ufw allow 80/tcp     # HTTP — Caddy ACME challenge (auto-redirects to HTTPS after cert issued)
-      sudo ufw allow 443/tcp    # HTTPS (Caddy reverse proxy for Headscale)
-      sudo ufw allow 443/udp    # QUIC protocol
-      sudo ufw allow 51820/udp  # WireGuard VPN
-      # Allow mitmproxy ports (local and VPN)
-      sudo ufw allow 8888/tcp   # mitmproxy HTTP (mitm.it cert page)
-      sudo ufw allow 8889/tcp   # mitmproxy HTTPS (transparent proxy)
-      # UFW route rules for transparent proxying (F-28)
-      # Redirect TCP 443 from Tailscale VPN clients to mitmproxy 8889
-      sudo ufw route allow proto tcp from 100.64.0.0/10 to any port 443
-      sudo ufw route allow proto tcp from 100.64.0.0/10 to any port 80
-      # Note: UFW does not natively support REDIRECT, but can allow forwarding. Actual DNAT/REDIRECT may require a custom systemd service if strict transparent proxying is needed.
-      sudo ufw --force enable
+      ufw default deny incoming
+      ufw default allow outgoing
+      ufw allow 22/tcp     # SSH
+      ufw allow 80/tcp     # HTTP — Caddy ACME challenge (auto-redirects to HTTPS after cert issued)
+      ufw allow 443/tcp    # HTTPS (Caddy reverse proxy for Headscale)
+      ufw allow 443/udp    # QUIC protocol
+      ufw allow 51820/udp  # WireGuard VPN
+      ufw --force enable
 
   # fail2ban config
   - path: /etc/fail2ban/jail.local
@@ -162,10 +151,7 @@ write_files:
       bantime = 3600
 
   # Caddy configuration — reverse proxy Headscale with auto-HTTPS
-  # Uses Headscale's Docker bridge IP (172.20.0.3:8080) — NOT localhost or 127.0.0.1.
-  # Inside a Docker container, localhost/127.0.0.1 refers to the container's own loopback,
-  # not the host or other containers. Headscale is on the familyshield Docker bridge at
-  # a fixed IP (172.20.0.3) defined in docker-compose.yaml.tpl.
+  # Listens on 0.0.0.0:443, proxies to localhost:8080 (Headscale)
   - path: /etc/caddy/Caddyfile
     content: |
       vpn-${environment}.everythingcloud.ca:443 {
@@ -173,7 +159,7 @@ write_files:
           output stdout
           format console
         }
-        reverse_proxy 172.20.0.3:8080 {
+        reverse_proxy localhost:8080 {
           header_up Connection "upgrade"
           header_up Upgrade "{http.request.header.Upgrade}"
           header_up X-Forwarded-For "{http.request.header.CF-Connecting-IP}"
@@ -205,14 +191,6 @@ runcmd:
 
   # Create app dirs (boot volume — service configs, not data)
   - chown -R ubuntu:ubuntu /opt/familyshield
-
-  # ── mitmproxy transparent proxy intercept (F-28) ─────────────────────────
-  # REDIRECT TCP 443/80 from Tailscale VPN clients (100.64.0.0/10) to mitmproxy.
-  # Idempotent: iptables -C checks before -A to avoid duplicate rules on re-run.
-  - sudo iptables -t nat -C PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889 2>/dev/null || sudo iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 443 -j REDIRECT --to-port 8889
-  - sudo iptables -t nat -C PREROUTING -s 100.64.0.0/10 -p tcp --dport 80 -j REDIRECT --to-port 8888 2>/dev/null || sudo iptables -t nat -A PREROUTING -s 100.64.0.0/10 -p tcp --dport 80 -j REDIRECT --to-port 8888
-  - sudo mkdir -p /etc/iptables
-  - sudo sh -c 'iptables-save > /etc/iptables/rules.v4'
 
   # NOTE: Caddy now runs as a Docker service (caddy container in docker-compose)
   # Caddyfile is already written above; docker-compose will mount it
