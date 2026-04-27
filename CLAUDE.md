@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> Last updated: 2026-04-21 (F-27/28/29 done: Headscale DNS push, iptables REDIRECT, portal /cert page; design principles added to mvp-plan; all workflow schedules removed)
+> Last updated: 2026-04-24 (Full codebase + workflow review: fixed OCI auth claim, service count, added complete GitHub Secrets table, VM filesystem layout, service network IPs, accurate workflow job descriptions, prod image promotion model. Removed .env.example table — secrets live in GitHub Secrets only.)
 
 ## Active Development Anchor
 
@@ -159,6 +159,7 @@ npm run test:e2e -- tests/e2e/dashboard.spec.ts  # Run single test file
 - Supabase configured: `.env.local` with `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - Port 3000 available (dev server)
 
+
 **Test environment:**
 
 - `qa-e2e.yml` — manual trigger (`workflow_dispatch`) only. Runs against live dev URL or staging.
@@ -278,6 +279,17 @@ await page.getByTestId('enroll-modal').click({ position: { x: 5, y: 5 } })
 
 **Demo mode:** `isDemoMode()` returns true only when `!isSupabaseConfigured()`. In CI (where Supabase is configured), demo mode never activates. Use Playwright mocks instead.
 
+### Portal `lib/` Utilities
+
+Key shared modules in `apps/portal/lib/`:
+
+- `supabase.ts` — `getSupabase()` singleton client factory; call this in `useEffect` hooks, never at module top-level
+- `types.ts` — shared TypeScript types for `Device`, `Alert`, `ContentEvent`
+- `demo-data.ts` — `isDemoMode()` / `isSupabaseConfigured()` checks; fake data returned when Supabase env vars are absent (local dev without `.env.local`)
+- `useTheme.ts` — theme hook for dark/light mode
+
+**Pattern:** Components call `getSupabase()` from `lib/supabase.ts` rather than importing the Supabase client directly — keeps the singleton lazy and testable.
+
 **Local Docker builds (before pushing to GHCR):**
 
 ```bash
@@ -327,8 +339,8 @@ tofu plan -var-file environments/dev/terraform.tfvars  # Review changes (require
 | AI primary | Groq llama-3.3-70b-versatile | Free 500k tokens/day |
 | AI fallback | Anthropic claude-haiku-4-5 | ~$0.02 CAD/month fallback |
 | IaC | OpenTofu (Terraform-compatible) | Open source, full OCI provider |
-| CI/CD | GitHub Actions | OIDC to OCI — no stored long-lived keys |
-| Frontend | Next.js 14 on Cloudflare Pages | Free hosting, unlimited bandwidth |
+| CI/CD | GitHub Actions | OCI API key auth (user OCID + private key in GitHub Secrets) |
+| Frontend | Next.js 16 on Cloudflare Pages | Free hosting, unlimited bandwidth |
 | Container registry | GHCR (GitHub Container Registry) | Free for private repos |
 
 ---
@@ -344,7 +356,7 @@ FamilyShield/
 ├── FamilyShield.code-workspace  ← VS Code multi-root workspace
 ├── .devcontainer/               ← VS Code Remote on OCI ARM Ubuntu
 ├── .github/
-│   ├── actions/                 ← Reusable: oci-login, tofu-plan, tofu-apply
+│   ├── actions/                 ← Reusable: oci-login, tofu-plan, tofu-apply, tofu-import-existing
 │   └── workflows/               ← pr-check, deploy-dev, deploy-staging, deploy-prod
 ├── iac/
 │   ├── main.tf / variables.tf / outputs.tf
@@ -359,9 +371,9 @@ FamilyShield/
 │   │   └── docker-services/     ← docker-compose.yml renderer
 │   └── templates/
 │       ├── cloud-init.yaml.tpl  ← VM bootstrap: UFW, fail2ban, Docker, systemd
-│       └── docker-compose.yaml.tpl ← All 10 services
+│       └── docker-compose.yaml.tpl ← 12 services (cloudflared runs standalone, not in compose)
 ├── apps/
-│   ├── portal/                  ← Next.js 14 parent portal [SCAFFOLDED]
+│   ├── portal/                  ← Next.js 16 parent portal [SCAFFOLDED]
 │   ├── api/                     ← Node.js enrichment worker + Express health
 │   │   ├── src/
 │   │   │   ├── index.ts
@@ -399,75 +411,92 @@ FamilyShield/
 
 ### Deployment Flow
 
-**Split pipeline architecture (2026-04-16):** IaC and app deployment are separate workflows, triggered by different path changes.
+**Split pipeline architecture:** IaC and app deployment are separate workflows, triggered by different path changes.
 
 #### Infra workflows (triggered by `iac/**` changes)
 
 ```
-infra-dev.yml (development branch)    infra-prod.yml (main branch)
-       ↓                                      ↓
-  tofu apply                           safety-check → tofu plan → tofu apply
-       ↓                                      ↓
-  setup-cloudflare-{env}               setup-cloudflare-prod
-  (SSH via public IP)                  (SSH via public IP)
-       ↓                                      ↓
-  smoke-infra-{env}                    smoke-infra-prod
-  (tunnel reachable check)             (tunnel reachable check)
-       ↓                                      ↓
-  tighten-ssh-{env}                    tighten-ssh-prod → create-release
-  (admin IP only)                      (admin IP only)
+infra-dev.yml (development branch):
+  1. deploy-infra-dev    — verify bootstrap → tofu apply (iac/)
+                           Retries up to 4h/15-min if "Out of host capacity"
+  2. setup-cloudflare-dev — tofu apply (iac/cloudflare/) → tunnel_token output
+                            gh secret set CF_ACCESS_CLIENT_ID/SECRET (needs GH_PAT)
+                            SSH via PUBLIC IP → write docker-compose.yml (sed from template)
+                            SSH: cloud-init --wait → mount data volume → start infra services
+                            docker run --network host --token $TUNNEL_TOKEN (cloudflared)
+  3. smoke-infra-dev     — SSH: check docker logs for "Registered tunnel connection"
+  4. tighten-ssh-dev     — tofu apply with TF_VAR_admin_ssh_cidrs=["173.33.214.49/32"]
+
+infra-prod.yml (main branch) — identical jobs with safety-check gate + plan step + create-release
 ```
 
-#### App workflows (triggered by `apps/**` changes)
+```
+deploy-dev.yml (development branch):
+  1. wait-for-infra  — polls GitHub API; waits ≤10 min for infra-dev on same SHA
+  2. verify-tunnel   — SSH via CF tunnel to confirm reachability
+  3. build-and-push  — matrix (api, portal, mitm) → linux/arm64 → GHCR
+                       Portal build-args: NEXT_PUBLIC_SUPABASE_URL + ANON_KEY baked in
+                       Tags: familyshield-{app}:dev, familyshield-{app}:$SHA
+  4. deploy-app-dev  — SSH via CF tunnel: ssh-dev.everythingcloud.ca
+                       tar pipe (not scp) to sync apps/mitm + apps/platform-config
+                       Write /opt/familyshield/.env (YOUTUBE/DISCORD/TWITCH keys)
+                       docker compose pull api portal mitmproxy → up -d
+  5. smoke-test      — HTTP portal (:200/302/403) + API /health
 
+deploy-prod.yml (main branch) — DOES NOT rebuild images:
+  1. safety-check    — workflow_dispatch requires confirm="DEPLOY"
+  2. wait-for-infra  — same pattern as dev
+  3. verify-tunnel   — HTTP check on prod portal URL
+  4. promote-images  — pulls :$SHA (or :dev) → tags :prod + :latest → pushes (api + portal only)
+  5. deploy-app-prod — SSH via CF tunnel: ssh.everythingcloud.ca
+                       docker compose pull api portal → up -d --no-deps
+  6. smoke-test
+  7. create-release
+
+deploy-staging.yml (qa branch) — combined infra+app, fully ephemeral:
+  1. deploy-infra-staging  — tofu apply
+  2. promote-images        — dev → staging tags (api + portal)
+  3. deploy-app-staging    — SSH via PUBLIC IP (staging has no pre-existing CF tunnel)
+  4. setup-cloudflare-staging — uses cloudflare-api.sh (not tofu); starts cloudflared
+  5. integration-tests     — Playwright E2E (Chromium only)
+  6. smoke-test
+  7. tighten-ssh-staging
+  8. auto-teardown (if: always) — stop containers → cf cleanup → tofu destroy → delete qa branch
 ```
-deploy-dev.yml (development branch)   deploy-prod.yml (main branch)
-       ↓                                      ↓
-  wait-for-infra                        safety-check → wait-for-infra
-  (poll if infra-dev also running)      (poll if infra-prod also running)
-       ↓                                      ↓
-  verify-tunnel                         verify-tunnel
-  (pre-check CF tunnel reachable)       (pre-check CF tunnel reachable)
-       ↓                                      ↓
-  build-and-push (arm64 to GHCR)        promote-images (dev SHA → prod tag)
-       ↓                                      ↓
-  deploy-app-dev                        deploy-app-prod
-  (SSH via CF tunnel)                   (SSH via CF tunnel)
-       ↓                                      ↓
-  smoke-test                            smoke-test → create-release
-```
+
+**Workflow trigger matrix:**
+
+| Workflow | Trigger | Notes |
+|---|---|---|
+| `infra-dev.yml` | push `iac/**` on `development`, `workflow_dispatch` | |
+| `deploy-dev.yml` | push `apps/**`/`scripts/**` on `development`, `workflow_dispatch`, `workflow_run` after infra-dev | |
+| `infra-prod.yml` | push `iac/**` on `main`, `workflow_dispatch` | confirm="DEPLOY" for manual |
+| `deploy-prod.yml` | push `apps/**`/`scripts/**` on `main`, `workflow_dispatch`, `workflow_run` after infra-prod | confirm="DEPLOY" for manual |
+| `deploy-staging.yml` | push any on `qa`, `workflow_dispatch` | Full ephemeral lifecycle |
+| `pr-check.yml` | PR to `development` or `main` | lint-iac + lint-apps + plan + security |
+| `security-scan.yml` | PR + push `apps/**`/`iac/**`/`scripts/**` on dev/main, `workflow_dispatch` | Posts scan summary as PR comment |
+| `auto-fix-vulnerabilities.yml` | `workflow_dispatch` | npm audit fix + pip-audit fix + PR |
+| `e2e.yml` | `workflow_dispatch` | Playwright — local/dev/prod target |
+| `deploy-platform-services.yml` | `workflow_dispatch` | Starts infra services only (no api/portal) |
+| `check-health-internal.yml` | `workflow_dispatch` | Redis + InfluxDB health via CF tunnel SSH |
+| `teardown-dev.yml` | `workflow_dispatch` (confirm="dev") | Full destroy: containers + CF + OCI |
+| `teardown-prod.yml` | `workflow_dispatch` | Same pattern for prod |
+| `teardown-staging.yml` | `workflow_dispatch` | Manual teardown if auto-teardown failed |
+| `cleanup-state.yml` / `cleanup-tfstate.yml` | `workflow_dispatch` | State maintenance |
+| `qa-e2e.yml` / `scheduled-health-check.yml` | `workflow_dispatch` | Schedules removed |
 
 **SSH model:**
-- **Infra workflows:** public IP SSH (NSG wide-open during deploy, tightened after). Admin must open NSG before running infra refresh when NSG is already tightened.
-- **App workflows:** Cloudflare tunnel SSH exclusively (`ssh-dev.everythingcloud.ca` / `ssh-prod.everythingcloud.ca`). Works regardless of NSG state.
-
-**Mixed commit handling (iac/ + apps/ changed in same push):**
-
-Both infra and app workflows trigger simultaneously. The `wait-for-infra` job in deploy-dev/prod polls the GitHub API and waits up to 10 minutes for the corresponding infra workflow to finish before proceeding.
-
-**Trigger summary:**
-
-| Branch | Paths | Workflow | Notes |
-|---|---|---|---|
-| `development` | `iac/**` | `infra-dev.yml` | Auto — IaC only |
-| `development` | `apps/**`, `scripts/**` | `deploy-dev.yml` | Auto — app only via CF tunnel |
-| `main` | `iac/**` | `infra-prod.yml` | Auto — IaC only, safety check |
-| `main` | `apps/**`, `scripts/**` | `deploy-prod.yml` | Auto — app only via CF tunnel |
-| `qa` | any | `deploy-staging.yml` | Auto — combined (ephemeral) |
-| Any PR | any | `pr-check.yml` | lint-iac + lint-apps + plan + security |
+- **Infra workflows:** Public IP during bootstrap; `tighten-ssh` re-runs `tofu apply` with `TF_VAR_admin_ssh_cidrs=["173.33.214.49/32"]` to lock down (admin IP only). To re-run infra on an already-tightened VM, manually open NSG in OCI Console first.
+- **App workflows (dev/prod):** CF Tunnel SSH exclusively — `ssh-dev.everythingcloud.ca` / `ssh.everythingcloud.ca`. Credentials passed as explicit flags: `--service-token-id $CF_ACCESS_CLIENT_ID --service-token-secret $CF_ACCESS_CLIENT_SECRET` (env vars do not work with cloudflared).
+- **Staging:** Public IP for app deploy; OCI CLI NSG commands for SSH tighten.
 
 **Cloudflare Tunnel Token Delivery (critical pattern):**
 
-IaC renders `docker-compose.yaml` with a placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}` because the real Cloudflare tunnel token is not known at `tofu apply` time. The `setup-cloudflare-{env}` job in the **infra workflow**:
-
-1. Creates/verifies tunnel via `scripts/cloudflare-api.sh setup {env}` (gets real token from Cloudflare API)
-2. SSHes to the VM via **public IP** and bootstraps docker-compose.yml if missing
-3. Starts cloudflared via `docker run --network host --token $TUNNEL_TOKEN`
-4. Waits up to 3 minutes for the portal URL to become reachable over HTTP
-
-**Cleanup:**
-
-- Manual: `cleanup-cloudflare.yml` (workflow_dispatch) — removes Cloudflare resources for an environment
+`docker-compose.yaml.tpl` uses placeholder `TUNNEL_TOKEN_PLACEHOLDER_{env}`. The `setup-cloudflare-{env}` job:
+1. Runs `tofu apply iac/cloudflare/` → captures `tunnel_token` output
+2. Updates `CF_ACCESS_CLIENT_ID/SECRET` in GitHub Secrets via `gh secret set` (requires `GH_PAT`)
+3. SSHes to VM via public IP → writes `docker-compose.yml` rendered from template
+4. Starts cloudflared: `docker run --network host --restart unless-stopped --token $TUNNEL_TOKEN`
 
 ### Service Architecture
 
@@ -477,31 +506,47 @@ All backend services run on a single OCI Always Free ARM VM (4 OCPU / 24GB RAM) 
 - **Supabase** — PostgreSQL + Realtime WebSocket
 - **Shared volumes** — config files mounted at /etc/familyshield/
 
+**Docker network:** `172.20.0.0/24` bridge. Each service has a static IP.
+
+| Service | Container IP | Host Port(s) | Notes |
+|---|---|---|---|
+| AdGuard Home | 172.20.0.2 | 53/tcp+udp, 3080, 853 | DNS filtering; first-run wizard on :3000 |
+| Headscale | 172.20.0.3 | 8080, 9090 | VPN control plane |
+| mitmproxy | 172.20.0.4 | 8888 (web UI), 8889 (transparent) | iptables redirects 443→8889, 80→8888 |
+| Redis | 172.20.0.5 | 6379 | Event queue; 512MB maxmemory |
+| API Worker | 172.20.0.6 | 3001 | `/health`, `/metrics`, `/cert` |
+| Node-RED | 172.20.0.7 | 1880 | Automation flows |
+| InfluxDB | 172.20.0.8 | 8086 | Time-series metrics; 30d retention |
+| Grafana | 172.20.0.9 | 3002 | Dashboards; uid 472 owns data dir |
+| ntfy | 172.20.0.10 | 2586 | Push notifications; deny-all default |
+| Caddy | 172.20.0.11 | 443/tcp+udp | HTTPS reverse proxy → Headscale :8080 |
+| Portal | 172.20.0.12 | 3000 | Next.js parent UI |
+| Portainer | 172.20.0.13 | 9000 | Docker management UI |
+| Headscale Admin | 172.20.0.14 | 3100 | VPN admin web UI |
+| **cloudflared** | host network | — | **NOT in docker-compose** — runs standalone via `docker run --restart unless-stopped --token $TOKEN` |
+
+**VM filesystem layout:**
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  OCI ARM VM (Ubuntu 22.04)                                  │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─ Cloudflare Tunnel (outbound only)                       │
-│  │  └─ mitmproxy (8888/8889) → Redis → API                 │
-│  │                                                          │
-│  ├─ DNS: AdGuard Home (53, 3080)                            │
-│  ├─ VPN: Headscale (8080)                                  │
-│  ├─ API: Node.js enrichment worker (3001)                   │
-│  ├─ Time-series: InfluxDB (8086) + Grafana (3001)          │
-│  ├─ Automations: Node-RED (1880)                            │
-│  ├─ Notifications: ntfy (2586)                              │
-│  └─ Cache: Redis (6379)                                    │
-│                                                             │
-│  All services managed by docker-compose via systemd        │
-└─────────────────────────────────────────────────────────────┘
-         ↓ HTTPS (Cloudflare Tunnel)
-     ┌─────────────────┐
-     │ Parent Portal   │
-     │ (Next.js on     │
-     │ Cloudflare      │
-     │ Pages)          │
-     └─────────────────┘
+/opt/familyshield/              ← App directory (boot volume)
+  docker-compose.yml            ← Rendered from iac/templates/docker-compose.yaml.tpl by workflow
+  .env                          ← YOUTUBE_API_KEY, DISCORD_BOT_TOKEN, TWITCH_* (written by deploy workflow)
+  apps/
+    mitm/                       ← mitmproxy addon + requirements (synced by deploy workflow)
+    platform-config/            ← headscale.yaml, ntfy config, grafana provisioning
+
+/opt/familyshield-data/         ← OCI persistent block volume (/dev/oracleoci/oraclevdb)
+  adguard/{work,conf}/          ← AdGuard config + databases (survive VM recreation)
+  headscale/                    ← Headscale state + node keys
+  mitmproxy/                    ← mitmproxy-ca-cert.pem lives here (served via /cert endpoint)
+  redis/                        ← Redis persistence (appendonly)
+  influxdb/                     ← InfluxDB data
+  grafana/                      ← Grafana dashboards + config (uid 472)
+  ntfy/{cache,data}/
+  portainer/
 ```
+
+**Key data note:** The persistent block volume at `/opt/familyshield-data` survives `tofu destroy` + `tofu apply` cycles (VM recreation). AdGuard config, Headscale node keys, and mitmproxy CA cert are preserved. Do NOT store stateful data in Docker named volumes — those live on the boot volume and are wiped on VM recreation.
 
 ### Data Flow
 
@@ -509,6 +554,83 @@ All backend services run on a single OCI Always Free ARM VM (4 OCPU / 24GB RAM) 
 2. **mitmproxy** extracts content IDs (video_id, game_place_id, etc.) → Redis queue
 3. **API worker** polls Redis → calls platform APIs (YouTube, Roblox, etc.) → AI risk scoring (Groq → Anthropic fallback)
 4. **Results** stored in Supabase → **Portal** displays in real-time via WebSocket
+
+---
+
+## GitHub Secrets
+
+All secrets live in the GitHub repo under Settings → Secrets and Variables → Actions. The `oci-login` action and workflows consume them directly — **nothing is stored in `.env` files in the repo.**
+
+**OCI authentication** (API key auth — not OIDC):
+
+| Secret | Used By |
+|---|---|
+| `OCI_TENANCY_OCID` | All infra workflows |
+| `OCI_USER_OCID` | `oci-login` action |
+| `OCI_FINGERPRINT` | `oci-login` action |
+| `OCI_PRIVATE_KEY` | `oci-login` action (PEM key for OCI API) |
+| `OCI_SSH_PRIVATE_KEY` | SSH to VM (infra + app workflows) |
+| `OCI_SSH_PUBLIC_KEY` | `TF_VAR_ssh_public_key` — cloud-init adds it to VM |
+| `OCI_NAMESPACE` | S3-compatible backend endpoint URL |
+| `AWS_ACCESS_KEY_ID` | OCI Object Storage S3-compat (Terraform state backend) |
+| `AWS_SECRET_ACCESS_KEY` | OCI Object Storage S3-compat (Terraform state backend) |
+
+**OCI state backend note:** OpenTofu uses the S3-compatible endpoint of OCI Object Storage. `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are OCI Customer Secret Keys (not AWS keys) — they authenticate the S3-compatible API calls.
+
+**Cloudflare:**
+
+| Secret | Used By | Notes |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare IaC root, `cloudflare-api.sh` | 5 scopes required |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare IaC root, scripts | |
+| `CLOUDFLARE_ZONE_ID` | Cloudflare IaC root, scripts | |
+| `CF_ACCESS_CLIENT_ID` | `deploy-dev.yml` tunnel SSH | Auto-updated by `infra-dev.yml` after each Cloudflare IaC run |
+| `CF_ACCESS_CLIENT_SECRET` | `deploy-dev.yml` tunnel SSH | Auto-updated by `infra-dev.yml` |
+| `CF_ACCESS_CLIENT_ID_STAGING` | `deploy-staging.yml` smoke test | |
+| `CF_ACCESS_CLIENT_SECRET_STAGING` | `deploy-staging.yml` smoke test | |
+| `CF_ACCESS_CLIENT_ID_PROD` | `deploy-prod.yml` smoke test | |
+| `CF_ACCESS_CLIENT_SECRET_PROD` | `deploy-prod.yml` smoke test | |
+| `GH_PAT` | `infra-dev/prod.yml` — updates CF secrets via `gh secret set` | Personal Access Token |
+
+**Supabase (per-environment):**
+
+| Secret | Dev | Staging | Prod |
+|---|---|---|---|
+| URL | `SUPABASE_URL` | `SUPABASE_URL_STAGING` | `SUPABASE_URL_PROD` |
+| Anon key | `SUPABASE_ANON_KEY` | `SUPABASE_ANON_KEY_STAGING` | `SUPABASE_ANON_KEY_PROD` |
+| Service role key | `SUPABASE_SERVICE_ROLE_KEY` | `SUPABASE_SERVICE_ROLE_KEY_STAGING` | `SUPABASE_SERVICE_ROLE_KEY_PROD` |
+
+**Note:** `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are **baked into the Portal Docker image at build time** via `--build-arg`, mapped from `secrets.SUPABASE_URL` / `secrets.SUPABASE_ANON_KEY`. They are not runtime env vars.
+
+**LLM + Platform APIs (shared across environments):**
+
+| Secret | Used By | Current Status |
+|---|---|---|
+| `GROQ_API_KEY` | API `llm/router.ts` | ✅ Set |
+| `ANTHROPIC_API_KEY` | API fallback LLM | ✅ Set |
+| `YOUTUBE_API_KEY` | API YouTube enricher | ✅ Set |
+| `DISCORD_BOT_TOKEN` | API Discord enricher | 🔲 Missing |
+| `TWITCH_CLIENT_ID` | API Twitch enricher | 🔲 Missing (Parked) |
+| `TWITCH_CLIENT_SECRET` | API Twitch enricher | 🔲 Missing (Parked) |
+
+**Infrastructure secrets:**
+
+| Secret | Used By |
+|---|---|
+| `ADGUARD_ADMIN_PASSWORD` | dev/staging docker-compose env |
+| `ADGUARD_ADMIN_PASSWORD_PROD` | prod docker-compose env |
+| `INFLUXDB_PASSWORD` | docker-compose InfluxDB init |
+| `TF_VAR_INFLUXDB_ADMIN_TOKEN` | docker-compose InfluxDB + Grafana |
+| `GRAFANA_PASSWORD` | docker-compose Grafana admin |
+
+**Testing:**
+
+| Secret | Used By |
+|---|---|
+| `TEST_PARENT_EMAIL` | Playwright E2E tests in `deploy-staging.yml` |
+| `TEST_PARENT_PASSWORD` | Playwright E2E tests in `deploy-staging.yml` |
+
+**How secrets reach the VM:** Most secrets are injected into `docker-compose.yml` via `sed` substitution on the template (`iac/templates/docker-compose.yaml.tpl`) during the infra workflow. The four runtime-only API secrets (`YOUTUBE_API_KEY`, `DISCORD_BOT_TOKEN`, `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET`) are written to `/opt/familyshield/.env` by the app deploy workflow — docker-compose reads this `.env` file automatically.
 
 ---
 
@@ -1325,7 +1447,7 @@ Claude Code will read this file and know exactly what's done and what's next.
 For specific tasks, say things like:
 
 - "Build `apps/api/src/types.ts` — the shared TypeScript types"
-- "Scaffold the Next.js 14 portal in `apps/portal/`"
+- "Scaffold the Next.js 16 portal in `apps/portal/`"
 - "Build the ntfy alert dispatcher"
 - "Write the user guide in `docs/user-guide/README.md`"
 

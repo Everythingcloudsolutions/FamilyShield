@@ -38,3 +38,6 @@ database:
   type: sqlite
   sqlite:
     path: /var/lib/headscale/db.sqlite
+
+policy:
+  mode: database

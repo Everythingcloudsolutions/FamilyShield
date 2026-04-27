@@ -158,7 +158,23 @@ write_files:
           output stdout
           format console
         }
-        reverse_proxy localhost:8080 {
+
+        #Handle CORS preflight (OPTIONS) requests for Headscale API
+        @cors_preflight method OPTIONS
+        handle @cors_preflight {
+          header Access-Control-Allow-Origin "https://vpn-admin-${environment}.everythingcloud.ca"
+          header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+          header Access-Control-Allow-Headers "Authorization, Content-Type"
+          header Access-Control-Max-Age "3600"
+          respond "" 204
+        }
+
+      #Add CORS headers to all successful responses from Headscale API
+        header Access-Control-Allow-Origin "https://vpn-admin-${environment}.everythingcloud.ca"
+        header Access-Control-Allow-Headers "Authorization, Content-Type"
+
+
+        reverse_proxy headscale:8080 {
           header_up Connection "upgrade"
           header_up Upgrade "{http.request.header.Upgrade}"
           header_up X-Forwarded-For "{http.request.header.CF-Connecting-IP}"

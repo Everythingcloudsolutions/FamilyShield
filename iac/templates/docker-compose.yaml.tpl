@@ -87,7 +87,7 @@ services:
     ports:
       - "3100:80"     # Headscale Admin listens on port 80 internally
     environment:
-      - TZ=America/Toronto
+      - TZ=America/Toront
       - ENDPOINT=/admin
     depends_on:
       - headscale
